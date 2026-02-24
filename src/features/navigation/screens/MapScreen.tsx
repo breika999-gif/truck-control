@@ -606,13 +606,23 @@ export default function MapScreen() {
             "Animated.timing called on undefined". */}
         <StableCamera cameraRef={cameraRef} navigating={navigating} mapLoaded={mapIsLoaded} />
 
-        {/* androidRenderMode="gps" uses GPS hardware directly for faster fix.
-            minDisplacement={0} delivers every position update, no threshold. */}
+        {/* UserLocation: GPS data only — no visual puck (LocationPuck handles rendering).
+            minDisplacement={0} delivers every position update without threshold filtering.
+            visible={false} suppresses the deprecated built-in puck marker. */}
         <Mapbox.UserLocation
-          visible
+          visible={false}
           onUpdate={handleUserLocation}
-          androidRenderMode="gps"
           minDisplacement={0}
+        />
+
+        {/* LocationPuck: official Mapbox v10 non-deprecated puck renderer.
+            puckBearing="course" rotates the puck to match direction of travel.
+            pulsing radius="accuracy" shows a live GPS accuracy circle. */}
+        <Mapbox.LocationPuck
+          puckBearingEnabled
+          puckBearing="course"
+          pulsing={{ isEnabled: true, color: '#4f46e5', radius: 'accuracy' }}
+          visible
         />
 
         {/* Route polyline — only after style loaded */}
