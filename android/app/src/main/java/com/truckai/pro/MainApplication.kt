@@ -1,4 +1,4 @@
-package com.truckexpoai
+package com.truckai.pro
 
 import android.app.Application
 import com.facebook.react.PackageList

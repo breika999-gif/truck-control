@@ -186,7 +186,7 @@ export default function MapScreen() {
       PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
       {
         title: 'Разрешение за местоположение',
-        message: 'TruckExpoAI се нуждае от GPS за навигация.',
+        message: 'TruckAI Pro се нуждае от GPS за навигация.',
         buttonPositive: 'Разреши',
         buttonNegative: 'Откажи',
       },

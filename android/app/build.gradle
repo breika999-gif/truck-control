@@ -77,9 +77,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.truckexpoai"
+    namespace "com.truckai.pro"
     defaultConfig {
-        applicationId "com.truckexpoai"
+        applicationId "com.truckai.pro"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
