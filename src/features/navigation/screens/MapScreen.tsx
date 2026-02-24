@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import Tts from 'react-native-tts';
-import Mapbox, { locationManager } from '@rnmapbox/maps';
+import Mapbox, { locationManager, LocationPuck } from '@rnmapbox/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -145,7 +145,14 @@ const StableCamera = React.memo(
       // Prevents "startAnimation called on uninitialised Animated.Value" crash.
       followUserLocation={navigating && mapLoaded}
       followUserMode={Mapbox.UserTrackingMode.FollowWithCourse}
+      // Zoom 17 during navigation; no opinion when browsing (followUserLocation=false)
       followZoomLevel={17}
+      // 60° pitch during navigation = 3D "driver's seat" perspective.
+      // 0° when browsing = flat overhead view.
+      followPitch={navigating ? 60 : 0}
+      // Push the location puck toward the bottom third of the screen so
+      // ~70% of the visible road is ahead of the truck — more look-ahead.
+      followPadding={navigating ? { paddingBottom: 280 } : undefined}
     />
   ),
   (prev, next) =>
@@ -615,10 +622,11 @@ export default function MapScreen() {
           minDisplacement={0}
         />
 
-        {/* LocationPuck: official Mapbox v10 non-deprecated puck renderer.
-            puckBearing="course" rotates the puck to match direction of travel.
-            pulsing radius="accuracy" shows a live GPS accuracy circle. */}
-        <Mapbox.LocationPuck
+        {/* LocationPuck: direct named import — no Mapbox.LocationPuck namespace.
+            puckBearing="course" aligns the puck with direction of travel.
+            pulsing.radius="accuracy" draws a live GPS accuracy circle.
+            pulsing.color matches the app accent (#4f46e5 = indigo). */}
+        <LocationPuck
           puckBearingEnabled
           puckBearing="course"
           pulsing={{ isEnabled: true, color: '#4f46e5', radius: 'accuracy' }}
