@@ -62,6 +62,37 @@ function fmtDuration(seconds: number): string {
   return h === 0 ? `${m} мин` : `${h} ч ${m} мин`;
 }
 
+/** ISO 8601 timestamp N minutes from now. */
+function addMinutes(m: number): string {
+  return new Date(Date.now() + m * 60_000).toISOString();
+}
+/** ISO 8601 timestamp for tomorrow at 08:00 local time. */
+function tomorrowAt8(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(8, 0, 0, 0);
+  return d.toISOString();
+}
+/** Emoji arrow for a lane direction string from Mapbox banner_instructions. */
+function laneDirectionEmoji(dir?: string): string {
+  if (!dir) return '⬆️';
+  if (dir === 'left' || dir === 'sharp left') return '⬅️';
+  if (dir === 'right' || dir === 'sharp right') return '➡️';
+  if (dir === 'slight left') return '↖️';
+  if (dir === 'slight right') return '↗️';
+  if (dir === 'uturn') return '🔄';
+  return '⬆️';
+}
+
+const DEPART_LABELS = ['СЕГА', '+1 ч', '+2 ч', 'Утре 08:00'] as const;
+type DepartLabel = (typeof DEPART_LABELS)[number];
+function departIso(label: DepartLabel): string | null {
+  if (label === '+1 ч')         return addMinutes(60);
+  if (label === '+2 ч')         return addMinutes(120);
+  if (label === 'Утре 08:00')   return tomorrowAt8();
+  return null; // 'СЕГА'
+}
+
 /** Safe TTS speak — swallows errors when TTS engine is not ready. */
 function ttsSpeak(text: string): void {
   try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
@@ -146,6 +177,10 @@ export default function MapScreen() {
   const [speedLimit, setSpeedLimit] = useState<number | null>(null);
   const [distToTurn, setDistToTurn] = useState<number | null>(null);
   const [rerouting, setRerouting] = useState(false);
+
+  // Departure time planning
+  const [departLabel, setDepartLabel] = useState<DepartLabel>('СЕГА');
+  const [departAt, setDepartAt]       = useState<string | null>(null);
 
   // Map style — satellite-streets by default (fixes VectorSource SoftException
   // by embedding traffic via style URL instead of a separate VectorSource layer)
@@ -264,18 +299,22 @@ export default function MapScreen() {
   // Pattern: state drives render; refs let the stable callback read latest values
   // without re-creating it (re-creation mid-forEach crashes AnimatedNode).
 
-  const navigatingRef   = useRef(false);
-  const routeRef        = useRef<RouteResult | null>(null);
-  const userCoordsRef   = useRef<[number, number] | null>(null);
-  const destinationRef  = useRef<[number, number] | null>(null);
-  const profileRef      = useRef<VehicleProfile | null>(null);
-  const lastRerouteRef  = useRef<number>(0);
+  const navigatingRef      = useRef(false);
+  const routeRef           = useRef<RouteResult | null>(null);
+  const userCoordsRef      = useRef<[number, number] | null>(null);
+  const destinationRef     = useRef<[number, number] | null>(null);
+  const destinationNameRef = useRef('');
+  const profileRef         = useRef<VehicleProfile | null>(null);
+  const departAtRef        = useRef<string | null>(null);
+  const lastRerouteRef     = useRef<number>(0);
 
-  useEffect(() => { navigatingRef.current  = navigating;   }, [navigating]);
-  useEffect(() => { routeRef.current       = route;        }, [route]);
-  useEffect(() => { userCoordsRef.current  = userCoords;   }, [userCoords]);
-  useEffect(() => { destinationRef.current = destination;  }, [destination]);
-  useEffect(() => { profileRef.current     = profile;      }, [profile]);
+  useEffect(() => { navigatingRef.current      = navigating;       }, [navigating]);
+  useEffect(() => { routeRef.current           = route;            }, [route]);
+  useEffect(() => { userCoordsRef.current      = userCoords;       }, [userCoords]);
+  useEffect(() => { destinationRef.current     = destination;      }, [destination]);
+  useEffect(() => { destinationNameRef.current = destinationName;  }, [destinationName]);
+  useEffect(() => { profileRef.current         = profile;          }, [profile]);
+  useEffect(() => { departAtRef.current        = departAt;         }, [departAt]);
 
   // ── GPS location handler (stable — empty deps, reads via refs) ────────────
 
@@ -380,7 +419,7 @@ export default function MapScreen() {
           }
         : undefined;
 
-      const result = await fetchRoute(origin, dest, truck);
+      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined);
       if (!isMountedRef.current) return; // unmount guard
 
       setRoute(result);
@@ -491,6 +530,20 @@ export default function MapScreen() {
     navigateTo(poi.coordinates, poi.name);
   }, [navigateTo]);
 
+  // ── Departure time picker ─────────────────────────────────────────────────
+  // Updates departAt + re-fetches route (if destination is already set).
+  // departAtRef is updated synchronously BEFORE navigateTo so the callback
+  // reads the fresh value without stale-closure issues.
+
+  const pickDeparture = useCallback((label: DepartLabel) => {
+    const iso = departIso(label);
+    setDepartLabel(label);
+    setDepartAt(iso);
+    departAtRef.current = iso; // sync update — navigateTo reads via ref
+    const dest = destinationRef.current;
+    if (dest) navigateTo(dest, destinationNameRef.current);
+  }, [navigateTo]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const routeShape = route
@@ -512,6 +565,22 @@ export default function MapScreen() {
       : Mapbox.StyleURL.Dark;
 
   const searchTop = insets.top + spacing.sm;
+
+  // Dominant congestion across the route ('low' | 'moderate' | 'heavy' | null)
+  const dominantCongestion = useMemo(() => {
+    const c = route?.congestion;
+    if (!c?.length) return null;
+    if (c.some(v => v === 'severe' || v === 'heavy')) return 'heavy';
+    if (c.some(v => v === 'moderate')) return 'moderate';
+    return 'low';
+  }, [route]);
+
+  // Lane guidance from banner_instructions of the current step
+  const currentLanes = useMemo(() => {
+    return stepToShow?.bannerInstructions?.[0]?.sub?.components.filter(
+      c => c.type === 'lane',
+    ) ?? [];
+  }, [stepToShow]);
 
   // ETA — clock time of arrival (current time + route duration)
   const eta = useMemo(() => {
@@ -609,6 +678,19 @@ export default function MapScreen() {
                 {maneuverEmoji(nextStep.maneuver.type, nextStep.maneuver.modifier)}{' '}
                 {nextStep.name || nextStep.maneuver.instruction}
               </Text>
+            )}
+            {/* Lane guidance — show active/inactive lane arrows from banner_instructions */}
+            {currentLanes.length > 0 && (
+              <View style={styles.laneRow}>
+                {currentLanes.map((lane, i) => (
+                  <Text
+                    key={i}
+                    style={[styles.laneArrow, lane.active && styles.laneArrowActive]}
+                  >
+                    {laneDirectionEmoji(lane.directions?.[0])}
+                  </Text>
+                ))}
+              </View>
             )}
           </View>
         </View>
@@ -787,6 +869,45 @@ export default function MapScreen() {
             <Text style={styles.destName} numberOfLines={1}>→ {destinationName}</Text>
           ) : null}
 
+          {/* Congestion indicator */}
+          {dominantCongestion && (
+            <View style={styles.congestionRow}>
+              <View style={[
+                styles.congestionChip,
+                dominantCongestion === 'heavy'    && styles.congestionHeavy,
+                dominantCongestion === 'moderate' && styles.congestionModerate,
+              ]}>
+                <Text style={styles.congestionText}>
+                  {dominantCongestion === 'heavy'
+                    ? '🔴 Задръствания'
+                    : dominantCongestion === 'moderate'
+                    ? '🟡 Умерен трафик'
+                    : '🟢 Свободно'}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Departure time chips — re-fetches route with depart_at for traffic prediction */}
+          {!navigating && (
+            <View style={styles.departRow}>
+              {DEPART_LABELS.map(label => (
+                <TouchableOpacity
+                  key={label}
+                  style={[styles.departChip, departLabel === label && styles.departChipActive]}
+                  onPress={() => pickDeparture(label)}
+                >
+                  <Text style={[
+                    styles.departChipText,
+                    departLabel === label && styles.departChipTextActive,
+                  ]}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           <TouchableOpacity
             style={[
               styles.startBtn,
@@ -875,6 +996,11 @@ const styles = StyleSheet.create({
   navBannerBody: { flex: 1 },
   navStreet: { fontSize: 18, fontWeight: '700', color: colors.text },
   navNext: { ...typography.caption, color: colors.textSecondary, marginTop: 3 },
+
+  // Lane guidance arrows
+  laneRow: { flexDirection: 'row', marginTop: 5, gap: 4 },
+  laneArrow: { fontSize: 18, opacity: 0.3 },
+  laneArrowActive: { opacity: 1 },
 
   // GPS chip
   gpsChip: {
@@ -1117,6 +1243,44 @@ const styles = StyleSheet.create({
   startBtnActive:   { backgroundColor: colors.error },
   startBtnDisabled: { backgroundColor: colors.bgCard, opacity: 0.6 },
   startBtnText: { ...typography.h3, color: colors.text },
+
+  // Congestion chip
+  congestionRow: { paddingHorizontal: spacing.xs, marginBottom: spacing.xs },
+  congestionChip: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(0,160,0,0.15)',
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0,160,0,0.4)',
+  },
+  congestionHeavy:   { backgroundColor: 'rgba(200,0,0,0.15)',   borderColor: 'rgba(200,0,0,0.4)' },
+  congestionModerate:{ backgroundColor: 'rgba(200,140,0,0.15)', borderColor: 'rgba(200,140,0,0.4)' },
+  congestionText: { ...typography.label, color: colors.text, fontSize: 11 },
+
+  // Departure time chips
+  departRow: {
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+    gap: spacing.xs,
+  },
+  departChip: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(22,33,62,0.8)',
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+  },
+  departChipActive: {
+    backgroundColor: 'rgba(79,70,229,0.25)',
+    borderColor: colors.accent,
+  },
+  departChipText:       { ...typography.label, color: colors.textSecondary, fontSize: 10 },
+  departChipTextActive: { ...typography.label, color: colors.accent, fontWeight: '700', fontSize: 10 },
 
   fab: {
     position: 'absolute',

@@ -12,6 +12,21 @@ export interface VoiceInstruction {
   announcement: string;
 }
 
+export interface BannerComponent {
+  type: 'text' | 'lane' | 'icon' | 'exit-number' | 'exit';
+  text: string;
+  active?: boolean;
+  directions?: string[];
+}
+
+/** Structured lane-guidance and turn instruction from Mapbox banner_instructions. */
+export interface BannerInstruction {
+  distanceAlongGeometry: number;
+  primary: { text: string; type: string; modifier?: string };
+  /** sub contains lane components — use sub.components.filter(c => c.type === 'lane') */
+  sub?: { components: BannerComponent[] };
+}
+
 export interface RouteStep {
   maneuver: {
     instruction: string;
@@ -23,6 +38,7 @@ export interface RouteStep {
   name: string;      // road name
   intersections: Array<{ location: [number, number] }>;
   voiceInstructions?: VoiceInstruction[];
+  bannerInstructions?: BannerInstruction[];
 }
 
 export interface RouteResult {
@@ -33,6 +49,8 @@ export interface RouteResult {
   distance: number;      // meters total
   duration: number;      // seconds total
   maxspeeds: MaxspeedEntry[];
+  /** Per-coordinate congestion level: 'low' | 'moderate' | 'heavy' | 'severe' | 'unknown' */
+  congestion: string[];
   steps: RouteStep[];
 }
 
@@ -58,6 +76,7 @@ export async function fetchRoute(
   origin: [number, number],
   destination: [number, number],
   truck?: TruckDimensions,
+  departAt?: string,  // ISO 8601 — enables traffic prediction for future departure
 ): Promise<RouteResult | null> {
   const coords = `${origin[0]},${origin[1]};${destination[0]},${destination[1]}`;
 
@@ -66,7 +85,7 @@ export async function fetchRoute(
     geometries: 'geojson',
     overview: 'full',
     steps: 'true',
-    annotations: 'maxspeed',
+    annotations: 'maxspeed,congestion',
     banner_instructions: 'true',
     voice_instructions: 'true',
     language: 'bg',
@@ -76,6 +95,7 @@ export async function fetchRoute(
   if (truck?.max_width != null)  params.set('max_width',  String(truck.max_width));
   if (truck?.max_weight != null) params.set('max_weight', String(truck.max_weight));
   if (truck?.max_length != null) params.set('max_length', String(truck.max_length));
+  if (departAt)                  params.set('depart_at', departAt);
 
   const url =
     `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?${params}`;
@@ -102,6 +122,11 @@ export async function fetchRoute(
             announcement: vi.announcement,
           }),
         ),
+        bannerInstructions: (s.banner_instructions ?? []).map((bi: any) => ({
+          distanceAlongGeometry: bi.distance_along_geometry,
+          primary: bi.primary,
+          sub: bi.sub ? { components: bi.sub.components ?? [] } : undefined,
+        })),
       })),
   );
 
@@ -110,6 +135,7 @@ export async function fetchRoute(
     distance: r.distance,
     duration: r.duration,
     maxspeeds: r.legs?.[0]?.annotation?.maxspeed ?? [],
+    congestion: r.legs?.[0]?.annotation?.congestion ?? [],
     steps,
   };
 }
