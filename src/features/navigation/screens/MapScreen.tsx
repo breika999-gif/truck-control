@@ -10,7 +10,7 @@ import {
   ScrollView,
 } from 'react-native';
 import Tts from 'react-native-tts';
-import Mapbox from '@rnmapbox/maps';
+import Mapbox, { locationManager } from '@rnmapbox/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -60,6 +60,11 @@ function fmtDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
   return h === 0 ? `${m} мин` : `${h} ч ${m} мин`;
+}
+
+/** Safe TTS speak — swallows errors when TTS engine is not ready. */
+function ttsSpeak(text: string): void {
+  try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
 }
 
 /** Remaining HOS time formatted as H:MM */
@@ -157,6 +162,10 @@ export default function MapScreen() {
   const [poiCategory, setPoiCategory] = useState<POICategory | null>(null);
   const [poiResults, setPoiResults]   = useState<TruckPOI[]>([]);
   const [loadingPOI, setLoadingPOI]   = useState(false);
+  // Ref mirror — lets handlePOISearch read the current category without closing
+  // over state (stale closure on rapid double-tap).
+  const poiCategoryRef = useRef<POICategory | null>(null);
+  useEffect(() => { poiCategoryRef.current = poiCategory; }, [poiCategory]);
 
   // HOS (EU 4.5 h driving limit — Regulation 561/2006)
   const [drivingSeconds, setDrivingSeconds] = useState(0);
@@ -170,7 +179,7 @@ export default function MapScreen() {
 
   useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
 
-  // ── Runtime location permission (Android 6+) ─────────────────────────────
+  // ── Runtime location permission + eager GPS warm-up (Android 6+) ─────────
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     PermissionsAndroid.request(
@@ -181,7 +190,14 @@ export default function MapScreen() {
         buttonPositive: 'Разреши',
         buttonNegative: 'Откажи',
       },
-    );
+    ).then(status => {
+      // Pre-warm GPS hardware immediately after permission is granted.
+      // locationManager.start() wakes up the location engine before the map
+      // renders — gives Google Maps-like fast first fix.
+      if (status === PermissionsAndroid.RESULTS.GRANTED) {
+        locationManager.start();
+      }
+    });
   }, []);
 
   // ── TTS initialisation ───────────────────────────────────────────────────
@@ -206,7 +222,7 @@ export default function MapScreen() {
       step?.name;
     if (text) {
       Tts.stop();
-      Tts.speak(text);
+      ttsSpeak(text);
     }
   }, [currentStep, navigating, voiceMuted, route]);
 
@@ -216,6 +232,9 @@ export default function MapScreen() {
       if (hosIntervalRef.current) clearInterval(hosIntervalRef.current);
       return;
     }
+    // Clear before assigning — prevents interval leak when navigating toggles
+    // true → false → true rapidly (e.g. double-tap on Start button).
+    if (hosIntervalRef.current) clearInterval(hosIntervalRef.current);
     hosIntervalRef.current = setInterval(() => {
       if (isDrivingRef.current && isMountedRef.current) setDrivingSeconds(s => s + 1);
     }, 1000);
@@ -229,15 +248,15 @@ export default function MapScreen() {
     if (!navigating || voiceMuted) return;
     if (drivingSeconds >= 14400 && !hosWarningRef.current.w30) {
       hosWarningRef.current.w30 = true;
-      Tts.speak('Внимание! 30 минути до задължителна почивка.');
+      ttsSpeak('Внимание! 30 минути до задължителна почивка.');
     }
     if (drivingSeconds >= 15600 && !hosWarningRef.current.w10) {
       hosWarningRef.current.w10 = true;
-      Tts.speak('Намерете място за почивка. 10 минути оставащи.');
+      ttsSpeak('Намерете място за почивка. 10 минути оставащи.');
     }
     if (drivingSeconds >= HOS_LIMIT_S && !hosWarningRef.current.limit) {
       hosWarningRef.current.limit = true;
-      Tts.speak('Достигнат лимит за шофиране. Спрете за 45-минутна почивка.');
+      ttsSpeak('Достигнат лимит за шофиране. Спрете за 45-минутна почивка.');
     }
   }, [drivingSeconds, navigating, voiceMuted]);
 
@@ -329,64 +348,74 @@ export default function MapScreen() {
       .finally(() => setRerouting(false));
   }, []); // stable — never recreated
 
-  // ── Destination selection ─────────────────────────────────────────────────
+  // ── Shared route-to helper ────────────────────────────────────────────────
+  // Single source of truth for fetching a route and fitting the camera.
+  // All data read via refs → deps:[] → stable identity across renders.
+  // isMountedRef guard prevents setState after component unmounts.
+
+  const navigateTo = useCallback(async (dest: [number, number], name: string) => {
+    setDestination(dest);
+    setDestinationName(name);
+    setNavigating(false);
+    setRoute(null);
+    setCurrentStep(0);
+    setSpeedLimit(null);
+    setDistToTurn(null);
+
+    // Unified GPS origin: always read from ref (never stale, never re-creates callback)
+    const origin: [number, number] = userCoordsRef.current ?? [
+      MAP_CENTER.longitude,
+      MAP_CENTER.latitude,
+    ];
+
+    setLoadingRoute(true);
+    try {
+      const prof = profileRef.current;
+      const truck = prof
+        ? {
+            max_height: prof.height_m,
+            max_width: prof.width_m,
+            max_weight: prof.weight_t,
+            max_length: prof.length_m,
+          }
+        : undefined;
+
+      const result = await fetchRoute(origin, dest, truck);
+      if (!isMountedRef.current) return; // unmount guard
+
+      setRoute(result);
+
+      if (result) {
+        const coords = result.geometry.coordinates;
+        let minLng = coords[0][0], maxLng = coords[0][0];
+        let minLat = coords[0][1], maxLat = coords[0][1];
+        for (let i = 1; i < coords.length; i++) {
+          if (coords[i][0] < minLng) minLng = coords[i][0];
+          if (coords[i][0] > maxLng) maxLng = coords[i][0];
+          if (coords[i][1] < minLat) minLat = coords[i][1];
+          if (coords[i][1] > maxLat) maxLat = coords[i][1];
+        }
+        cameraRef.current?.fitBounds(
+          [maxLng, maxLat],
+          [minLng, minLat],
+          [120, 40, 220, 40],
+          1000,
+        );
+      } else {
+        cameraRef.current?.flyTo(dest, 800);
+      }
+    } catch {
+      cameraRef.current?.flyTo(dest, 800);
+    } finally {
+      if (isMountedRef.current) setLoadingRoute(false);
+    }
+  }, []); // stable — reads everything via refs
+
+  // ── Destination selection (from SearchBar) ────────────────────────────────
 
   const handleDestinationSelect = useCallback(
-    async (place: GeoPlace) => {
-      const dest = place.center;
-      setDestination(dest);
-      setDestinationName(place.text);
-      setNavigating(false);
-      setRoute(null);
-      setCurrentStep(0);
-      setSpeedLimit(null);
-      setDistToTurn(null);
-
-      const origin: [number, number] = userCoords ?? [
-        MAP_CENTER.longitude,
-        MAP_CENTER.latitude,
-      ];
-
-      setLoadingRoute(true);
-      try {
-        const truck = profile
-          ? {
-              max_height: profile.height_m,
-              max_width: profile.width_m,
-              max_weight: profile.weight_t,
-              max_length: profile.length_m,
-            }
-          : undefined;
-
-        const result = await fetchRoute(origin, dest, truck);
-        setRoute(result);
-
-        if (result) {
-          const coords = result.geometry.coordinates;
-          let minLng = coords[0][0], maxLng = coords[0][0];
-          let minLat = coords[0][1], maxLat = coords[0][1];
-          for (let i = 1; i < coords.length; i++) {
-            if (coords[i][0] < minLng) minLng = coords[i][0];
-            if (coords[i][0] > maxLng) maxLng = coords[i][0];
-            if (coords[i][1] < minLat) minLat = coords[i][1];
-            if (coords[i][1] > maxLat) maxLat = coords[i][1];
-          }
-          cameraRef.current?.fitBounds(
-            [maxLng, maxLat],
-            [minLng, minLat],
-            [120, 40, 220, 40],
-            1000,
-          );
-        } else {
-          cameraRef.current?.flyTo(dest, 800);
-        }
-      } catch {
-        cameraRef.current?.flyTo(dest, 800);
-      } finally {
-        setLoadingRoute(false);
-      }
-    },
-    [userCoords, profile],
+    (place: GeoPlace) => navigateTo(place.center, place.text),
+    [navigateTo],
   );
 
   // ── Start navigation ──────────────────────────────────────────────────────
@@ -404,7 +433,7 @@ export default function MapScreen() {
     if (uc) cameraRef.current?.flyTo(uc, 600);
     if (!voiceMutedRef.current) {
       Tts.stop();
-      Tts.speak('Навигацията е стартирана');
+      ttsSpeak('Навигацията е стартирана');
     }
   }, []);
 
@@ -432,7 +461,8 @@ export default function MapScreen() {
   // ── POI search ────────────────────────────────────────────────────────────
 
   const handlePOISearch = useCallback(async (cat: POICategory) => {
-    if (poiCategory === cat) {
+    // Read via ref — avoids stale closure on rapid double-tap
+    if (poiCategoryRef.current === cat) {
       setPoiCategory(null);
       setPoiResults([]);
       return;
@@ -444,73 +474,22 @@ export default function MapScreen() {
     setLoadingPOI(true);
     try {
       const results = await searchNearbyPOI(center, cat);
+      if (!isMountedRef.current) return;
       setPoiResults(results);
     } catch {
-      setPoiResults([]);
+      if (isMountedRef.current) setPoiResults([]);
     } finally {
-      setLoadingPOI(false);
+      if (isMountedRef.current) setLoadingPOI(false);
     }
-  }, [poiCategory]);
+  }, []); // stable — reads category via poiCategoryRef
 
   // ── Navigate to POI ───────────────────────────────────────────────────────
 
-  const handlePOINavigate = useCallback(async (poi: TruckPOI) => {
-    const dest = poi.coordinates;
-    setDestination(dest);
-    setDestinationName(poi.name);
+  const handlePOINavigate = useCallback((poi: TruckPOI) => {
     setPoiCategory(null);
     setPoiResults([]);
-    setNavigating(false);
-    setRoute(null);
-    setCurrentStep(0);
-    setSpeedLimit(null);
-    setDistToTurn(null);
-
-    const origin: [number, number] = userCoordsRef.current ?? [
-      MAP_CENTER.longitude,
-      MAP_CENTER.latitude,
-    ];
-
-    setLoadingRoute(true);
-    try {
-      const prof = profileRef.current;
-      const truck = prof
-        ? {
-            max_height: prof.height_m,
-            max_width: prof.width_m,
-            max_weight: prof.weight_t,
-            max_length: prof.length_m,
-          }
-        : undefined;
-
-      const result = await fetchRoute(origin, dest, truck);
-      setRoute(result);
-
-      if (result) {
-        const coords = result.geometry.coordinates;
-        let minLng = coords[0][0], maxLng = coords[0][0];
-        let minLat = coords[0][1], maxLat = coords[0][1];
-        for (let i = 1; i < coords.length; i++) {
-          if (coords[i][0] < minLng) minLng = coords[i][0];
-          if (coords[i][0] > maxLng) maxLng = coords[i][0];
-          if (coords[i][1] < minLat) minLat = coords[i][1];
-          if (coords[i][1] > maxLat) maxLat = coords[i][1];
-        }
-        cameraRef.current?.fitBounds(
-          [maxLng, maxLat],
-          [minLng, minLat],
-          [120, 40, 220, 40],
-          1000,
-        );
-      } else {
-        cameraRef.current?.flyTo(dest, 800);
-      }
-    } catch {
-      cameraRef.current?.flyTo(dest, 800);
-    } finally {
-      setLoadingRoute(false);
-    }
-  }, []);
+    navigateTo(poi.coordinates, poi.name);
+  }, [navigateTo]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -534,16 +513,12 @@ export default function MapScreen() {
 
   const searchTop = insets.top + spacing.sm;
 
-  // Fuel estimate based on route distance and vehicle profile
-  const fuelEstimate = useMemo(() => {
+  // ETA — clock time of arrival (current time + route duration)
+  const eta = useMemo(() => {
     if (!route) return null;
-    const km = route.distance / 1000;
-    if (profile?.fuel_type === 'electric') return `${(km * 0.8).toFixed(0)} kWh`;
-    if (profile?.fuel_type === 'cng')      return `${(km * 0.25).toFixed(0)} кг NG`;
-    // Diesel / lpg / hybrid: 28 L/100km base + 0.4 per ton over 10t
-    const per100 = 28 + Math.max(0, (profile?.weight_t ?? 18) - 10) * 0.4;
-    return `${(per100 * km / 100).toFixed(0)} л`;
-  }, [route, profile]);
+    const arrival = new Date(Date.now() + route.duration * 1000);
+    return arrival.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' });
+  }, [route]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -562,7 +537,14 @@ export default function MapScreen() {
             "Animated.timing called on undefined". */}
         <StableCamera cameraRef={cameraRef} navigating={navigating} mapLoaded={mapIsLoaded} />
 
-        <Mapbox.UserLocation visible onUpdate={handleUserLocation} />
+        {/* androidRenderMode="gps" uses GPS hardware directly for faster fix.
+            minDisplacement={0} delivers every position update, no threshold. */}
+        <Mapbox.UserLocation
+          visible
+          onUpdate={handleUserLocation}
+          androidRenderMode="gps"
+          minDisplacement={0}
+        />
 
         {/* Route polyline — only after style loaded */}
         {mapIsLoaded && routeShape && (
@@ -637,7 +619,12 @@ export default function MapScreen() {
         {/* Satellite toggle */}
         <TouchableOpacity
           style={styles.mapBtn}
-          onPress={() => { setSatellite(v => !v); setMapIsLoaded(false); }}
+          onPress={() => {
+            setSatellite(v => !v);
+            // During active navigation keep mapIsLoaded=true so camera follow
+            // is not interrupted. Layers reload via onDidFinishLoadingStyle.
+            if (!navigating) setMapIsLoaded(false);
+          }}
         >
           <Text style={styles.mapBtnText}>{satellite ? '🌑' : '🛰️'}</Text>
         </TouchableOpacity>
@@ -645,7 +632,10 @@ export default function MapScreen() {
         {/* Traffic toggle — reloads style URL */}
         <TouchableOpacity
           style={[styles.mapBtn, !showTraffic && styles.mapBtnOff]}
-          onPress={() => { setShowTraffic(v => !v); setMapIsLoaded(false); }}
+          onPress={() => {
+            setShowTraffic(v => !v);
+            if (!navigating) setMapIsLoaded(false);
+          }}
         >
           <Text style={styles.mapBtnText}>🚦</Text>
         </TouchableOpacity>
@@ -779,12 +769,12 @@ export default function MapScreen() {
               <Text style={styles.infoLabel}>ПРИСТИГАНЕ</Text>
               <Text style={styles.infoValue}>{fmtDuration(route.duration)}</Text>
             </View>
-            {fuelEstimate ? (
+            {eta ? (
               <>
                 <View style={styles.infoDivider} />
                 <View style={styles.infoCell}>
-                  <Text style={styles.infoLabel}>⛽ ГОРИВО</Text>
-                  <Text style={styles.infoValue}>{fuelEstimate}</Text>
+                  <Text style={styles.infoLabel}>⏰ ПРИСТИГАНЕ</Text>
+                  <Text style={styles.infoValue}>{eta}</Text>
                 </View>
               </>
             ) : null}

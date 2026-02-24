@@ -116,4 +116,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Google Fused Location Provider — required for Mapbox to acquire GPS
+    // instantly (same engine as Google Maps). Without this, Mapbox falls back
+    // to Android's PASSIVE location provider and never receives coordinates
+    // unless another app is already requesting location.
+    implementation("com.google.android.gms:play-services-location:21.3.0")
 }
