@@ -4,13 +4,16 @@ import {
   View,
   TouchableOpacity,
   Text,
+  TextInput,
   ActivityIndicator,
   PermissionsAndroid,
   Platform,
   ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import Tts from 'react-native-tts';
-import Mapbox, { locationManager, LocationPuck } from '@rnmapbox/maps';
+import Geolocation from 'react-native-geolocation-service';
+import Mapbox, { locationManager, LocationPuck, type CameraPadding } from '@rnmapbox/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -35,10 +38,31 @@ import {
   type POICategory,
   type TruckPOI,
 } from '../api/poi';
+import {
+  sendChatMessage,
+  savePOI,
+  fetchHealth,
+  type ChatMessage,
+  type ChatContext,
+} from '../../../shared/services/backendApi';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
+
+// ── Neon Blue theme ──────────────────────────────────────────────────────────
+const NEON       = '#00bfff';          // neon blue
+const NEON_DIM   = 'rgba(0,191,255,0.10)'; // very light tinted bg
+
+// Navigation arrow PNG — middle rotating layer for LocationPuck bearingImage.
+// Must be registered inside <Mapbox.Images> so the map atlas gets the asset.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const NAV_ARROW = require('../../../shared/assets/nav_arrow.png') as number;
+
+// Typed padding constants — avoids "partial CameraPadding" TypeScript error.
+// Always pass all four fields; some native builds crash on partial/undefined.
+const NAV_PADDING: CameraPadding  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
+const ZERO_PADDING: CameraPadding = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
 
 const HOS_LIMIT_S = 16200; // EU 4.5 h = 16 200 s
 const POI_CATEGORIES: POICategory[] = [
@@ -128,7 +152,7 @@ function haversineMeters(a: [number, number], b: [number, number]): number {
 // Fix: gate followUserLocation on BOTH navigating AND mapLoaded.
 
 interface StableCameraProps {
-  cameraRef: React.RefObject<Mapbox.Camera | null>;
+  cameraRef: React.RefObject<Mapbox.Camera>;
   navigating: boolean;
   mapLoaded: boolean;
 }
@@ -152,7 +176,9 @@ const StableCamera = React.memo(
       followPitch={navigating ? 60 : 0}
       // Push the location puck toward the bottom third of the screen so
       // ~70% of the visible road is ahead of the truck — more look-ahead.
-      followPadding={navigating ? { paddingBottom: 280 } : undefined}
+      // NAV_PADDING / ZERO_PADDING are fully-typed CameraPadding constants —
+      // avoids "partial CameraPadding" TS error and native crash on undefined.
+      followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
     />
   ),
   (prev, next) =>
@@ -200,6 +226,16 @@ export default function MapScreen() {
   const voiceMutedRef     = useRef(false);
   const lastSpokenStepRef = useRef(-1);
 
+  // Options pocket menu
+  const [optionsOpen, setOptionsOpen] = useState(false);
+
+  // Backend / Gemini chat
+  const [backendOnline, setBackendOnline] = useState(false);
+  const [chatOpen, setChatOpen]           = useState(false);
+  const [chatInput, setChatInput]         = useState('');
+  const [chatHistory, setChatHistory]     = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading]     = useState(false);
+
   // POI
   const [poiCategory, setPoiCategory] = useState<POICategory | null>(null);
   const [poiResults, setPoiResults]   = useState<TruckPOI[]>([]);
@@ -221,25 +257,118 @@ export default function MapScreen() {
 
   useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
 
-  // ── Runtime location permission + eager GPS warm-up (Android 6+) ─────────
+  // ── Runtime location permission + GPS (react-native-geolocation-service) ──
+  // Uses Google Fused Location Provider on Android for faster first fix and
+  // better accuracy than the default RN location. locationManager.start()
+  // keeps the Mapbox LocationPuck updated via the native SDK.
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      {
-        title: 'Разрешение за местоположение',
-        message: 'TruckAI Pro се нуждае от GPS за навигация.',
-        buttonPositive: 'Разреши',
-        buttonNegative: 'Откажи',
-      },
-    ).then(status => {
-      // Pre-warm GPS hardware immediately after permission is granted.
-      // locationManager.start() wakes up the location engine before the map
-      // renders — gives Google Maps-like fast first fix.
-      if (status === PermissionsAndroid.RESULTS.GRANTED) {
-        locationManager.start();
-      }
-    });
+    let watchId: number | null = null;
+
+    const startWatch = () => {
+      locationManager.start(); // warm Mapbox location engine for LocationPuck
+
+      watchId = Geolocation.watchPosition(
+        (pos) => {
+          if (!isMountedRef.current) return;
+          const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
+          userCoordsRef.current = coords;
+          setUserCoords(coords);
+          setGpsReady(true);
+
+          const spd = pos.coords.speed ?? -1;
+          const kmh = spd > 0 ? spd * 3.6 : 0;
+          setSpeed(Math.round(kmh));
+          isDrivingRef.current = kmh > 3;
+
+          const isNav = navigatingRef.current;
+          const cur   = routeRef.current;
+          if (!isNav || !cur) return;
+
+          setSpeedLimit(
+            getSpeedLimitAtPosition(cur.geometry.coordinates, cur.maxspeeds, coords),
+          );
+
+          const stepIdx = getCurrentStepIndex(cur.steps, coords);
+          setCurrentStep(stepIdx);
+
+          const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
+          setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
+
+          // ── Auto re-route when > 50 m off route (30-second cooldown) ──────
+          const now = Date.now();
+          if (now - lastRerouteRef.current < 30_000) return;
+
+          let minDist = Infinity;
+          const routeCoords = cur.geometry.coordinates;
+          for (let i = 0; i < routeCoords.length; i++) {
+            const d = haversineMeters(coords, routeCoords[i] as [number, number]);
+            if (d < minDist) minDist = d;
+            if (minDist < 50) return;
+          }
+
+          const dest = destinationRef.current;
+          if (!dest) return;
+
+          lastRerouteRef.current = now;
+          setRerouting(true);
+          const prof = profileRef.current;
+          const truck = prof
+            ? { max_height: prof.height_m, max_width: prof.width_m,
+                max_weight: prof.weight_t, max_length: prof.length_m }
+            : undefined;
+
+          fetchRoute(coords, dest, truck)
+            .then(result => {
+              if (result) { routeRef.current = result; setRoute(result); }
+            })
+            .catch(() => {})
+            .finally(() => { if (isMountedRef.current) setRerouting(false); });
+        },
+        () => { /* silently ignore errors — GPS may be unavailable indoors */ },
+        {
+          enableHighAccuracy: true,
+          distanceFilter: 2,        // update every 2 m of movement
+          interval: 1000,           // Android: check every 1 s
+          fastestInterval: 500,     // Android: max rate
+          forceRequestLocation: true,
+          showLocationDialog: true,
+        },
+      );
+    };
+
+    if (Platform.OS === 'android') {
+      PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: 'Разрешение за местоположение',
+          message: 'TruckAI Pro се нуждае от GPS за навигация.',
+          buttonPositive: 'Разреши',
+          buttonNegative: 'Откажи',
+        },
+      ).then(status => {
+        if (status === PermissionsAndroid.RESULTS.GRANTED) startWatch();
+      });
+    } else {
+      Geolocation.requestAuthorization('whenInUse').then(auth => {
+        if (auth === 'granted') startWatch();
+      });
+    }
+
+    return () => {
+      if (watchId !== null) Geolocation.clearWatch(watchId);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // stable — all logic reads via refs
+
+  // ── Flask backend health check — poll every 30 s ────────────────────────
+  useEffect(() => {
+    const check = () =>
+      fetchHealth().then(h => {
+        if (isMountedRef.current) setBackendOnline(h?.status === 'ok');
+      });
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   // ── TTS initialisation ───────────────────────────────────────────────────
@@ -322,77 +451,6 @@ export default function MapScreen() {
   useEffect(() => { destinationNameRef.current = destinationName;  }, [destinationName]);
   useEffect(() => { profileRef.current         = profile;          }, [profile]);
   useEffect(() => { departAtRef.current        = departAt;         }, [departAt]);
-
-  // ── GPS location handler (stable — empty deps, reads via refs) ────────────
-
-  const handleUserLocation = useCallback((loc: Mapbox.Location) => {
-    const coords: [number, number] = [loc.coords.longitude, loc.coords.latitude];
-    userCoordsRef.current = coords;
-    setUserCoords(coords);
-    setGpsReady(true);
-
-    const spd = loc.coords.speed ?? -1;
-    const kmh = spd > 0 ? spd * 3.6 : 0;
-    setSpeed(Math.round(kmh));
-
-    // Update driving state for HOS timer
-    isDrivingRef.current = kmh > 3;
-
-    const isNav = navigatingRef.current;
-    const cur   = routeRef.current;
-    if (!isNav || !cur) return;
-
-    // Speed limit
-    setSpeedLimit(
-      getSpeedLimitAtPosition(cur.geometry.coordinates, cur.maxspeeds, coords),
-    );
-
-    // Current step
-    const stepIdx = getCurrentStepIndex(cur.steps, coords);
-    setCurrentStep(stepIdx);
-
-    // Distance to next turn — straight line to next step's first intersection
-    const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
-    setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
-
-    // ── Auto re-route when > 50 m off route (30-second cooldown) ────────────
-    const now = Date.now();
-    if (now - lastRerouteRef.current < 30_000) return;
-
-    let minDist = Infinity;
-    const routeCoords = cur.geometry.coordinates;
-    for (let i = 0; i < routeCoords.length; i++) {
-      const d = haversineMeters(coords, routeCoords[i] as [number, number]);
-      if (d < minDist) minDist = d;
-      if (minDist < 50) return; // still on route — early exit
-    }
-
-    // Off route — fetch new route from current position
-    const dest = destinationRef.current;
-    if (!dest) return;
-
-    lastRerouteRef.current = now;
-    setRerouting(true);
-    const prof = profileRef.current;
-    const truck = prof
-      ? {
-          max_height: prof.height_m,
-          max_width: prof.width_m,
-          max_weight: prof.weight_t,
-          max_length: prof.length_m,
-        }
-      : undefined;
-
-    fetchRoute(coords, dest, truck)
-      .then(result => {
-        if (result) {
-          routeRef.current = result;
-          setRoute(result);
-        }
-      })
-      .catch(() => {/* silent — keep existing route */})
-      .finally(() => setRerouting(false));
-  }, []); // stable — never recreated
 
   // ── Shared route-to helper ────────────────────────────────────────────────
   // Single source of truth for fetching a route and fitting the camera.
@@ -504,6 +562,49 @@ export default function MapScreen() {
     cameraRef.current?.flyTo([MAP_CENTER.longitude, MAP_CENTER.latitude], 800);
   }, []);
 
+  // ── AI chat (GPT-4o) ──────────────────────────────────────────────────────
+  // Sends the user message to Flask → GPT-4o and appends the reply.
+  // chatHistory + driver context are passed so the model has full context.
+
+  const handleChat = useCallback(async () => {
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+
+    const userMsg: ChatMessage = { role: 'user', text };
+    const newHistory = [...chatHistory, userMsg];
+    setChatHistory(newHistory);
+    setChatInput('');
+    setChatLoading(true);
+
+    const context: ChatContext = {
+      lat:            userCoords?.[1],
+      lng:            userCoords?.[0],
+      driven_seconds: drivingSeconds,
+      speed_kmh:      speed,
+    };
+
+    const response = await sendChatMessage(text, chatHistory, context);
+    if (!isMountedRef.current) return;
+
+    if (response.ok && response.reply) {
+      setChatHistory([...newHistory, { role: 'model', text: response.reply }]);
+      if (!voiceMutedRef.current) {
+        Tts.stop();
+        ttsSpeak(response.reply);
+      }
+      // Auto-navigate when GPT-4o returns a navigate action
+      if (response.action?.type === 'navigate') {
+        navigateTo(response.action.coords, response.action.destination);
+      }
+    } else {
+      setChatHistory([
+        ...newHistory,
+        { role: 'model', text: 'Грешка: GPT-4o не отговаря.' },
+      ]);
+    }
+    setChatLoading(false);
+  }, [chatInput, chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo]);
+
   // ── POI search ────────────────────────────────────────────────────────────
 
   const handlePOISearch = useCallback(async (cat: POICategory) => {
@@ -596,6 +697,16 @@ export default function MapScreen() {
     return arrival.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' });
   }, [route]);
 
+  // Puck scale: arrow grows when approaching a turn (≤300 m) so the driver
+  // can clearly see the heading. Uses a plain number — Value<number> accepts
+  // both static numbers and Mapbox expressions.
+  const puckScale = useMemo(() => {
+    if (!navigating || distToTurn == null || distToTurn > 300) return 1.0;
+    if (distToTurn < 50)  return 2.0;
+    if (distToTurn < 150) return 1.5;
+    return 1.2;
+  }, [navigating, distToTurn]);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -607,6 +718,10 @@ export default function MapScreen() {
         styleURL={mapStyleURL}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
       >
+        {/* Register nav-arrow PNG for LocationPuck bearingImage (middle rotating layer).
+            Must be inside MapView so the image is added to the native map atlas. */}
+        <Mapbox.Images images={{ 'nav-arrow': NAV_ARROW }} />
+
         {/* Always pass followUserMode + followZoomLevel with concrete values.
             Mapbox creates an Animated node for every prop it first receives.
             If a prop appears later its Animated.Value starts as undefined →
@@ -616,20 +731,20 @@ export default function MapScreen() {
         {/* UserLocation: GPS data only — no visual puck (LocationPuck handles rendering).
             minDisplacement={0} delivers every position update without threshold filtering.
             visible={false} suppresses the deprecated built-in puck marker. */}
-        <Mapbox.UserLocation
-          visible={false}
-          onUpdate={handleUserLocation}
-          minDisplacement={0}
-        />
+        {/* UserLocation: keeps Mapbox location engine warm for LocationPuck */}
+        <Mapbox.UserLocation visible={false} />
 
-        {/* LocationPuck: direct named import — no Mapbox.LocationPuck namespace.
-            puckBearing="course" aligns the puck with direction of travel.
-            pulsing.radius="accuracy" draws a live GPS accuracy circle.
-            pulsing.color matches the app accent (#4f46e5 = indigo). */}
+        {/* LocationPuck — Neon Blue glowing arrow (Mapbox v10.2.10).
+            bearingImage="nav-arrow" — custom PNG for the middle rotating layer;
+              without this prop the puck renders as a static dot (no rotation).
+            pulsing.color=NEON      — neon-blue sonar ring around the puck.
+            pulsing.radius=30       — fixed 30 dp radius (clean ring vs accuracy blob). */}
         <LocationPuck
           puckBearingEnabled
           puckBearing="course"
-          pulsing={{ isEnabled: true, color: '#4f46e5', radius: 'accuracy' }}
+          bearingImage="nav-arrow"
+          scale={puckScale}
+          pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
         />
 
@@ -642,7 +757,7 @@ export default function MapScreen() {
             />
             <Mapbox.LineLayer
               id="route-line"
-              style={{ lineColor: colors.accent, lineWidth: 5, lineCap: 'round', lineJoin: 'round' }}
+              style={{ lineColor: NEON, lineWidth: 5, lineCap: 'round', lineJoin: 'round' }}
             />
           </Mapbox.ShapeSource>
         )}
@@ -714,39 +829,55 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── Right-side button column ── */}
-      <View style={[styles.rightBtnCol, { top: searchTop }]}>
-        {/* Satellite toggle */}
+      {/* ── Options pocket menu — single ⚙️ button; expands to controls panel ── */}
+      <View style={[styles.optionsContainer, { top: searchTop }]}>
         <TouchableOpacity
           style={styles.mapBtn}
-          onPress={() => {
-            setSatellite(v => !v);
-            // During active navigation keep mapIsLoaded=true so camera follow
-            // is not interrupted. Layers reload via onDidFinishLoadingStyle.
-            if (!navigating) setMapIsLoaded(false);
-          }}
+          onPress={() => setOptionsOpen(v => !v)}
         >
-          <Text style={styles.mapBtnText}>{satellite ? '🌑' : '🛰️'}</Text>
+          <Text style={styles.mapBtnText}>{optionsOpen ? '✕' : '⚙️'}</Text>
         </TouchableOpacity>
 
-        {/* Traffic toggle — reloads style URL */}
-        <TouchableOpacity
-          style={[styles.mapBtn, !showTraffic && styles.mapBtnOff]}
-          onPress={() => {
-            setShowTraffic(v => !v);
-            if (!navigating) setMapIsLoaded(false);
-          }}
-        >
-          <Text style={styles.mapBtnText}>🚦</Text>
-        </TouchableOpacity>
+        {optionsOpen && (
+          <View style={styles.optionsPanel}>
+            {/* ── Map toggles row ── */}
+            <View style={styles.optionsRow}>
+              <TouchableOpacity
+                style={styles.optionBtn}
+                onPress={() => { setSatellite(v => !v); if (!navigating) setMapIsLoaded(false); }}
+              >
+                <Text style={styles.mapBtnText}>{satellite ? '🌑' : '🛰️'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
+                onPress={() => { setShowTraffic(v => !v); if (!navigating) setMapIsLoaded(false); }}
+              >
+                <Text style={styles.mapBtnText}>🚦</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
+                onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
+              >
+                <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
+              </TouchableOpacity>
+            </View>
 
-        {/* Voice mute toggle */}
-        <TouchableOpacity
-          style={[styles.mapBtn, voiceMuted && styles.mapBtnOff]}
-          onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
-        >
-          <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
-        </TouchableOpacity>
+            {/* ── POI category row ── */}
+            {!navigating && !route && (
+              <View style={styles.optionsRow}>
+                {POI_CATEGORIES.map((cat) => (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[styles.optionBtn, poiCategory === cat && styles.optionBtnActive]}
+                    onPress={() => { handlePOISearch(cat); setOptionsOpen(false); }}
+                  >
+                    <Text style={styles.mapBtnText}>{POI_META[cat].emoji}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
       </View>
 
       {/* ── GPS chip ── */}
@@ -777,22 +908,6 @@ export default function MapScreen() {
         <View style={styles.loadingChip}>
           <ActivityIndicator size="small" color={colors.accent} />
           <Text style={styles.loadingText}>Изчисляване на маршрут...</Text>
-        </View>
-      )}
-
-      {/* ── POI category bar (visible when no active route) ── */}
-      {!navigating && !route && (
-        <View style={[styles.poiBar, { top: searchTop + 58 }]}>
-          {POI_CATEGORIES.map((cat) => (
-            <TouchableOpacity
-              key={cat}
-              style={[styles.poiCatBtn, poiCategory === cat && styles.poiCatBtnActive]}
-              onPress={() => handlePOISearch(cat)}
-            >
-              <Text style={styles.poiCatEmoji}>{POI_META[cat].emoji}</Text>
-              <Text style={styles.poiCatLabel}>{POI_META[cat].label}</Text>
-            </TouchableOpacity>
-          ))}
         </View>
       )}
 
@@ -956,6 +1071,77 @@ export default function MapScreen() {
           <Text style={styles.fabEmoji}>🚚</Text>
         </TouchableOpacity>
       )}
+
+      {/* ── Gemini FAB (bottom-left) ── */}
+      <TouchableOpacity
+        style={[
+          styles.geminiFab,
+          { bottom: insets.bottom + spacing.xl },
+          backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+        ]}
+        onPress={() => setChatOpen(v => !v)}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.geminiFabEmoji}>{chatOpen ? '✕' : '🤖'}</Text>
+        {/* Online dot */}
+        <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+      </TouchableOpacity>
+
+      {/* ── Gemini chat panel ── */}
+      {chatOpen && (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={[styles.chatPanel, { bottom: insets.bottom + 80 }]}
+        >
+          {/* Messages */}
+          <ScrollView
+            style={styles.chatMessages}
+            contentContainerStyle={styles.chatMessagesContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {chatHistory.length === 0 && (
+              <Text style={styles.chatPlaceholder}>
+                Питай TruckAI за маршрути, паркинг, камери...
+              </Text>
+            )}
+            {chatHistory.map((msg, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.chatBubble,
+                  msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
+                ]}
+              >
+                <Text style={styles.chatBubbleText}>{msg.text}</Text>
+              </View>
+            ))}
+            {chatLoading && (
+              <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
+            )}
+          </ScrollView>
+
+          {/* Input row */}
+          <View style={styles.chatInputRow}>
+            <TextInput
+              style={styles.chatInput}
+              value={chatInput}
+              onChangeText={setChatInput}
+              placeholder="Съобщение..."
+              placeholderTextColor={colors.textMuted}
+              onSubmitEditing={handleChat}
+              returnKeyType="send"
+              editable={!chatLoading}
+            />
+            <TouchableOpacity
+              style={[styles.chatSendBtn, chatLoading && { opacity: 0.4 }]}
+              onPress={handleChat}
+              disabled={chatLoading}
+            >
+              <Text style={styles.chatSendText}>➤</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      )}
     </View>
   );
 }
@@ -969,7 +1155,7 @@ const styles = StyleSheet.create({
   searchContainer: {
     position: 'absolute',
     left: spacing.md,
-    right: 60, // keep clear of 44px btn + md margin
+    right: 68, // keep clear of 44px Options btn + spacing.md
     zIndex: 20,
   },
 
@@ -983,13 +1169,17 @@ const styles = StyleSheet.create({
   mapBtn: {
     width: 44,
     height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 50,
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: NEON,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 8,
+    elevation: 12,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
   },
   mapBtnOff: { opacity: 0.4 },
   mapBtnText: { fontSize: 20 },
@@ -999,16 +1189,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
-    backgroundColor: colors.bgCard,
-    borderRadius: radius.md,
+    backgroundColor: 'rgba(0,10,30,0.88)',
+    borderRadius: 50,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    elevation: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    elevation: 14,
+    borderWidth: 1.5,
+    borderColor: NEON,
     zIndex: 20,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 10,
   },
   navArrow: { fontSize: 36, marginRight: spacing.md },
   navBannerBody: { flex: 1 },
@@ -1108,17 +1302,25 @@ const styles = StyleSheet.create({
   },
   poiCatBtn: {
     flex: 1,
-    backgroundColor: 'rgba(22,33,62,0.92)',
-    borderRadius: radius.sm,
+    backgroundColor: NEON_DIM,
+    borderRadius: 50,
     paddingVertical: 6,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    elevation: 4,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    elevation: 8,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
   },
   poiCatBtnActive: {
-    borderColor: colors.accent,
-    backgroundColor: 'rgba(79,70,229,0.25)',
+    borderColor: NEON,
+    backgroundColor: 'rgba(0,191,255,0.2)',
+    shadowColor: NEON,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    elevation: 12,
   },
   poiCatEmoji: { fontSize: 18 },
   poiCatLabel: { ...typography.label, color: colors.textSecondary, fontSize: 9, marginTop: 1 },
@@ -1225,14 +1427,18 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: colors.bgSecondary,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: 'rgba(0,8,20,0.94)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingHorizontal: spacing.md,
     paddingTop: spacing.md,
     elevation: 16,
-    borderTopWidth: 1,
-    borderColor: colors.border,
+    borderTopWidth: 1.5,
+    borderColor: NEON,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
   infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm },
   infoCell: { flex: 1, alignItems: 'center' },
@@ -1252,14 +1458,21 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   startBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
+    backgroundColor: NEON_DIM,
+    borderRadius: 50,
+    borderWidth: 1.5,
+    borderColor: NEON,
     paddingVertical: spacing.md,
     alignItems: 'center',
     marginBottom: spacing.xs,
+    elevation: 12,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
   },
-  startBtnActive:   { backgroundColor: colors.error },
-  startBtnDisabled: { backgroundColor: colors.bgCard, opacity: 0.6 },
+  startBtnActive:   { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: colors.error, shadowColor: colors.error },
+  startBtnDisabled: { backgroundColor: 'rgba(22,33,62,0.5)', borderColor: colors.border, opacity: 0.6 },
   startBtnText: { ...typography.h3, color: colors.text },
 
   // Congestion chip
@@ -1287,15 +1500,20 @@ const styles = StyleSheet.create({
   departChip: {
     flex: 1,
     paddingVertical: 6,
-    borderRadius: radius.sm,
-    backgroundColor: 'rgba(22,33,62,0.8)',
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 50,
+    backgroundColor: 'rgba(0,20,40,0.7)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,191,255,0.3)',
     alignItems: 'center',
   },
   departChipActive: {
-    backgroundColor: 'rgba(79,70,229,0.25)',
-    borderColor: colors.accent,
+    backgroundColor: NEON_DIM,
+    borderColor: NEON,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 5,
+    elevation: 6,
   },
   departChipText:       { ...typography.label, color: colors.textSecondary, fontSize: 10 },
   departChipTextActive: { ...typography.label, color: colors.accent, fontWeight: '700', fontSize: 10 },
@@ -1305,11 +1523,178 @@ const styles = StyleSheet.create({
     right: spacing.md,
     width: 60,
     height: 60,
-    borderRadius: radius.full,
-    backgroundColor: colors.accent,
+    borderRadius: 50,
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: NEON,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 6,
+    elevation: 14,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 10,
   },
   fabEmoji: { fontSize: 26 },
+
+  // Gemini chat FAB (bottom-left)
+  geminiFab: {
+    position: 'absolute',
+    left: spacing.md,
+    width: 56,
+    height: 56,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    borderWidth: 1.5,
+  },
+  geminiFabOnline:  { backgroundColor: NEON_DIM, borderColor: NEON, shadowColor: NEON, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.85, shadowRadius: 8 },
+  geminiFabOffline: { backgroundColor: 'rgba(22,33,62,0.92)', borderColor: colors.border },
+  geminiFabEmoji: { fontSize: 24 },
+
+  // Online indicator dot
+  onlineDot: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: colors.bg,
+  },
+  onlineDotGreen: { backgroundColor: '#22c55e' },
+  onlineDotGrey:  { backgroundColor: colors.textMuted },
+
+  // Chat panel
+  chatPanel: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    maxHeight: 360,
+    backgroundColor: colors.bgSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    elevation: 20,
+    overflow: 'hidden',
+    zIndex: 50,
+  },
+  chatMessages: {
+    flex: 1,
+    maxHeight: 280,
+  },
+  chatMessagesContent: {
+    padding: spacing.sm,
+    gap: spacing.xs,
+  },
+  chatPlaceholder: {
+    ...typography.caption,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.md,
+  },
+  chatBubble: {
+    maxWidth: '85%',
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  chatBubbleUser:  {
+    alignSelf: 'flex-end',
+    backgroundColor: colors.accent,
+  },
+  chatBubbleModel: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(50,50,80,0.95)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chatBubbleText: { ...typography.caption, color: colors.text, fontSize: 13 },
+
+  // Input row
+  chatInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    gap: spacing.xs,
+  },
+  chatInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: 'rgba(15,15,30,0.8)',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    color: colors.text,
+    ...typography.caption,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chatSendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 50,
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.75,
+    shadowRadius: 6,
+  },
+  chatSendText: { color: colors.text, fontSize: 16 },
+
+  // ── Options pocket menu ──────────────────────────────────────────────────
+  optionsContainer: {
+    position: 'absolute',
+    right: spacing.md,
+    zIndex: 20,
+    alignItems: 'flex-end',
+  },
+  optionsPanel: {
+    marginTop: spacing.xs,
+    backgroundColor: 'rgba(0,8,20,0.93)',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    padding: spacing.xs,
+    gap: spacing.xs,
+    elevation: 18,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.65,
+    shadowRadius: 10,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  optionBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 50,
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,191,255,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  optionBtnOff: { opacity: 0.3 },
+  optionBtnActive: {
+    borderColor: NEON,
+    backgroundColor: 'rgba(0,191,255,0.22)',
+    elevation: 8,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+  },
 });
