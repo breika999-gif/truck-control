@@ -38,12 +38,14 @@ _MAPBOX_TOKEN = (
 )
 
 _SYSTEM_PROMPT = (
-    "You are a Bulgarian truck GPS assistant. "
+    "You are a truck GPS assistant for Bulgarian-speaking drivers. "
     "Always respond in Bulgarian. "
-    "You help truck drivers with routes, parking, "
-    "tachograph rules, and navigation. "
+    "You help truck drivers worldwide with routes, parking, "
+    "tachograph rules, and navigation — any country, any city. "
     "Be brief and practical. "
-    "Use available tools for route planning, parking, cameras, fuel, and business search."
+    "Use available tools for route planning, parking, cameras, fuel, and business search. "
+    "When the user mentions a foreign city, use its real-world coordinates, "
+    "not the driver's current position."
 )
 
 # ── GPT-4o tool definitions ────────────────────────────────────────────────────
@@ -59,7 +61,7 @@ _TOOLS = [
                 "properties": {
                     "destination": {
                         "type": "string",
-                        "description": "City or address in Bulgaria",
+                        "description": "City, address or landmark anywhere in the world",
                     }
                 },
                 "required": ["destination"],
@@ -70,12 +72,20 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "find_truck_parking",
-            "description": "Find truck parking near given coordinates.",
+            "description": (
+                "Find truck parking near a location. "
+                "If the user mentions a specific city, use that city's lat/lng from "
+                "your training knowledge — do NOT use the driver's GPS position. "
+                "Known coords: Sofia≈42.70,23.32; Plovdiv≈42.15,24.75; "
+                "Marseille≈43.30,5.37; Berlin≈52.52,13.40; Hamburg≈53.55,10.00; "
+                "Paris≈48.85,2.35; Vienna≈48.21,16.37; Bucharest≈44.43,26.10; "
+                "Istanbul≈41.01,28.95; Munich≈48.14,11.58."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "lat":      {"type": "number"},
-                    "lng":      {"type": "number"},
+                    "lat":      {"type": "number", "description": "Latitude of search centre"},
+                    "lng":      {"type": "number", "description": "Longitude of search centre"},
                     "radius_m": {"type": "integer", "default": 5000},
                 },
                 "required": ["lat", "lng"],
@@ -86,7 +96,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "find_speed_cameras",
-            "description": "Find speed cameras near current position with distance to nearest.",
+            "description": "Find speed cameras near a position. Use driver's current coordinates unless a specific foreign location is requested.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -120,12 +130,17 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "search_business",
-            "description": "Search for a business (warehouse, repair shop, customs, etc.) in a city.",
+            "description": (
+                "Search for a business (warehouse, repair shop, customs, weigh station, etc.) in a city. "
+                "IMPORTANT: translate the query to English before calling "
+                "(e.g. 'склад'→'warehouse', 'сервиз'→'truck repair', 'митница'→'customs'). "
+                "Include the city name in English in the city parameter."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "city":  {"type": "string"},
+                    "query": {"type": "string", "description": "Search term in English (e.g. 'warehouse', 'truck repair')"},
+                    "city":  {"type": "string", "description": "City name in English (e.g. 'Hamburg', 'Marseille')"},
                     "lat":   {"type": "number"},
                     "lng":   {"type": "number"},
                 },
@@ -154,7 +169,13 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "find_fuel_stations",
-            "description": "Find fuel stations within last 50km before destination.",
+            "description": (
+                "Find fuel/diesel stations near a destination city. "
+                "Use this (not search_business) for any fuel/petrol/diesel query. "
+                "Provide the destination city's lat/lng from your training knowledge "
+                "(e.g. Berlin≈52.52,13.40; Hamburg≈53.55,10.00; Paris≈48.85,2.35; "
+                "Marseille≈43.30,5.37; Vienna≈48.21,16.37; Bucharest≈44.43,26.10)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -268,7 +289,7 @@ def _tool_navigate_to(destination: str) -> dict:
         params = {
             "q": destination,
             "access_token": _MAPBOX_TOKEN,
-            "language": "bg",
+            "language": "bg,en",
             "limit": 1,
             "session_token": "truckai-nav-session",
         }
@@ -388,16 +409,20 @@ def _tool_search_business(query: str, city: str, lat: float, lng: float) -> list
     """Search POI via Mapbox Search Box."""
     try:
         suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
+        # Always include city in query so Mapbox geocodes to the right region.
+        # Use English query terms alongside the original so Mapbox understands.
         q = f"{query} {city}".strip()
         params = {
             "q": q,
             "access_token": _MAPBOX_TOKEN,
-            "language": "bg",
-            "types": "poi",
+            "language": "bg,en",
+            "types": "poi,address",
             "limit": 5,
-            "proximity": f"{lng},{lat}",
             "session_token": "truckai-biz-session",
         }
+        # Only bias toward driver's position when no specific city is given.
+        if not city.strip():
+            params["proximity"] = f"{lng},{lat}"
         r = requests.get(suggest_url, params=params, timeout=8)
         r.raise_for_status()
         suggestions = r.json().get("suggestions", [])
@@ -575,7 +600,10 @@ def chat():
             fn   = call.function.name
             args = json.loads(call.function.arguments)
 
-            # Inject context defaults when model omits them
+            # Inject driver's GPS only when the model omitted lat/lng entirely
+            # (i.e. it did not provide a specific foreign city's coordinates).
+            # speed_cameras always uses driver position; parking/fuel may use a
+            # foreign city's coordinates that GPT-4o already provided.
             if "lat" not in args and context.get("lat") is not None:
                 args["lat"] = context["lat"]
                 args["lng"] = context["lng"]
