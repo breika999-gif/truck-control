@@ -9,7 +9,7 @@ import {
   PermissionsAndroid,
   Platform,
   ScrollView,
-  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import Tts from 'react-native-tts';
 import Geolocation from 'react-native-geolocation-service';
@@ -40,10 +40,14 @@ import {
 } from '../api/poi';
 import {
   sendChatMessage,
+  transcribeAudio,
   savePOI,
   fetchHealth,
   type ChatMessage,
   type ChatContext,
+  type TruckParking,
+  type POICard,
+  type RouteOption,
 } from '../../../shared/services/backendApi';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -120,6 +124,18 @@ function departIso(label: DepartLabel): string | null {
 /** Safe TTS speak — swallows errors when TTS engine is not ready. */
 function ttsSpeak(text: string): void {
   try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
+}
+
+/** Strip raw JSON from chat bubbles — returns only the human-readable text. */
+function parseBubbleText(raw: string): string {
+  const s = raw.trim();
+  if (!s.startsWith('{')) return s;
+  try {
+    const obj = JSON.parse(s) as Record<string, unknown>;
+    return String(obj.text ?? obj.message ?? obj.reply ?? '') || s;
+  } catch {
+    return s;
+  }
 }
 
 /** Remaining HOS time formatted as H:MM */
@@ -229,12 +245,38 @@ export default function MapScreen() {
   // Options pocket menu
   const [optionsOpen, setOptionsOpen] = useState(false);
 
-  // Backend / Gemini chat
+  // Backend / GPT-4o chat
   const [backendOnline, setBackendOnline] = useState(false);
   const [chatOpen, setChatOpen]           = useState(false);
   const [chatInput, setChatInput]         = useState('');
   const [chatHistory, setChatHistory]     = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading]     = useState(false);
+
+  // Voice / Whisper input
+  const [isRecording, setIsRecording] = useState(false);
+  const [micLoading, setMicLoading]   = useState(false);
+
+  // Keyboard height — lifts chat panel above keyboard on Android
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', e => setKbHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  // GPT-4o map action results
+  const [parkingResults, setParkingResults]   = useState<TruckParking[]>([]);
+  const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
+  const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
+  const [businessResults, setBusinessResults] = useState<POICard[]>([]);
+  const [routeOptions, setRouteOptions]     = useState<RouteOption[]>([]);
+  const [routeOptDest, setRouteOptDest]     = useState<{ name: string; coords: [number, number]; waypoints?: [number, number][] } | null>(null);
+  const [tachographResult, setTachographResult] = useState<{
+    drivenHours: number;
+    remainingHours: number;
+    breakNeeded: boolean;
+    suggestedStop?: { lat: number; lng: number; name: string };
+  } | null>(null);
 
   // POI
   const [poiCategory, setPoiCategory] = useState<POICategory | null>(null);
@@ -457,7 +499,7 @@ export default function MapScreen() {
   // All data read via refs → deps:[] → stable identity across renders.
   // isMountedRef guard prevents setState after component unmounts.
 
-  const navigateTo = useCallback(async (dest: [number, number], name: string) => {
+  const navigateTo = useCallback(async (dest: [number, number], name: string, waypoints?: [number, number][]) => {
     setDestination(dest);
     setDestinationName(name);
     setNavigating(false);
@@ -484,7 +526,7 @@ export default function MapScreen() {
           }
         : undefined;
 
-      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined);
+      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypoints);
       if (!isMountedRef.current) return; // unmount guard
 
       setRoute(result);
@@ -556,6 +598,13 @@ export default function MapScreen() {
     setRerouting(false);
     setPoiCategory(null);
     setPoiResults([]);
+    setParkingResults([]);
+    setFuelResults([]);
+    setCameraResults([]);
+    setBusinessResults([]);
+    setRouteOptions([]);
+    setRouteOptDest(null);
+    setTachographResult(null);
     setDrivingSeconds(0);
     hosWarningRef.current = { w30: false, w10: false, limit: false };
     lastRerouteRef.current = 0;
@@ -563,11 +612,8 @@ export default function MapScreen() {
   }, []);
 
   // ── AI chat (GPT-4o) ──────────────────────────────────────────────────────
-  // Sends the user message to Flask → GPT-4o and appends the reply.
-  // chatHistory + driver context are passed so the model has full context.
-
-  const handleChat = useCallback(async () => {
-    const text = chatInput.trim();
+  // Core send — accepts explicit text so both keyboard and mic can call it.
+  const sendText = useCallback(async (text: string) => {
     if (!text || chatLoading) return;
 
     const userMsg: ChatMessage = { role: 'user', text };
@@ -583,27 +629,134 @@ export default function MapScreen() {
       speed_kmh:      speed,
     };
 
-    const response = await sendChatMessage(text, chatHistory, context);
+    // Limit history to last 6 messages (3 exchanges) — prevents GPT-4o context poisoning
+    const response = await sendChatMessage(text, chatHistory.slice(-6), context);
     if (!isMountedRef.current) return;
 
-    if (response.ok && response.reply) {
-      setChatHistory([...newHistory, { role: 'model', text: response.reply }]);
-      if (!voiceMutedRef.current) {
-        Tts.stop();
-        ttsSpeak(response.reply);
-      }
-      // Auto-navigate when GPT-4o returns a navigate action
-      if (response.action?.type === 'navigate') {
-        navigateTo(response.action.coords, response.action.destination);
-      }
-    } else {
-      setChatHistory([
-        ...newHistory,
-        { role: 'model', text: 'Грешка: GPT-4o не отговаря.' },
-      ]);
+    if (!response.ok) {
+      setChatHistory([...newHistory, { role: 'model', text: 'Грешка: GPT-4o не отговаря.' }]);
+      setChatLoading(false);
+      return;
     }
+
+    const act = response.action;
+    if (!act) {
+      setChatLoading(false);
+      return;
+    }
+
+    // ── Display text in chat — show "message" from any action, "text" for message action ──
+    const displayText =
+      act.action === 'message'
+        ? (act.text ?? '')
+        : ('message' in act ? (act as { message?: string }).message : undefined) ?? '';
+
+    const cleanText = parseBubbleText(displayText || '...');
+    setChatHistory([...newHistory, { role: 'model', text: cleanText }]);
+    if (cleanText && cleanText !== '...' && !voiceMutedRef.current) { Tts.stop(); ttsSpeak(cleanText); }
+
+    // ── Execute map command ───────────────────────────────────────────────
+    if (act.action === 'route') {
+      navigateTo(act.coords, act.destination, act.waypoints);
+    }
+
+    if (act.action === 'show_pois') {
+      if (act.category === 'truck_stop') {
+        const parking: TruckParking[] = act.cards
+          .filter(c => c.lat && c.lng)
+          .slice(0, 4)
+          .map(c => ({
+            name:          c.name,
+            lat:           c.lat,
+            lng:           c.lng,
+            paid:          c.paid ?? false,
+            showers:       c.showers ?? false,
+            distance_m:    c.distance_m,
+            opening_hours: c.opening_hours,
+            phone:         c.phone,
+          }));
+        setParkingResults(parking);
+        setFuelResults([]);
+        setCameraResults([]);
+        setBusinessResults([]);
+        setTachographResult(null);
+      }
+      if (act.category === 'fuel') {
+        setFuelResults(act.cards.slice(0, 4));
+        setParkingResults([]);
+        setCameraResults([]);
+        setBusinessResults([]);
+        setTachographResult(null);
+      }
+      if (act.category === 'speed_camera') {
+        setCameraResults(act.cards);
+        setParkingResults([]);
+        setFuelResults([]);
+        setBusinessResults([]);
+      }
+      if (act.category === 'business') {
+        setBusinessResults(act.cards.filter(c => c.lat && c.lng).slice(0, 6));
+        setParkingResults([]);
+        setFuelResults([]);
+        setCameraResults([]);
+        setTachographResult(null);
+      }
+    }
+
+    if (act.action === 'show_routes') {
+      setRouteOptions(act.options);
+      setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
+      // Clear any previous route so options polylines show
+      setRoute(null);
+      setDestination(null);
+    }
+
+    if (act.action === 'tachograph') {
+      setTachographResult({
+        drivenHours:    act.driven_hours,
+        remainingHours: act.remaining_hours,
+        breakNeeded:    act.break_needed ?? false,
+        suggestedStop:  act.suggested_stop,
+      });
+    }
+
     setChatLoading(false);
-  }, [chatInput, chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo]);
+  }, [chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo]);
+
+  const handleChat = useCallback(() => {
+    sendText(chatInput.trim());
+  }, [chatInput, sendText]);
+
+  // ── Whisper voice input (push-to-talk → Whisper API) ────────────────────
+
+  const handleMicStart = useCallback(async () => {
+    if (chatLoading || micLoading || isRecording) return;
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      {
+        title:          'Микрофон',
+        message:        'TruckAI се нуждае от микрофона за гласови команди.',
+        buttonPositive: 'Разреши',
+        buttonNegative: 'Откажи',
+      },
+    );
+    if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
+    setIsRecording(true);
+    // TODO: replace with compatible recorder library
+  }, [chatLoading, micLoading, isRecording]);
+
+  const handleMicStop = useCallback(async () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+    setMicLoading(true);
+    try {
+      // TODO: replace with compatible recorder library
+      const transcribed = null;
+      if (transcribed) sendText(transcribed);
+    } catch { /* silent fail */ } finally {
+      setMicLoading(false);
+    }
+  }, [isRecording, sendText]);
 
   // ── POI search ────────────────────────────────────────────────────────────
 
@@ -742,7 +895,9 @@ export default function MapScreen() {
         <LocationPuck
           puckBearingEnabled
           puckBearing="course"
+          topImage="nav-arrow"
           bearingImage="nav-arrow"
+          shadowImage="nav-arrow"
           scale={puckScale}
           pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
@@ -770,6 +925,79 @@ export default function MapScreen() {
             </View>
           </Mapbox.PointAnnotation>
         )}
+
+        {/* Parking pins from GPT-4o */}
+        {mapIsLoaded && parkingResults.map((p, i) => (
+          <Mapbox.PointAnnotation
+            key={`park-${i}`}
+            id={`park-${i}`}
+            coordinate={[p.lng, p.lat]}
+          >
+            <View style={styles.parkingPin}>
+              <Text style={styles.parkingPinText}>🅿️</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
+        {/* Fuel station pins */}
+        {mapIsLoaded && fuelResults.filter(f => f.lat && f.lng).map((f, i) => (
+          <Mapbox.PointAnnotation
+            key={`fuel-${i}`}
+            id={`fuel-${i}`}
+            coordinate={[f.lng, f.lat]}
+          >
+            <View style={styles.fuelPin}>
+              <Text style={styles.fuelPinText}>⛽</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
+        {/* Business / place pins from GPT-4o search */}
+        {mapIsLoaded && businessResults.map((b, i) => (
+          <Mapbox.PointAnnotation
+            key={`biz-${i}`}
+            id={`biz-${i}`}
+            coordinate={[b.lng, b.lat]}
+          >
+            <View style={styles.bizPin}>
+              <Text style={styles.bizPinText}>🏢</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
+        {/* Speed camera pins */}
+        {mapIsLoaded && cameraResults.filter(c => c.lat && c.lng).map((c, i) => (
+          <Mapbox.PointAnnotation
+            key={`cam-${i}`}
+            id={`cam-${i}`}
+            coordinate={[c.lng, c.lat]}
+          >
+            <View style={styles.cameraPin}>
+              <Text style={styles.cameraPinText}>📷</Text>
+              {c.maxspeed ? (
+                <Text style={styles.cameraPinSpeed}>{c.maxspeed}</Text>
+              ) : null}
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
+        {/* Multiple route options polylines */}
+        {mapIsLoaded && routeOptions.map((opt, i) => (
+          <Mapbox.ShapeSource
+            key={`route-opt-${i}`}
+            id={`route-opt-src-${i}`}
+            shape={{ type: 'Feature', properties: {}, geometry: opt.geometry }}
+          >
+            <Mapbox.LineLayer
+              id={`route-opt-casing-${i}`}
+              style={{ lineColor: '#000', lineWidth: 7, lineCap: 'round', lineJoin: 'round' }}
+            />
+            <Mapbox.LineLayer
+              id={`route-opt-line-${i}`}
+              style={{ lineColor: opt.color, lineWidth: 4, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+            />
+          </Mapbox.ShapeSource>
+        ))}
 
         {/* POI markers */}
         {mapIsLoaded && poiResults.map((poi) => (
@@ -936,6 +1164,222 @@ export default function MapScreen() {
         </View>
       )}
 
+      {/* ── Parking cards from GPT-4o ── */}
+      {!navigating && parkingResults.length > 0 && (
+        <View style={[styles.parkingPanel, { top: searchTop + 58 }]}>
+          <View style={styles.parkingPanelHeader}>
+            <Text style={styles.parkingPanelTitle}>🅿️ Паркинги за камиони</Text>
+            <TouchableOpacity
+              onPress={() => setParkingResults([])}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.parkingListContent}
+          >
+            {parkingResults.map((p, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.parkingCard}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setParkingResults([]);
+                  navigateTo([p.lng, p.lat], p.name);
+                }}
+              >
+                <Text style={styles.parkingCardName} numberOfLines={2}>{p.name}</Text>
+                <Text style={styles.parkingCardDist}>{fmtDistance(p.distance_m)}</Text>
+                <View style={styles.parkingBadgeRow}>
+                  <View style={[styles.parkingBadge, p.paid ? styles.parkingBadgePaid : styles.parkingBadgeFree]}>
+                    <Text style={styles.parkingBadgeTxt}>{p.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
+                  </View>
+                  {p.showers && (
+                    <View style={styles.parkingBadge}>
+                      <Text style={styles.parkingBadgeTxt}>🚿 Душ</Text>
+                    </View>
+                  )}
+                </View>
+                {p.opening_hours ? (
+                  <Text style={styles.parkingHours} numberOfLines={1}>{p.opening_hours}</Text>
+                ) : null}
+                <Text style={styles.parkingGoBtnTxt}>🚀 Натисни за маршрут</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ── Fuel station cards from GPT-4o ── */}
+      {!navigating && fuelResults.length > 0 && (
+        <View style={[styles.fuelPanel, { top: searchTop + 58 }]}>
+          <View style={styles.parkingPanelHeader}>
+            <Text style={styles.fuelPanelTitle}>⛽ Горивни станции</Text>
+            <TouchableOpacity
+              onPress={() => setFuelResults([])}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.parkingListContent}
+          >
+            {fuelResults.map((f, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.fuelCard}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setFuelResults([]);
+                  if (f.lat && f.lng) navigateTo([f.lng, f.lat], f.name);
+                }}
+              >
+                <Text style={styles.fuelCardName} numberOfLines={2}>{f.name}</Text>
+                {f.brand ? <Text style={styles.fuelCardBrand}>{f.brand}</Text> : null}
+                <Text style={styles.fuelCardDist}>{fmtDistance(f.distance_m)}</Text>
+                {f.price ? (
+                  <View style={styles.fuelBadge}>
+                    <Text style={styles.fuelBadgeTxt}>💶 {f.price}</Text>
+                  </View>
+                ) : null}
+                {f.truck_lane ? (
+                  <View style={styles.fuelBadgeTruck}>
+                    <Text style={styles.fuelBadgeTxt}>🚚 Камионна лента</Text>
+                  </View>
+                ) : null}
+                {f.opening_hours ? (
+                  <Text style={styles.fuelHours} numberOfLines={1}>{f.opening_hours}</Text>
+                ) : null}
+                <Text style={styles.fuelGoTxt}>🚀 Натисни за маршрут</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ── Tachograph card from GPT-4o ── */}
+      {tachographResult && (
+        <View style={[styles.tachPanel, { top: searchTop + 58 }]}>
+          <View style={styles.parkingPanelHeader}>
+            <Text style={styles.tachTitle}>⏱️ Тахограф</Text>
+            <TouchableOpacity
+              onPress={() => setTachographResult(null)}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.tachCard}>
+            <Text style={styles.tachRow}>🚛 Изкарани: {tachographResult.drivenHours.toFixed(1)} ч</Text>
+            <Text style={[styles.tachRow, tachographResult.breakNeeded && styles.tachWarn]}>
+              {tachographResult.breakNeeded
+                ? '🛑 СТОП — задължителна 45 мин почивка!'
+                : tachographResult.remainingHours < 0.5
+                ? `⚠️ Само ${Math.round(tachographResult.remainingHours * 60)} мин до почивка!`
+                : `✅ Остават ${tachographResult.remainingHours.toFixed(1)} ч`}
+            </Text>
+            {tachographResult.suggestedStop && (
+              <TouchableOpacity
+                style={styles.tachStopBtn}
+                activeOpacity={0.8}
+                onPress={() => {
+                  const s = tachographResult.suggestedStop!;
+                  setTachographResult(null);
+                  navigateTo([s.lng, s.lat], s.name);
+                }}
+              >
+                <Text style={styles.tachStopTxt}>🅿️ {tachographResult.suggestedStop.name} →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* ── Business / place results from GPT-4o search ── */}
+      {!navigating && businessResults.length > 0 && (
+        <View style={[styles.bizPanel, { top: searchTop + 58 }]}>
+          <View style={styles.parkingPanelHeader}>
+            <Text style={styles.bizPanelTitle}>📍 Намерени места</Text>
+            <TouchableOpacity
+              onPress={() => setBusinessResults([])}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.parkingListContent}
+          >
+            {businessResults.map((b, i) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.bizCard}
+                activeOpacity={0.75}
+                onPress={() => {
+                  setBusinessResults([]);
+                  if (b.lat && b.lng) navigateTo([b.lng, b.lat], b.name);
+                }}
+              >
+                <Text style={styles.bizCardName} numberOfLines={2}>{b.name}</Text>
+                {b.distance_m > 0 && (
+                  <Text style={styles.bizCardDist}>{fmtDistance(b.distance_m)}</Text>
+                )}
+                {b.info ? (
+                  <Text style={styles.bizCardAddr} numberOfLines={2}>{b.info}</Text>
+                ) : null}
+                <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ── Route options panel from GPT-4o show_routes ── */}
+      {routeOptions.length > 0 && !route && (
+        <View style={[styles.routeOptionsPanel, { bottom: insets.bottom + 16 }]}>
+          <View style={styles.routeOptionsHeader}>
+            <Text style={styles.routeOptionsTitle}>🗺️ Изберете маршрут</Text>
+            <TouchableOpacity
+              onPress={() => { setRouteOptions([]); setRouteOptDest(null); }}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.routeOptionsContent}
+          >
+            {routeOptions.map((opt, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[styles.routeOptionCard, { borderColor: opt.color }]}
+                activeOpacity={0.8}
+                onPress={() => {
+                  setRouteOptions([]);
+                  if (routeOptDest) navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints);
+                }}
+              >
+                <View style={[styles.routeOptionDot, { backgroundColor: opt.color }]} />
+                <Text style={styles.routeOptionLabel} numberOfLines={3}>{opt.label}</Text>
+                <Text style={styles.routeOptionDist}>{fmtDistance(opt.distance)}</Text>
+                <Text style={styles.routeOptionDur}>{fmtDuration(opt.duration)}</Text>
+                <Text style={styles.routeOptionTap}>Избери →</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* ── Bottom-left: HOS badge + speed + limit ── */}
       {navigating && (
         <View style={[styles.speedRow, { bottom: 240 + insets.bottom }]}>
@@ -1089,10 +1533,7 @@ export default function MapScreen() {
 
       {/* ── Gemini chat panel ── */}
       {chatOpen && (
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={[styles.chatPanel, { bottom: insets.bottom + 80 }]}
-        >
+        <View style={[styles.chatPanel, { bottom: insets.bottom + 80 + kbHeight }]}>
           {/* Messages */}
           <ScrollView
             style={styles.chatMessages}
@@ -1112,7 +1553,7 @@ export default function MapScreen() {
                   msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
                 ]}
               >
-                <Text style={styles.chatBubbleText}>{msg.text}</Text>
+                <Text style={styles.chatBubbleText}>{parseBubbleText(msg.text)}</Text>
               </View>
             ))}
             {chatLoading && (
@@ -1122,6 +1563,24 @@ export default function MapScreen() {
 
           {/* Input row */}
           <View style={styles.chatInputRow}>
+            {/* Mic button — press and hold to record */}
+            <TouchableOpacity
+              style={[
+                styles.chatMicBtn,
+                isRecording && styles.chatMicBtnRecording,
+                (chatLoading || micLoading) && { opacity: 0.4 },
+              ]}
+              onPressIn={handleMicStart}
+              onPressOut={handleMicStop}
+              disabled={chatLoading || micLoading}
+              activeOpacity={0.75}
+            >
+              {micLoading
+                ? <ActivityIndicator size="small" color="#ff3b3b" />
+                : <Text style={styles.chatMicText}>{isRecording ? '⏹' : '🎙'}</Text>
+              }
+            </TouchableOpacity>
+
             <TextInput
               style={styles.chatInput}
               value={chatInput}
@@ -1140,7 +1599,7 @@ export default function MapScreen() {
               <Text style={styles.chatSendText}>➤</Text>
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       )}
     </View>
   );
@@ -1348,6 +1807,90 @@ const styles = StyleSheet.create({
   poiCardName: { ...typography.label, color: colors.text, fontWeight: '700', fontSize: 11 },
   poiCardBrand: { ...typography.label, color: colors.accent, fontSize: 10, marginTop: 1 },
   poiCardAddr: { ...typography.label, color: colors.textMuted, fontSize: 9, marginTop: 2 },
+
+  // Parking cards panel (from GPT-4o show_parking action)
+  parkingPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 19,
+  },
+  parkingPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+  },
+  parkingPanelTitle: {
+    ...typography.label,
+    color: NEON,
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  parkingDismissBtn: { padding: 4 },
+  parkingDismissTxt: { color: colors.textSecondary, fontSize: 14 },
+  parkingListContent: { paddingHorizontal: spacing.sm, paddingBottom: spacing.xs },
+  parkingCard: {
+    backgroundColor: 'rgba(180,0,0,0.18)',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginRight: spacing.sm,
+    width: 165,
+    borderWidth: 2,
+    borderColor: '#ff3b3b',
+    elevation: 12,
+    shadowColor: '#ff3b3b',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+  },
+  parkingCardName: {
+    ...typography.label,
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 12,
+    marginBottom: 3,
+  },
+  parkingCardDist: {
+    ...typography.label,
+    color: NEON,
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 5,
+  },
+  parkingBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginBottom: 5 },
+  parkingBadge: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  parkingBadgePaid: { backgroundColor: 'rgba(239,68,68,0.15)' },
+  parkingBadgeFree: { backgroundColor: 'rgba(34,197,94,0.15)' },
+  parkingBadgeTxt: { color: colors.text, fontSize: 9 },
+  parkingHours: {
+    ...typography.label,
+    color: colors.textMuted,
+    fontSize: 9,
+    marginBottom: 6,
+  },
+  parkingGoBtn: {
+    backgroundColor: NEON,
+    borderRadius: radius.sm,
+    paddingVertical: 6,
+    alignItems: 'center',
+    marginTop: 'auto' as any,
+  },
+  parkingGoBtnTxt: { color: '#ff3b3b', fontWeight: '800', fontSize: 12, marginTop: 6 },
+  parkingPin: {
+    backgroundColor: 'rgba(0,10,30,0.85)',
+    borderRadius: radius.full,
+    padding: 3,
+    borderWidth: 1.5,
+    borderColor: NEON,
+  },
+  parkingPinText: { fontSize: 16 },
 
   // HOS badge
   hosBadge: {
@@ -1635,6 +2178,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  chatMicBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255,59,59,0.10)',
+    borderWidth: 1.5,
+    borderColor: '#ff3b3b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chatMicBtnRecording: {
+    backgroundColor: 'rgba(255,59,59,0.35)',
+    borderColor: '#ff0000',
+    shadowColor: '#ff0000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  chatMicText: { fontSize: 18 },
+
   chatSendBtn: {
     width: 40,
     height: 40,
@@ -1651,6 +2215,278 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
   },
   chatSendText: { color: colors.text, fontSize: 16 },
+
+  // ── Fuel cards panel ─────────────────────────────────────────────────────
+  fuelPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 19,
+  },
+  fuelPanelTitle: {
+    ...typography.label,
+    color: '#00ff88',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  fuelCard: {
+    backgroundColor: 'rgba(0,60,20,0.22)',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginRight: spacing.sm,
+    width: 165,
+    borderWidth: 2,
+    borderColor: '#00ff88',
+    elevation: 12,
+    shadowColor: '#00ff88',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+  },
+  fuelCardName: {
+    ...typography.label,
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 12,
+    marginBottom: 3,
+  },
+  fuelCardBrand: {
+    ...typography.label,
+    color: '#00ff88',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  fuelCardDist: {
+    ...typography.label,
+    color: NEON,
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 5,
+  },
+  fuelBadge: {
+    backgroundColor: 'rgba(0,255,136,0.12)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    marginBottom: 3,
+    alignSelf: 'flex-start',
+  },
+  fuelBadgeTruck: {
+    backgroundColor: 'rgba(0,191,255,0.12)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    marginBottom: 3,
+    alignSelf: 'flex-start',
+  },
+  fuelBadgeTxt: { color: colors.text, fontSize: 9 },
+  fuelHours: { ...typography.label, color: colors.textMuted, fontSize: 9, marginBottom: 4 },
+  fuelGoTxt: { color: '#00ff88', fontWeight: '800', fontSize: 12, marginTop: 4 },
+
+  // Fuel pins on map
+  fuelPin: {
+    backgroundColor: 'rgba(0,10,20,0.85)',
+    borderRadius: radius.full,
+    padding: 3,
+    borderWidth: 1.5,
+    borderColor: '#00ff88',
+  },
+  fuelPinText: { fontSize: 16 },
+
+  // Speed camera pins on map
+  cameraPin: {
+    backgroundColor: 'rgba(30,0,0,0.9)',
+    borderRadius: radius.sm,
+    padding: 4,
+    borderWidth: 1.5,
+    borderColor: '#ff3b3b',
+    alignItems: 'center',
+  },
+  cameraPinText: { fontSize: 14 },
+  cameraPinSpeed: {
+    color: '#ff3b3b',
+    fontSize: 8,
+    fontWeight: '800',
+    marginTop: 1,
+  },
+
+  // ── Route options panel ───────────────────────────────────────────────────
+  routeOptionsPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,8,20,0.94)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderTopWidth: 1.5,
+    borderColor: '#00bfff',
+    elevation: 20,
+    zIndex: 30,
+  },
+  routeOptionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  routeOptionsTitle: {
+    ...typography.label,
+    color: NEON,
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  routeOptionsContent: { paddingHorizontal: spacing.sm, gap: spacing.sm },
+  routeOptionCard: {
+    backgroundColor: 'rgba(10,20,40,0.95)',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    width: 160,
+    borderWidth: 2,
+    elevation: 8,
+  },
+  routeOptionDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginBottom: spacing.xs,
+  },
+  routeOptionLabel: {
+    ...typography.label,
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  routeOptionDist: {
+    ...typography.label,
+    color: NEON,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  routeOptionDur: {
+    ...typography.label,
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  routeOptionTap: {
+    color: NEON,
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: spacing.sm,
+    textAlign: 'right',
+  },
+
+  // ── Tachograph card ──────────────────────────────────────────────────────
+  tachPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 19,
+  },
+  tachTitle: {
+    ...typography.label,
+    color: '#ffcc00',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  tachCard: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.xs,
+    backgroundColor: 'rgba(30,20,0,0.88)',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    borderWidth: 2,
+    borderColor: '#ffcc00',
+  },
+  tachRow: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  tachWarn: {
+    color: '#ff3b3b',
+    fontWeight: '800',
+  },
+  tachStopBtn: {
+    marginTop: spacing.xs,
+    backgroundColor: 'rgba(255,204,0,0.18)',
+    borderRadius: radius.sm,
+    paddingVertical: 6,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#ffcc00',
+    alignSelf: 'flex-start',
+  },
+  tachStopTxt: {
+    color: '#ffcc00',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+
+  // ── Business / place results panel ───────────────────────────────────────
+  bizPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 19,
+  },
+  bizPanelTitle: {
+    ...typography.label,
+    color: '#00e5ff',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  bizCard: {
+    backgroundColor: 'rgba(0,40,60,0.92)',
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    marginRight: spacing.sm,
+    width: 175,
+    borderWidth: 2,
+    borderColor: '#00e5ff',
+    elevation: 12,
+    shadowColor: '#00e5ff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 8,
+  },
+  bizCardName: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: 13,
+    marginBottom: 3,
+  },
+  bizCardDist: {
+    color: '#00e5ff',
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 3,
+  },
+  bizCardAddr: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    marginBottom: 4,
+  },
+  bizGoTxt: {
+    color: '#00e5ff',
+    fontWeight: '800',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  bizPin: {
+    backgroundColor: 'rgba(0,40,60,0.88)',
+    borderRadius: 20,
+    padding: 4,
+    borderWidth: 1.5,
+    borderColor: '#00e5ff',
+  },
+  bizPinText: { fontSize: 18 },
 
   // ── Options pocket menu ──────────────────────────────────────────────────
   optionsContainer: {
