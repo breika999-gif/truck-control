@@ -48,6 +48,7 @@ import {
   type TruckParking,
   type POICard,
   type RouteOption,
+  type MapAction,
 } from '../../../shared/services/backendApi';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -135,6 +136,42 @@ function parseBubbleText(raw: string): string {
     return String(obj.text ?? obj.message ?? obj.reply ?? '') || s;
   } catch {
     return s;
+  }
+}
+
+/** Build clean, emoji-free TTS confirmation for each GPT action. */
+function voiceText(act: MapAction): string {
+  switch (act.action) {
+    case 'show_pois': {
+      const count = act.cards?.length ?? 0;
+      const nearest =
+        'nearest_m' in act && typeof act.nearest_m === 'number' && act.nearest_m > 0
+          ? `, най-близката на ${Math.round(act.nearest_m)} метра`
+          : '';
+      switch (act.category) {
+        case 'truck_stop':   return `Намерих ${count} паркинга за камиони.`;
+        case 'fuel':         return `Намерих ${count} горивни станции.`;
+        case 'speed_camera': return `Внимание, ${count} камери в района${nearest}.`;
+        case 'business':     return `Намерих ${count} места. Показвам на картата.`;
+        default:             return `Намерих ${count} резултата.`;
+      }
+    }
+    case 'route':
+      return `Прокладвам маршрут до ${act.destination}.`;
+    case 'show_routes': {
+      const count = act.options?.length ?? 0;
+      return `Намерих ${count} варианта за ${act.destination}. Избери маршрут.`;
+    }
+    case 'tachograph': {
+      const rem = act.remaining_hours ?? 0;
+      if (act.break_needed) return 'Достигнат лимит. Задължителна 45-минутна почивка.';
+      if (rem < 0.5)         return `${Math.round(rem * 60)} минути до почивка. Спри скоро.`;
+      return `Остават ${rem.toFixed(1)} часа до задължителна почивка.`;
+    }
+    case 'message':
+      return act.text ?? '';
+    default:
+      return '';
   }
 }
 
@@ -653,7 +690,8 @@ export default function MapScreen() {
 
     const cleanText = parseBubbleText(displayText || '...');
     setChatHistory([...newHistory, { role: 'model', text: cleanText }]);
-    if (cleanText && cleanText !== '...' && !voiceMutedRef.current) { Tts.stop(); ttsSpeak(cleanText); }
+    const ttsMsg = voiceText(act);
+    if (ttsMsg && !voiceMutedRef.current) { Tts.stop(); ttsSpeak(ttsMsg); }
 
     // ── Execute map command ───────────────────────────────────────────────
     if (act.action === 'route') {
