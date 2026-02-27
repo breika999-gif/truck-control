@@ -76,9 +76,11 @@ export async function fetchRoute(
   origin: [number, number],
   destination: [number, number],
   truck?: TruckDimensions,
-  departAt?: string,  // ISO 8601 — enables traffic prediction for future departure
+  departAt?: string,            // ISO 8601 — enables traffic prediction for future departure
+  waypoints?: [number, number][], // intermediate forced waypoints [lng, lat]
 ): Promise<RouteResult | null> {
-  const coords = `${origin[0]},${origin[1]};${destination[0]},${destination[1]}`;
+  const allPoints = [origin, ...(waypoints ?? []), destination];
+  const coords = allPoints.map(p => `${p[0]},${p[1]}`).join(';');
 
   const params = new URLSearchParams({
     access_token: MAPBOX_PUBLIC_TOKEN,
@@ -180,6 +182,71 @@ export function getCurrentStepIndex(
     if (d < minDist) { minDist = d; minIdx = i; }
   }
   return minIdx;
+}
+
+/** Format distance in human-readable Bulgarian (internal helper). */
+function fmtDistBg(m: number): string {
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} километра`;
+  if (m >= 100)  return `${Math.round(m / 100) * 100} метра`;
+  return `${Math.round(m)} метра`;
+}
+
+/**
+ * Generate a Bulgarian turn instruction from RouteStep maneuver data.
+ * Used as fallback when Mapbox voiceInstructions are unavailable
+ * or when the device TTS engine cannot handle the API-provided text.
+ */
+export function bgInstruction(step: RouteStep): string {
+  const { type, modifier } = step.maneuver;
+  const road  = step.name ? ` по ${step.name}` : '';
+  const ahead = step.distance > 50 ? ` след ${fmtDistBg(step.distance)}` : '';
+
+  switch (type) {
+    case 'depart':
+      return `Тръгнете${road}.`;
+    case 'arrive':
+      return 'Пристигнахте на дестинацията.';
+    case 'continue':
+    case 'new name':
+      return `Продължете направо${road}.`;
+    case 'merge':
+      return `Влезте в потока${road}.`;
+    case 'on ramp':
+      return `Качете се на магистралата${road}.`;
+    case 'off ramp':
+      return `Слезте от магистралата${road}.`;
+    case 'fork':
+      return modifier?.includes('left')
+        ? `Вземете левия клон${road}.`
+        : `Вземете десния клон${road}.`;
+    case 'end of road':
+      return modifier?.includes('left')
+        ? `В края на пътя завийте наляво${road}.`
+        : `В края на пътя завийте надясно${road}.`;
+    case 'turn':
+    case 'ramp': {
+      switch (modifier) {
+        case 'sharp left':   return `Завийте рязко наляво${ahead}${road}.`;
+        case 'left':         return `Завийте наляво${ahead}${road}.`;
+        case 'slight left':  return `Завийте леко наляво${ahead}${road}.`;
+        case 'straight':     return `Продължете направо${road}.`;
+        case 'slight right': return `Завийте леко надясно${ahead}${road}.`;
+        case 'right':        return `Завийте надясно${ahead}${road}.`;
+        case 'sharp right':  return `Завийте рязко надясно${ahead}${road}.`;
+        case 'uturn':        return `Направете обратен завой.`;
+        default:             return `Завийте${road}.`;
+      }
+    }
+    case 'roundabout':
+    case 'rotary': {
+      const exit = (step.maneuver as { exit?: number }).exit;
+      return exit
+        ? `Влезте в кръговото и излезте на ${exit}-ия изход.`
+        : 'Влезте в кръговото движение.';
+    }
+    default:
+      return step.maneuver.instruction || `Продължете${road}.`;
+  }
 }
 
 /** Emoji for maneuver type + modifier. */

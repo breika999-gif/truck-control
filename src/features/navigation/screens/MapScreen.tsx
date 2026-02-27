@@ -30,6 +30,7 @@ import {
   getSpeedLimitAtPosition,
   getCurrentStepIndex,
   maneuverEmoji,
+  bgInstruction,
   type RouteResult,
 } from '../api/directions';
 import {
@@ -450,13 +451,34 @@ export default function MapScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── TTS initialisation ───────────────────────────────────────────────────
+  // ── TTS initialisation — Bulgarian voice with auto-detection ────────────
   useEffect(() => {
-    Tts.setDefaultLanguage('bg-BG').catch(() =>
-      Tts.setDefaultLanguage('en-US').catch(() => {}),
-    );
-    Tts.setDefaultRate(0.45);
-    Tts.setDefaultPitch(1.0);
+    const initTts = async () => {
+      try {
+        // Try to find an installed Bulgarian voice
+        const voices = await Tts.voices();
+        const bgVoice = voices?.find(
+          (v: { language?: string; id: string }) =>
+            v.language?.toLowerCase().startsWith('bg'),
+        );
+        if (bgVoice) {
+          await Tts.setDefaultLanguage(bgVoice.language ?? 'bg-BG');
+          await Tts.setDefaultVoice(bgVoice.id);
+        } else {
+          // Fallback: set locale only — some engines accept 'bg' without a voice match
+          await Tts.setDefaultLanguage('bg-BG').catch(() =>
+            Tts.setDefaultLanguage('bg').catch(() =>
+              Tts.setDefaultLanguage('en-US').catch(() => {}),
+            ),
+          );
+        }
+      } catch {
+        // Ignore — TTS engine not ready yet
+      }
+      Tts.setDefaultRate(0.48);
+      Tts.setDefaultPitch(1.0);
+    };
+    initTts();
   }, []);
 
   // ── Speak turn instruction when step advances ─────────────────────────────
@@ -465,11 +487,14 @@ export default function MapScreen() {
     if (currentStep === lastSpokenStepRef.current) return;
     lastSpokenStepRef.current = currentStep;
     const step = route?.steps?.[currentStep];
-    // Prefer Mapbox voice_instructions for natural phrasing
+    if (!step) return;
+    // Priority: 1) Mapbox voiceInstruction (Bulgarian from API)
+    //           2) bgInstruction() — generated Bulgarian from maneuver data
+    //           3) raw maneuver instruction as last resort
     const text =
-      step?.voiceInstructions?.[0]?.announcement ||
-      step?.maneuver?.instruction ||
-      step?.name;
+      step.voiceInstructions?.[0]?.announcement ||
+      bgInstruction(step) ||
+      step.maneuver.instruction;
     if (text) {
       Tts.stop();
       ttsSpeak(text);
