@@ -488,13 +488,13 @@ export default function MapScreen() {
     lastSpokenStepRef.current = currentStep;
     const step = route?.steps?.[currentStep];
     if (!step) return;
-    // Priority: 1) Mapbox voiceInstruction (Bulgarian from API)
-    //           2) bgInstruction() — generated Bulgarian from maneuver data
-    //           3) raw maneuver instruction as last resort
+    // Priority: 1) Mapbox maneuver.instruction — already Bulgarian (language:'bg')
+    //           2) bgInstruction() — generated Bulgarian fallback
+    //           3) voiceInstructions announcement (English fallback for other langs)
     const text =
-      step.voiceInstructions?.[0]?.announcement ||
+      step.maneuver.instruction ||
       bgInstruction(step) ||
-      step.maneuver.instruction;
+      step.voiceInstructions?.[0]?.announcement;
     if (text) {
       Tts.stop();
       ttsSpeak(text);
