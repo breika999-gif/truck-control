@@ -276,6 +276,7 @@ export default function MapScreen() {
   const [satellite, setSatellite] = useState(true);
   const [mapIsLoaded, setMapIsLoaded] = useState(false);
   const [showTraffic, setShowTraffic] = useState(true);
+  const [mapPitch, setMapPitch] = useState(0);
 
   // Voice
   const [voiceMuted, setVoiceMuted] = useState(false);
@@ -656,6 +657,7 @@ export default function MapScreen() {
     setDestinationName('');
     setRoute(null);
     setNavigating(false);
+    setMapPitch(0);
     setCurrentStep(0);
     setSpeedLimit(null);
     setDistToTurn(null);
@@ -934,6 +936,7 @@ export default function MapScreen() {
       <Mapbox.MapView
         style={styles.map}
         styleURL={mapStyleURL}
+        pitchEnabled
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
       >
         {/* Register nav-arrow PNG for LocationPuck bearingImage (middle rotating layer).
@@ -967,6 +970,24 @@ export default function MapScreen() {
           pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
         />
+
+        {/* 3D Buildings — fill-extrusion from composite source.
+            Rendered BEFORE route lines so polylines stay on top.
+            Hidden in satellite mode (style already shows 3D terrain). */}
+        {mapIsLoaded && !satellite && (
+          <Mapbox.FillExtrusionLayer
+            id="3d-buildings"
+            sourceID="composite"
+            sourceLayerID="building"
+            minZoomLevel={14}
+            style={{
+              fillExtrusionColor: '#1a3a5f',
+              fillExtrusionHeight: ['get', 'height'] as unknown as number,
+              fillExtrusionBase: ['get', 'min_height'] as unknown as number,
+              fillExtrusionOpacity: 0.65,
+            }}
+          />
+        )}
 
         {/* Route polyline — only after style loaded */}
         {mapIsLoaded && routeShape && (
@@ -1598,6 +1619,34 @@ export default function MapScreen() {
         </View>
       )}
 
+      {/* ── Tilt controls (bottom-right, browse mode only) ── */}
+      {!navigating && (
+        <View style={[styles.tiltBtnCol, { bottom: insets.bottom + 100 }]}>
+          <TouchableOpacity
+            style={styles.tiltBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              const next = Math.min(mapPitch + 15, 60);
+              setMapPitch(next);
+              cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
+            }}
+          >
+            <Text style={styles.tiltBtnTxt}>⛰️</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.tiltBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              const next = Math.max(mapPitch - 15, 0);
+              setMapPitch(next);
+              cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
+            }}
+          >
+            <Text style={styles.tiltBtnTxt}>🗺️</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ── FAB: vehicle profile ── */}
       {!route && !loadingRoute && (
         <TouchableOpacity
@@ -2172,6 +2221,31 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
   },
   fabEmoji: { fontSize: 26 },
+
+  // Tilt controls column (bottom-right)
+  tiltBtnCol: {
+    position: 'absolute',
+    right: spacing.md,
+    alignItems: 'center',
+    gap: spacing.xs,
+    zIndex: 20,
+  },
+  tiltBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 10,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 6,
+  },
+  tiltBtnTxt: { fontSize: 18 },
 
   // Gemini chat FAB (bottom-left)
   geminiFab: {
