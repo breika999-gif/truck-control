@@ -10,6 +10,8 @@ import {
   Platform,
   ScrollView,
   Keyboard,
+  Alert,
+  Image,
 } from 'react-native';
 import Tts from 'react-native-tts';
 import Geolocation from 'react-native-geolocation-service';
@@ -1381,26 +1383,54 @@ export default function MapScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.parkingListContent}
           >
-            {businessResults.map((b, i) => (
-              <TouchableOpacity
-                key={i}
-                style={styles.bizCard}
-                activeOpacity={0.75}
-                onPress={() => {
-                  setBusinessResults([]);
-                  if (b.lat && b.lng) navigateTo([b.lng, b.lat], b.name);
-                }}
-              >
-                <Text style={styles.bizCardName} numberOfLines={2}>{b.name}</Text>
-                {b.distance_m > 0 && (
-                  <Text style={styles.bizCardDist}>{fmtDistance(b.distance_m)}</Text>
-                )}
-                {b.info ? (
-                  <Text style={styles.bizCardAddr} numberOfLines={2}>{b.info}</Text>
-                ) : null}
-                <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
-              </TouchableOpacity>
-            ))}
+            {businessResults.map((b, i) => {
+              const doNavigate = () => { setBusinessResults([]); navigateTo([b.lng, b.lat], b.name); };
+              const statusMsg =
+                b.business_status === 'CLOSED_PERMANENTLY' ? '🔴 Затворено завинаги' :
+                b.business_status === 'CLOSED_TEMPORARILY' ? '🟡 Временно затворено' :
+                '🟡 Затворено в момента';
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[styles.bizCard, b.needs_confirm ? styles.bizCardClosed : null]}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    if (b.needs_confirm) {
+                      Alert.alert(
+                        '⚠️ Внимание',
+                        `${b.name}\n\n${statusMsg}\n\nЧертаем маршрут?`,
+                        [
+                          { text: 'Отказ', style: 'cancel' },
+                          { text: 'Да, продължи', onPress: doNavigate },
+                        ],
+                      );
+                    } else {
+                      doNavigate();
+                    }
+                  }}
+                >
+                  {b.photo_url ? (
+                    <Image source={{ uri: b.photo_url }} style={styles.bizCardPhoto} />
+                  ) : null}
+                  {b.needs_confirm ? (
+                    <View style={styles.bizClosedBadge}>
+                      <Text style={styles.bizClosedBadgeTxt}>{statusMsg}</Text>
+                    </View>
+                  ) : null}
+                  <Text style={styles.bizCardName} numberOfLines={2}>{b.name}</Text>
+                  {b.distance_m > 0 && (
+                    <Text style={styles.bizCardDist}>{fmtDistance(b.distance_m)}</Text>
+                  )}
+                  {b.info ? (
+                    <Text style={styles.bizCardAddr} numberOfLines={2}>{b.info}</Text>
+                  ) : null}
+                  {b.review_summary ? (
+                    <Text style={styles.bizReviewSummary} numberOfLines={3}>{b.review_summary}</Text>
+                  ) : null}
+                  <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
       )}
@@ -2550,6 +2580,36 @@ const styles = StyleSheet.create({
     borderColor: '#00e5ff',
   },
   bizPinText: { fontSize: 18 },
+  bizCardPhoto: {
+    width: '100%' as const,
+    height: 80,
+    borderRadius: radius.sm,
+    backgroundColor: 'rgba(0,20,40,0.6)',
+    marginBottom: 6,
+  },
+  bizCardClosed: {
+    opacity: 0.7,
+    borderColor: '#ff6b35',
+  },
+  bizClosedBadge: {
+    backgroundColor: 'rgba(255,107,53,0.18)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  bizClosedBadgeTxt: {
+    color: '#ff6b35',
+    fontSize: 10,
+    fontWeight: '700' as const,
+  },
+  bizReviewSummary: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontStyle: 'italic' as const,
+    lineHeight: 14,
+    marginTop: 4,
+  },
 
   // ── Options pocket menu ──────────────────────────────────────────────────
   optionsContainer: {

@@ -30,6 +30,9 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)),
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _gpt4o_ready = bool(os.getenv("OPENAI_API_KEY"))
 
+_GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY")
+_places_ready = bool(_GOOGLE_PLACES_KEY)
+
 _MAPBOX_TOKEN = (
     "pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ"
     ".hprmbhb8EVFSfF7cqc4lkw"
@@ -723,6 +726,104 @@ def _tool_search_business(query: str, city: str, lat: float, lng: float) -> list
         return [{"error": str(exc)}]
 
 
+def _enrich_business_with_places(biz: dict) -> dict:
+    """Enrich a business dict with Google Places photo, reviews, and open status."""
+    if not _places_ready:
+        return biz
+    try:
+        # 1 — Find Place from Text → place_id + business_status
+        query_name = f"{biz.get('name', '')} {biz.get('address', '')}"
+        find_resp = requests.get(
+            "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
+            params={
+                "input":        query_name,
+                "inputtype":    "textquery",
+                "fields":       "place_id,business_status",
+                "locationbias": f"point:{biz['lat']},{biz['lng']}",
+                "key":          _GOOGLE_PLACES_KEY,
+            },
+            timeout=4,
+        )
+        candidates = find_resp.json().get("candidates", [])
+        if not candidates:
+            return biz
+        place_id        = candidates[0].get("place_id")
+        business_status = candidates[0].get("business_status", "OPERATIONAL")
+
+        # 2 — Place Details → photos, reviews, opening_hours
+        details_resp = requests.get(
+            "https://maps.googleapis.com/maps/api/place/details/json",
+            params={
+                "place_id": place_id,
+                "fields":   "photos,reviews,opening_hours",
+                "language": "bg",
+                "key":      _GOOGLE_PLACES_KEY,
+            },
+            timeout=5,
+        )
+        detail = details_resp.json().get("result", {})
+
+        # 3 — Build photo URL (no extra HTTP request)
+        photo_url = None
+        photos = detail.get("photos", [])
+        if photos:
+            ref = photos[0].get("photo_reference")
+            if ref:
+                photo_url = (
+                    f"https://maps.googleapis.com/maps/api/place/photo"
+                    f"?maxwidth=400&photo_reference={ref}&key={_GOOGLE_PLACES_KEY}"
+                )
+
+        # 4 — GPT-4o review summary (Bulgarian, truck-driver focused)
+        review_summary = None
+        reviews = detail.get("reviews", [])
+        if reviews and _gpt4o_ready:
+            snippets = " | ".join(
+                r.get("text", "")[:300] for r in reviews[:5] if r.get("text")
+            )
+            if snippets:
+                try:
+                    resp = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Ти си асистент за камионджии. "
+                                    "Напиши 2-3 изречения резюме на отзивите, "
+                                    "фокусирано върху полезността за шофьори на камиони. "
+                                    "Отговаряй само на български."
+                                ),
+                            },
+                            {"role": "user", "content": f"Отзиви: {snippets}"},
+                        ],
+                        max_tokens=200,
+                        temperature=0.3,
+                    )
+                    review_summary = resp.choices[0].message.content.strip()
+                except Exception:
+                    pass  # non-fatal
+
+        # 5 — Determine open_now and needs_confirm
+        oh       = detail.get("opening_hours", {})
+        open_now = oh.get("open_now")  # bool or None
+        needs_confirm = (
+            business_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY")
+            or open_now is False
+        )
+
+        return {
+            **biz,
+            "photo_url":       photo_url,
+            "review_summary":  review_summary,
+            "business_status": business_status,
+            "open_now":        open_now,
+            "needs_confirm":   needs_confirm,
+        }
+    except Exception:
+        return biz  # non-fatal — return original on any error
+
+
 def _tool_check_traffic(
     origin_lng: float, origin_lat: float, dest_lng: float, dest_lat: float
 ) -> dict:
@@ -1043,16 +1144,25 @@ def chat():
                 result = _tool_search_business(
                     args["query"], args.get("city", ""), args["lat"], args["lng"]
                 )
+                valid = [b for b in result[:6] if not b.get("error") and b.get("lat")]
+                if _places_ready and valid:
+                    with ThreadPoolExecutor(max_workers=min(len(valid), 6)) as ex:
+                        enriched_list = list(ex.map(_enrich_business_with_places, valid))
+                else:
+                    enriched_list = valid
                 cards = []
-                for b in result[:6]:
-                    if b.get("error") or not b.get("lat"):
-                        continue
+                for b in enriched_list:
                     cards.append({
-                        "name":       b.get("name", ""),
-                        "lat":        b["lat"],
-                        "lng":        b["lng"],
-                        "distance_m": b.get("distance_m", 0),
-                        "info":       b.get("address", ""),
+                        "name":            b.get("name", ""),
+                        "lat":             b["lat"],
+                        "lng":             b["lng"],
+                        "distance_m":      b.get("distance_m", 0),
+                        "info":            b.get("address", ""),
+                        "photo_url":       b.get("photo_url"),
+                        "review_summary":  b.get("review_summary"),
+                        "business_status": b.get("business_status"),
+                        "open_now":        b.get("open_now"),
+                        "needs_confirm":   b.get("needs_confirm", False),
                     })
                 action = {"action": "show_pois", "category": "business", "cards": cards}
 

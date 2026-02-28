@@ -3,11 +3,13 @@
  *
  * Connects to backend/app.py running on localhost:5050.
  * On a physical Android device: tunnel with `adb reverse tcp:5050 tcp:5050`
- * (Metro already does this for port 8081).
+ *
+ * Architecture: GPT-4o responds ONLY with JSON map actions.
+ * Every response is a MapAction object that the frontend executes directly.
  *
  * Endpoints:
  *   GET  /api/health         — server status
- *   POST /api/chat           — GPT-4o AI assistant
+ *   POST /api/chat           — GPT-4o AI assistant (returns MapAction)
  *   GET  /api/pois           — list saved POIs
  *   POST /api/pois           — save a POI
  *   DELETE /api/pois/:id     — delete a POI
@@ -22,6 +24,66 @@ export interface ChatMessage {
   text: string;
 }
 
+/** Universal POI card — covers truck stops, fuel stations, speed cameras */
+export interface POICard {
+  name: string;
+  lat: number;
+  lng: number;
+  distance_m: number;
+  // truck_stop fields
+  paid?: boolean;
+  showers?: boolean;
+  safe?: boolean;
+  info?: string;
+  opening_hours?: string;
+  phone?: string;
+  // fuel fields
+  price?: string;
+  truck_lane?: boolean;
+  brand?: string;
+  // camera fields
+  maxspeed?: number;
+  // business / Google Places enrichment fields
+  photo_url?: string;
+  review_summary?: string;
+  business_status?: string;
+  open_now?: boolean | null;
+  needs_confirm?: boolean;
+}
+
+/** One route option inside show_routes action */
+export interface RouteOption {
+  label: string;
+  color: string;
+  duration: number;
+  distance: number;
+  geometry: { type: 'LineString'; coordinates: [number, number][] };
+  dest_coords: [number, number];
+}
+
+/** All possible map actions GPT-4o can return */
+export type MapAction =
+  | { action: 'route'; destination: string; coords: [number, number]; waypoints?: [number, number][]; message?: string }
+  | { action: 'show_pois'; category: 'truck_stop' | 'fuel' | 'speed_camera' | 'business'; center?: [number, number]; cards: POICard[]; message?: string; nearest_m?: number }
+  | { action: 'show_routes'; destination: string; dest_coords: [number, number]; options: RouteOption[]; waypoints?: [number, number][]; message?: string }
+  | { action: 'tachograph'; driven_hours: number; remaining_hours: number; break_needed?: boolean; suggested_stop?: { lat: number; lng: number; name: string }; message?: string }
+  | { action: 'message'; text: string };
+
+export interface ChatResponse {
+  ok: boolean;
+  error?: string;
+  action?: MapAction;
+  reply?: string; // kept for backward compat — use action.message instead
+}
+
+export interface ChatContext {
+  lat?: number;
+  lng?: number;
+  driven_seconds?: number;
+  speed_kmh?: number;
+}
+
+/** Backward-compat alias — parking cards now use POICard */
 export interface TruckParking {
   name: string;
   lat: number;
@@ -38,27 +100,6 @@ export interface SpeedCamera {
   lng: number;
   maxspeed?: string;
   distance_m: number;
-}
-
-export type ChatAction =
-  | { type: 'navigate'; destination: string; coords: [number, number] }
-  | { type: 'show_parking'; pois: TruckParking[] }
-  | { type: 'show_cameras'; cameras: SpeedCamera[]; nearest_m: number }
-  | { type: 'show_pois'; pois: any[] }
-  | { type: 'show_fuel'; stations: any[] };
-
-export interface ChatResponse {
-  ok: boolean;
-  reply?: string;
-  error?: string;
-  action?: ChatAction;
-}
-
-export interface ChatContext {
-  lat?: number;
-  lng?: number;
-  driven_seconds?: number;
-  speed_kmh?: number;
 }
 
 export interface SavedPOI {
@@ -90,7 +131,7 @@ export interface BackendHealth {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = 20_000; // GPT-4o + tool calls can take up to ~15s
 
 async function apiRequest<T>(
   path: string,
@@ -130,11 +171,8 @@ export async function fetchHealth(): Promise<BackendHealth | null> {
 // ── GPT-4o chat ───────────────────────────────────────────────────────────────
 
 /**
- * Send a message to the GPT-4o assistant.
- * @param message  User text
- * @param history  Conversation so far (optional — pass [] for stateless calls)
- * @param context  Driver context (location, HOS, speed) for AI enrichment
- * @returns Full ChatResponse including optional action for the map
+ * Send a message to GPT-4o.
+ * Response is always a MapAction — the frontend executes it on Mapbox.
  */
 export async function sendChatMessage(
   message: string,
@@ -151,14 +189,39 @@ export async function sendChatMessage(
   }
 }
 
+// ── Whisper transcription ─────────────────────────────────────────────────────
+
+export async function transcribeAudio(audioPath: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const form = new FormData();
+    form.append('audio', {
+      uri:  audioPath.startsWith('file://') ? audioPath : `file://${audioPath}`,
+      type: 'audio/m4a',
+      name: 'recording.m4a',
+    } as unknown as Blob);
+
+    const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
+      method:  'POST',
+      body:    form,
+      signal:  controller.signal,
+    });
+    const data = (await res.json()) as { ok: boolean; text?: string; error?: string };
+    return data.ok && data.text ? data.text : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── POI CRUD ─────────────────────────────────────────────────────────────────
 
 export async function listPOIs(category?: string): Promise<SavedPOI[]> {
   try {
     const qs = category ? `?category=${encodeURIComponent(category)}` : '';
-    const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(
-      `/api/pois${qs}`,
-    );
+    const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(`/api/pois${qs}`);
     return res.ok ? res.pois : [];
   } catch {
     return [];
