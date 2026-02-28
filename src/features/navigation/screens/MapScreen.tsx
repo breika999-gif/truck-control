@@ -279,9 +279,9 @@ export default function MapScreen() {
   const [departLabel, setDepartLabel] = useState<DepartLabel>('СЕГА');
   const [departAt, setDepartAt]       = useState<string | null>(null);
 
-  // Map style — satellite-streets by default (fixes VectorSource SoftException
-  // by embedding traffic via style URL instead of a separate VectorSource layer)
-  const [satellite, setSatellite] = useState(true);
+  // Map mode: 'vector' = light/dark vector | 'hybrid' = satellite-streets-v12 | 'satellite' = pure satellite-v9
+  type MapMode = 'vector' | 'hybrid' | 'satellite';
+  const [mapMode, setMapMode] = useState<MapMode>('hybrid');
   const [mapIsLoaded, setMapIsLoaded] = useState(false);
   const [showTraffic, setShowTraffic] = useState(true);
   const [mapPitch, setMapPitch] = useState(0);
@@ -297,25 +297,25 @@ export default function MapScreen() {
   const [showRestrictions, setShowRestrictions] = useState(false);
   const [showContours, setShowContours]         = useState(false);
 
-  // Auto-switch every minute; resets mapIsLoaded so the new style URL loads
+  // Auto-switch every minute; resets mapIsLoaded so the new style URL loads (vector only)
   useEffect(() => {
     const timer = setInterval(() => {
       const next = getIsDay();
       setLightMode(prev => {
-        if (prev !== next && !satellite) setMapIsLoaded(false);
+        if (prev !== next && mapMode === 'vector') setMapIsLoaded(false);
         return next;
       });
     }, 60_000);
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [satellite]);
+  }, [mapMode]);
 
-  // Traffic data refresh — bump key every 60s to remount VectorSource
+  // Traffic data refresh — bump key every 60s to remount VectorSource (not in pure satellite)
   useEffect(() => {
-    if (!showTraffic || satellite) return;
+    if (!showTraffic || mapMode === 'satellite') return;
     const timer = setInterval(() => setTrafficKey(k => k + 1), 60_000);
     return () => clearInterval(timer);
-  }, [showTraffic, satellite]);
+  }, [showTraffic, mapMode]);
 
   // Auto-enable tunnel/restriction overlay when truck height > 3.5 m (typical bridge clearance)
   useEffect(() => {
@@ -990,16 +990,15 @@ export default function MapScreen() {
   const stepToShow = navigating ? activeStep : null;
 
   // Style URL strategy:
-  //   satellite=true   → satellite-streets-v12 (traffic + terrain embedded)
-  //   day (6–20h)      → light-v11   + VectorSource traffic (30s refresh)
-  //   night (20–6h)    → dark-v11    + VectorSource traffic (30s refresh)
-  // Traffic is now a live VectorSource (mapbox-traffic-v1) so base style
-  // stays light/dark and traffic tiles refresh independently every 30 s.
-  const mapStyleURL = satellite
-    ? 'mapbox://styles/mapbox/satellite-streets-v12'
-    : lightMode
-      ? 'mapbox://styles/mapbox/light-v11'
-      : Mapbox.StyleURL.Dark;
+  //   'satellite' → satellite-v9          (pure aerial, no labels)
+  //   'hybrid'    → satellite-streets-v12 (aerial + road labels — default)
+  //   'vector'    → light-v11 / dark-v11  (vector map, auto day/night)
+  // Traffic VectorSource overlays work in vector + hybrid modes.
+  const mapStyleURL =
+    mapMode === 'satellite' ? 'mapbox://styles/mapbox/satellite-v9'          :
+    mapMode === 'hybrid'    ? 'mapbox://styles/mapbox/satellite-streets-v12' :
+    lightMode               ? 'mapbox://styles/mapbox/light-v11'             :
+                              Mapbox.StyleURL.Dark;
 
   const searchTop = insets.top + spacing.sm;
 
@@ -1111,7 +1110,7 @@ export default function MapScreen() {
             mapbox-terrain-v2 contour sourceLayer. index=1 picks every 5th (index)
             contour for thicker emphasis. Rendered before traffic so road data stays
             on top. Only visible in non-satellite, non-navigation mode. */}
-        {mapIsLoaded && !satellite && showContours && (
+        {mapIsLoaded && mapMode === 'vector' && showContours && (
           <Mapbox.VectorSource id="terrain-v2-contours" url="mapbox://mapbox.mapbox-terrain-v2">
             {/* Regular contours — subtle background texture */}
             <Mapbox.LineLayer
@@ -1146,7 +1145,7 @@ export default function MapScreen() {
         {/* ── Real-time traffic overlay (mapbox-traffic-v1, refreshes every 60 s) ──
             Rendered before buildings+route so NEON route lines stay on top.
             key={trafficKey} remounts VectorSource to pull fresh tiles. */}
-        {mapIsLoaded && showTraffic && !satellite && (
+        {mapIsLoaded && showTraffic && mapMode !== 'satellite' && (
           <Mapbox.VectorSource
             key={`traffic-${trafficKey}`}
             id="traffic-v1"
@@ -1186,7 +1185,7 @@ export default function MapScreen() {
             - Toll roads: dashed gold overlay (cost / permit awareness)
             - Lane dividers: dashes on motorway/trunk/primary with 2+ lanes
             Always visible when showRestrictions=true or actively navigating. */}
-        {mapIsLoaded && !satellite && (showRestrictions || navigating) && (
+        {mapIsLoaded && mapMode !== 'satellite' && (showRestrictions || navigating) && (
           <Mapbox.VectorSource id="streets-v8" url="mapbox://mapbox.mapbox-streets-v8">
             {/* Bridge warning — check load capacity and height clearance */}
             <Mapbox.LineLayer
@@ -1250,8 +1249,8 @@ export default function MapScreen() {
 
         {/* 3D Buildings — fill-extrusion from composite source.
             Rendered BEFORE route lines so polylines stay on top.
-            Hidden in satellite mode (style already shows 3D terrain). */}
-        {mapIsLoaded && !satellite && (
+            Vector-only: satellite-streets has its own built-in 3D buildings. */}
+        {mapIsLoaded && mapMode === 'vector' && (
           <Mapbox.FillExtrusionLayer
             id="3d-buildings"
             sourceID="composite"
@@ -1456,9 +1455,17 @@ export default function MapScreen() {
             <View style={styles.optionsRow}>
               <TouchableOpacity
                 style={styles.optionBtn}
-                onPress={() => { setSatellite(v => !v); if (!navigating) setMapIsLoaded(false); }}
+                onPress={() => {
+                  setMapMode(prev => {
+                    const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
+                    if (!navigating) setMapIsLoaded(false);
+                    return next;
+                  });
+                }}
               >
-                <Text style={styles.mapBtnText}>{satellite ? '🌑' : '🛰️'}</Text>
+                <Text style={styles.mapBtnText}>
+                  {mapMode === 'vector' ? '🌍' : mapMode === 'hybrid' ? '🌐' : '🛰️'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
@@ -1482,7 +1489,7 @@ export default function MapScreen() {
             </View>
 
             {/* ── Truck overlay row: road restrictions + terrain contours ── */}
-            {!satellite && (
+            {mapMode !== 'satellite' && (
               <View style={styles.optionsRow}>
                 {/* 🚧 Streets-v8: tunnel warnings + lane dividers */}
                 <TouchableOpacity
