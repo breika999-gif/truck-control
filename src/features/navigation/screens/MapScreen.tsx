@@ -14,6 +14,7 @@ import {
   Image,
 } from 'react-native';
 import Tts from 'react-native-tts';
+import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Geolocation from 'react-native-geolocation-service';
 import Mapbox, { locationManager, LocationPuck, type CameraPadding } from '@rnmapbox/maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,6 +64,8 @@ import {
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
+
+// AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
 // ── Neon Blue theme ──────────────────────────────────────────────────────────
 const NEON       = '#00bfff';          // neon blue
@@ -138,15 +141,28 @@ function ttsSpeak(text: string): void {
   try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
 }
 
-/** Strip raw JSON from chat bubbles — returns only the human-readable text. */
+/** Convert a raw backend string to clean chat-bubble text.
+ *  If the string is a JSON action object, returns a human-readable
+ *  Bulgarian summary instead of raw JSON. */
 function parseBubbleText(raw: string): string {
   const s = raw.trim();
   if (!s.startsWith('{')) return s;
   try {
     const obj = JSON.parse(s) as Record<string, unknown>;
-    return String(obj.text ?? obj.message ?? obj.reply ?? '') || s;
+    // Prefer explicit text fields the backend may include
+    const explicit = String(obj.text ?? obj.message ?? obj.reply ?? '').trim();
+    if (explicit) return explicit;
+    // Generate friendly text from action type
+    const dest = String(obj.destination ?? 'дестинацията');
+    switch (String(obj.action ?? '')) {
+      case 'route':       return `Пътуваме към ${dest}. Приятен път!`;
+      case 'show_routes': return `Варианти за маршрут до ${dest}.`;
+      case 'show_pois':   return `Търся наблизо…`;
+      case 'tachograph':  return 'Проверка на тахографа.';
+      default:            return ''; // caller applies voiceText fallback
+    }
   } catch {
-    return s;
+    return s; // not valid JSON — show as-is
   }
 }
 
@@ -824,7 +840,9 @@ export default function MapScreen() {
         ? (act.text ?? '')
         : ('message' in act ? (act as { message?: string }).message : undefined) ?? '';
 
-    const cleanText = parseBubbleText(displayText || '...');
+    const cleanText = displayText.trim()
+      ? parseBubbleText(displayText)
+      : (voiceText(act) || '✓');
     setChatHistory([...newHistory, { role: 'model', text: cleanText }]);
     const ttsMsg = voiceText(act);
     if (ttsMsg && !voiceMutedRef.current) { Tts.stop(); ttsSpeak(ttsMsg); }
@@ -915,8 +933,10 @@ export default function MapScreen() {
       },
     );
     if (granted !== PermissionsAndroid.RESULTS.GRANTED) return;
-    setIsRecording(true);
-    // TODO: replace with compatible recorder library
+    try {
+      await AudioRecorderPlayer.startRecorder();
+      setIsRecording(true);
+    } catch { /* silent fail — mic busy or unavailable */ }
   }, [chatLoading, micLoading, isRecording]);
 
   const handleMicStop = useCallback(async () => {
@@ -924,8 +944,8 @@ export default function MapScreen() {
     setIsRecording(false);
     setMicLoading(true);
     try {
-      // TODO: replace with compatible recorder library
-      const transcribed = null;
+      const path = await AudioRecorderPlayer.stopRecorder();
+      const transcribed = await transcribeAudio(path);
       if (transcribed) sendText(transcribed);
     } catch { /* silent fail */ } finally {
       setMicLoading(false);
