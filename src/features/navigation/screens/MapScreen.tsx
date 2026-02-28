@@ -42,6 +42,12 @@ import {
   type TruckPOI,
 } from '../api/poi';
 import {
+  fetchElevationAtPoint,
+  fetchNearbyParking,
+  fetchNearbyRestrictions,
+  type ParkingSpot,
+} from '../api/tilequery';
+import {
   sendChatMessage,
   transcribeAudio,
   savePOI,
@@ -304,10 +310,10 @@ export default function MapScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [satellite]);
 
-  // Traffic data refresh — bump key every 30s to remount VectorSource
+  // Traffic data refresh — bump key every 60s to remount VectorSource
   useEffect(() => {
     if (!showTraffic || satellite) return;
-    const timer = setInterval(() => setTrafficKey(k => k + 1), 30_000);
+    const timer = setInterval(() => setTrafficKey(k => k + 1), 60_000);
     return () => clearInterval(timer);
   }, [showTraffic, satellite]);
 
@@ -315,6 +321,11 @@ export default function MapScreen() {
   useEffect(() => {
     if (profile && profile.height_m > 3.5) setShowRestrictions(true);
   }, [profile]);
+
+  // Auto-enable terrain contours when driving out of city (speed > 60 km/h = highway / rural)
+  useEffect(() => {
+    if (speed > 60) setShowContours(true);
+  }, [speed]);
 
   // Voice
   const [voiceMuted, setVoiceMuted] = useState(false);
@@ -376,6 +387,18 @@ export default function MapScreen() {
   const isMountedRef   = useRef(true);
   useEffect(() => () => { isMountedRef.current = false; }, []);
 
+  // ── Tilequery state ────────────────────────────────────────────────────────
+  const [elevation, setElevation]       = useState<number | null>(null);
+  const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
+  const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
+
+  // Tilequery throttle refs — timestamps of last call per query type
+  const lastElevationRef   = useRef<number>(0);
+  const lastRestrictionRef = useRef<number>(0);
+  const lastParkingRef     = useRef<number>(0);
+  // Stopped detection: timestamp when speed first dropped below 2 km/h
+  const stoppedSinceRef    = useRef<number | null>(null);
+
   useEffect(() => { voiceMutedRef.current = voiceMuted; }, [voiceMuted]);
 
   // ── Runtime location permission + GPS (react-native-geolocation-service) ──
@@ -401,9 +424,55 @@ export default function MapScreen() {
           setSpeed(Math.round(kmh));
           isDrivingRef.current = kmh > 3;
 
+          // ── Tilequery queries (all throttled) ─────────────────────────────
+          const tqNow = Date.now();
+          const [tqLng, tqLat] = coords;
+
+          // 1. Elevation — update every 15 s
+          if (tqNow - lastElevationRef.current >= 15_000) {
+            lastElevationRef.current = tqNow;
+            fetchElevationAtPoint(tqLng, tqLat).then(ele => {
+              if (isMountedRef.current && ele != null) setElevation(ele);
+            });
+          }
+
+          // 2. Stopped detection → auto-search parking once per stop
+          //    Triggers after 20 s stationary, 2-minute cooldown between searches
+          if (kmh < 2) {
+            if (stoppedSinceRef.current === null) stoppedSinceRef.current = tqNow;
+            const stoppedMs = tqNow - stoppedSinceRef.current;
+            if (stoppedMs >= 20_000 && tqNow - lastParkingRef.current >= 120_000) {
+              lastParkingRef.current = tqNow;
+              fetchNearbyParking(tqLng, tqLat, 1000).then(spots => {
+                if (isMountedRef.current && spots.length > 0) setAutoParking(spots);
+              });
+            }
+          } else {
+            stoppedSinceRef.current = null;
+          }
+          // ── end Tilequery (pre-nav) ────────────────────────────────────────
+
           const isNav = navigatingRef.current;
           const cur   = routeRef.current;
           if (!isNav || !cur) return;
+
+          // 3. Restriction check — tunnels/bridges nearby (every 10 s, tall trucks only)
+          const profR = profileRef.current;
+          if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= 10_000) {
+            lastRestrictionRef.current = tqNow;
+            fetchNearbyRestrictions(tqLng, tqLat, 400).then(r => {
+              if (!isMountedRef.current) return;
+              if (r.hasTunnel) {
+                const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';
+                setTunnelWarning(`⚠️ Тунел${dist} — провери клиренс!`);
+              } else if (r.hasBridge) {
+                const dist = r.bridgeDistance > 0 ? ` ${r.bridgeDistance} м` : '';
+                setTunnelWarning(`⚠️ Мост${dist} — провери носимост!`);
+              } else {
+                setTunnelWarning(null);
+              }
+            });
+          }
 
           setSpeedLimit(
             getSpeedLimitAtPosition(cur.geometry.coordinates, cur.maxspeeds, coords),
@@ -969,6 +1038,9 @@ export default function MapScreen() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  // Dynamic terrain exaggeration: stronger relief when driving fast (rural / highway)
+  const terrainExaggeration = speed > 90 ? 2.0 : speed > 60 ? 1.6 : speed > 30 ? 1.3 : 1.0;
+
   return (
     <View style={styles.container}>
 
@@ -1019,8 +1091,8 @@ export default function MapScreen() {
             tileSize={512}
             maxZoomLevel={14}
           >
-            {/* exaggeration 1.3 gives realistic relief without over-dramatising */}
-            <Mapbox.Terrain style={{ exaggeration: 1.3 }} />
+            {/* exaggeration scales with speed: 1.0 city → 1.6 highway → 2.0 open road */}
+            <Mapbox.Terrain style={{ exaggeration: terrainExaggeration }} />
           </Mapbox.RasterDemSource>
         )}
         {mapIsLoaded && (
@@ -1071,7 +1143,7 @@ export default function MapScreen() {
           </Mapbox.VectorSource>
         )}
 
-        {/* ── Real-time traffic overlay (mapbox-traffic-v1, refreshes every 30 s) ──
+        {/* ── Real-time traffic overlay (mapbox-traffic-v1, refreshes every 60 s) ──
             Rendered before buildings+route so NEON route lines stay on top.
             key={trafficKey} remounts VectorSource to pull fresh tiles. */}
         {mapIsLoaded && showTraffic && !satellite && (
@@ -1107,14 +1179,28 @@ export default function MapScreen() {
           </Mapbox.VectorSource>
         )}
 
-        {/* ── Streets-v8: Truck lane visualization + tunnel restriction warnings ──
+        {/* ── Streets-v8: Truck restrictions + lane visualization ──
             Uses mapbox.mapbox-streets-v8 tileset for:
-            - Tunnel hazards: dashed orange overlay on tunnel roads (trucks must check clearance)
-            - Lane dividers: subtle dashes on motorway/trunk/primary with 2+ lanes
-            Only visible when showRestrictions=true and not in satellite mode. */}
-        {/* showRestrictions OR active navigation — lane dividers always visible when driving */}
+            - Tunnel hazards: dashed orange overlay (trucks must check clearance)
+            - Bridge warnings: subtle cyan overlay (weight/clearance check)
+            - Toll roads: dashed gold overlay (cost / permit awareness)
+            - Lane dividers: dashes on motorway/trunk/primary with 2+ lanes
+            Always visible when showRestrictions=true or actively navigating. */}
         {mapIsLoaded && !satellite && (showRestrictions || navigating) && (
           <Mapbox.VectorSource id="streets-v8" url="mapbox://mapbox.mapbox-streets-v8">
+            {/* Bridge warning — check load capacity and height clearance */}
+            <Mapbox.LineLayer
+              id="truck-bridge-warning"
+              sourceLayerID="road"
+              filter={['==', ['get', 'structure'], 'bridge'] as unknown as [string, ...unknown[]]}
+              minZoomLevel={10}
+              style={{
+                lineColor: lightMode ? '#0077aa' : '#00bbee',
+                lineWidth: 5,
+                lineOpacity: lightMode ? 0.38 : 0.32,
+                lineCap: 'round',
+              }}
+            />
             {/* Tunnel hazard warning — truckers must verify height clearance */}
             <Mapbox.LineLayer
               id="truck-tunnel-warning"
@@ -1129,7 +1215,20 @@ export default function MapScreen() {
                 lineCap: 'round',
               }}
             />
-            {/* Multi-lane dividers — show dashes on wide roads (lanes ≥ 2) */}
+            {/* Toll road indicator — gold dashes (cost awareness for routes) */}
+            <Mapbox.LineLayer
+              id="truck-toll-road"
+              sourceLayerID="road"
+              filter={['==', ['get', 'toll'], 1] as unknown as [string, ...unknown[]]}
+              minZoomLevel={8}
+              style={{
+                lineColor: lightMode ? '#c8a000' : '#ffd700',
+                lineWidth: 3,
+                lineOpacity: lightMode ? 0.70 : 0.58,
+                lineDasharray: [4, 3] as unknown as number[],
+              }}
+            />
+            {/* Multi-lane dividers — dashed lines on wide roads (lanes ≥ 2) */}
             <Mapbox.LineLayer
               id="lane-dividers"
               sourceLayerID="road"
@@ -1140,9 +1239,9 @@ export default function MapScreen() {
               minZoomLevel={13}
               style={{
                 lineColor: lightMode
-                  ? 'rgba(70, 70, 70, 0.32)'
-                  : 'rgba(255, 255, 255, 0.20)',
-                lineWidth: 0.7,
+                  ? `rgba(70, 70, 70, ${navigating ? 0.52 : 0.32})`
+                  : `rgba(255, 255, 255, ${navigating ? 0.38 : 0.20})`,
+                lineWidth: navigating ? 1.2 : 0.7,
                 lineDasharray: [6, 6] as unknown as number[],
               }}
             />
@@ -1290,6 +1389,13 @@ export default function MapScreen() {
       {!navigating && (
         <View style={[styles.searchContainer, { top: searchTop }]}>
           <SearchBar onSelect={handleDestinationSelect} onClear={handleClear} />
+        </View>
+      )}
+
+      {/* ── Tunnel / bridge restriction warning banner ── */}
+      {tunnelWarning && navigating && (
+        <View style={[styles.tunnelWarnBanner, { top: insets.top }]}>
+          <Text style={styles.tunnelWarnText}>{tunnelWarning}</Text>
         </View>
       )}
 
@@ -1740,6 +1846,17 @@ export default function MapScreen() {
         </View>
       )}
 
+      {/* ── Elevation chip — real-time altitude from Tilequery terrain-v2 ── */}
+      {elevation != null && (
+        <View style={[styles.elevationChip, {
+          bottom: navigating
+            ? 190 + insets.bottom   // above speed row
+            : 120 + insets.bottom,  // browse mode
+        }]}>
+          <Text style={styles.elevationText}>▲ {elevation} м н.в.</Text>
+        </View>
+      )}
+
       {/* ── Bottom-right: distance to next turn ── */}
       {navigating && distToTurn != null && (
         <View style={[styles.distBox, { bottom: 240 + insets.bottom }]}>
@@ -1853,6 +1970,28 @@ export default function MapScreen() {
                 : '📡 Изчакване на GPS...'}
             </Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* ── Auto-parking toast — appears after 20 s stationary, shows closest spots ── */}
+      {autoParking.length > 0 && (
+        <View style={[styles.autoParkToast, { bottom: insets.bottom + 210 }]}>
+          <View style={styles.autoParkHeader}>
+            <Text style={styles.autoParkTitle}>🅿️ Паркинги наблизо</Text>
+            <TouchableOpacity onPress={() => setAutoParking([])}>
+              <Text style={styles.autoParkClose}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          {autoParking.slice(0, 3).map((p, i) => (
+            <TouchableOpacity
+              key={i}
+              style={styles.autoParkItem}
+              onPress={() => { setAutoParking([]); navigateTo([p.lng, p.lat], p.name); }}
+            >
+              <Text style={styles.autoParkName} numberOfLines={1}>{p.name}</Text>
+              <Text style={styles.autoParkDist}>{fmtDistance(p.distance)} →</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       )}
 
@@ -2093,6 +2232,65 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   truckDimText: { fontSize: 10, color: '#ffaa00', fontWeight: '600' },
+
+  // ── Tilequery UI ────────────────────────────────────────────────────────────
+
+  // Elevation chip — floating, bottom-left
+  elevationChip: {
+    position: 'absolute',
+    left: spacing.md,
+    backgroundColor: 'rgba(0,20,40,0.82)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.35)',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    zIndex: 15,
+  },
+  elevationText: { fontSize: 11, color: NEON, fontWeight: '700', letterSpacing: 0.5 },
+
+  // Tunnel / bridge warning banner — full-width amber strip
+  tunnelWarnBanner: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 30,
+    backgroundColor: 'rgba(220, 100, 0, 0.93)',
+    paddingVertical: 7,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+  },
+  tunnelWarnText: { fontSize: 13, color: '#fff', fontWeight: '700', textAlign: 'center' },
+
+  // Auto-parking toast — card that slides up when stationary
+  autoParkToast: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: 'rgba(0,8,24,0.95)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.25)',
+    padding: spacing.sm,
+    zIndex: 25,
+  },
+  autoParkHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  autoParkTitle: { fontSize: 12, color: NEON, fontWeight: '700' },
+  autoParkClose: { fontSize: 14, color: colors.textSecondary, paddingHorizontal: 4 },
+  autoParkItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 5,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+  },
+  autoParkName: { flex: 1, fontSize: 12, color: colors.text, marginRight: 8 },
+  autoParkDist: { fontSize: 11, color: NEON, fontWeight: '600' },
 
   // GPS chip
   gpsChip: {
