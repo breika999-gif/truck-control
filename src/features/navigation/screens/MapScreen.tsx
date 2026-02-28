@@ -107,12 +107,14 @@ function tomorrowAt8(): string {
 }
 /** Emoji arrow for a lane direction string from Mapbox banner_instructions. */
 function laneDirectionEmoji(dir?: string): string {
-  if (!dir) return '⬆️';
-  if (dir === 'left' || dir === 'sharp left') return '⬅️';
-  if (dir === 'right' || dir === 'sharp right') return '➡️';
+  if (!dir || dir === 'none' || dir === 'straight') return '⬆️';
+  if (dir === 'sharp left')  return '⬅️';
+  if (dir === 'left')        return '⬅️';
   if (dir === 'slight left') return '↖️';
-  if (dir === 'slight right') return '↗️';
-  if (dir === 'uturn') return '🔄';
+  if (dir === 'slight right')return '↗️';
+  if (dir === 'right')       return '➡️';
+  if (dir === 'sharp right') return '➡️';
+  if (dir === 'uturn')       return '🔄';
   return '⬆️';
 }
 
@@ -308,6 +310,11 @@ export default function MapScreen() {
     const timer = setInterval(() => setTrafficKey(k => k + 1), 30_000);
     return () => clearInterval(timer);
   }, [showTraffic, satellite]);
+
+  // Auto-enable tunnel/restriction overlay when truck height > 3.5 m (typical bridge clearance)
+  useEffect(() => {
+    if (profile && profile.height_m > 3.5) setShowRestrictions(true);
+  }, [profile]);
 
   // Voice
   const [voiceMuted, setVoiceMuted] = useState(false);
@@ -1105,7 +1112,8 @@ export default function MapScreen() {
             - Tunnel hazards: dashed orange overlay on tunnel roads (trucks must check clearance)
             - Lane dividers: subtle dashes on motorway/trunk/primary with 2+ lanes
             Only visible when showRestrictions=true and not in satellite mode. */}
-        {mapIsLoaded && !satellite && showRestrictions && (
+        {/* showRestrictions OR active navigation — lane dividers always visible when driving */}
+        {mapIsLoaded && !satellite && (showRestrictions || navigating) && (
           <Mapbox.VectorSource id="streets-v8" url="mapbox://mapbox.mapbox-streets-v8">
             {/* Tunnel hazard warning — truckers must verify height clearance */}
             <Mapbox.LineLayer
@@ -1302,19 +1310,25 @@ export default function MapScreen() {
                 {nextStep.name || nextStep.maneuver.instruction}
               </Text>
             )}
-            {/* Lane guidance — visual lane boxes with active lane highlighted */}
+            {/* Lane Assistance — road-style lane boxes with active lane highlighted.
+                Label shows total lane count for the current road segment. */}
             {currentLanes.length > 0 && (
-              <View style={styles.laneRow}>
-                {currentLanes.map((lane, i) => (
-                  <View
-                    key={i}
-                    style={[styles.laneBox, lane.active && styles.laneBoxActive]}
-                  >
-                    <Text style={[styles.laneArrow, lane.active && styles.laneArrowActive]}>
-                      {laneDirectionEmoji(lane.directions?.[0])}
-                    </Text>
-                  </View>
-                ))}
+              <View style={styles.laneAssistWrap}>
+                <Text style={styles.laneAssistLabel}>
+                  {'🛣 ' + currentLanes.length + ' ЛЕНИ'}
+                </Text>
+                <View style={styles.laneRow}>
+                  {currentLanes.map((lane, i) => (
+                    <View
+                      key={i}
+                      style={[styles.laneBox, lane.active && styles.laneBoxActive]}
+                    >
+                      <Text style={[styles.laneArrow, lane.active && styles.laneArrowActive]}>
+                        {laneDirectionEmoji(lane.directions?.[0])}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             )}
           </View>
@@ -1765,6 +1779,24 @@ export default function MapScreen() {
             <Text style={styles.destName} numberOfLines={1}>→ {destinationName}</Text>
           ) : null}
 
+          {/* Truck geometry badge — confirms active vehicle constraints used for routing */}
+          {navigating && profile && (
+            <View style={styles.truckDimRow}>
+              <View style={styles.truckDimBadge}>
+                <Text style={styles.truckDimText}>↕ {profile.height_m} м</Text>
+              </View>
+              <View style={styles.truckDimBadge}>
+                <Text style={styles.truckDimText}>⚖ {profile.weight_t} т</Text>
+              </View>
+              <View style={styles.truckDimBadge}>
+                <Text style={styles.truckDimText}>↔ {profile.width_m} м</Text>
+              </View>
+              <View style={styles.truckDimBadge}>
+                <Text style={styles.truckDimText}>↔ {profile.length_m} м</Text>
+              </View>
+            </View>
+          )}
+
           {/* Congestion indicator */}
           {dominantCongestion && (
             <View style={styles.congestionRow}>
@@ -2015,24 +2047,52 @@ const styles = StyleSheet.create({
   navStreet: { fontSize: 18, fontWeight: '700', color: colors.text },
   navNext: { ...typography.caption, color: colors.textSecondary, marginTop: 3 },
 
-  // Lane guidance — road-like lane boxes
-  laneRow: { flexDirection: 'row', marginTop: 6, gap: 3, alignSelf: 'center' },
+  // Lane Assistance — enlarged road-style lane boxes
+  laneAssistWrap: { marginTop: 6, alignItems: 'center' },
+  laneAssistLabel: {
+    fontSize: 9,
+    color: 'rgba(0,191,255,0.70)',
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    marginBottom: 3,
+    textTransform: 'uppercase',
+  },
+  laneRow: { flexDirection: 'row', gap: 4, alignSelf: 'center' },
   laneBox: {
-    width: 28,
-    height: 34,
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 4,
+    width: 36,
+    height: 48,
+    backgroundColor: 'rgba(10, 15, 30, 0.85)',
+    borderRadius: 5,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   laneBoxActive: {
-    backgroundColor: 'rgba(0,229,255,0.22)',
+    backgroundColor: 'rgba(0,191,255,0.28)',
     borderColor: NEON,
+    borderWidth: 2.5,
   },
-  laneArrow: { fontSize: 16, opacity: 0.3 },
+  laneArrow: { fontSize: 20, opacity: 0.30 },
   laneArrowActive: { opacity: 1 },
+
+  // Truck geometry badge — amber pill showing active routing constraints
+  truckDimRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    justifyContent: 'center',
+  },
+  truckDimBadge: {
+    backgroundColor: 'rgba(255,170,0,0.12)',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,170,0,0.40)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  truckDimText: { fontSize: 10, color: '#ffaa00', fontWeight: '600' },
 
   // GPS chip
   gpsChip: {
