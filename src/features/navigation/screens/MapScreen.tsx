@@ -278,6 +278,23 @@ export default function MapScreen() {
   const [showTraffic, setShowTraffic] = useState(true);
   const [mapPitch, setMapPitch] = useState(0);
 
+  // Light / dark theme — auto-computed from time (6:00–20:00 = day), overridable
+  const getIsDay = () => { const h = new Date().getHours(); return h >= 6 && h < 20; };
+  const [lightMode, setLightMode] = useState(getIsDay);
+
+  // Auto-switch every minute; resets mapIsLoaded so the new style URL loads
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const next = getIsDay();
+      setLightMode(prev => {
+        if (prev !== next && !satellite) setMapIsLoaded(false);
+        return next;
+      });
+    }, 60_000);
+    return () => clearInterval(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [satellite]);
+
   // Voice
   const [voiceMuted, setVoiceMuted] = useState(false);
   const voiceMutedRef     = useRef(false);
@@ -883,14 +900,18 @@ export default function MapScreen() {
   const stepToShow = navigating ? activeStep : null;
 
   // Style URL strategy:
-  //   satellite=true  → satellite-streets (traffic embedded, no SoftException)
-  //   satellite=false + traffic=true  → traffic-night (dedicated traffic style)
-  //   satellite=false + traffic=false → Dark
+  //   satellite=true                          → satellite-streets-v12
+  //   satellite=false + traffic + day         → traffic-day-v2
+  //   satellite=false + traffic + night       → traffic-night-v2
+  //   satellite=false + no traffic + day      → light-v11
+  //   satellite=false + no traffic + night    → dark-v11
   const mapStyleURL = satellite
     ? 'mapbox://styles/mapbox/satellite-streets-v12'
     : showTraffic
-      ? 'mapbox://styles/mapbox/traffic-night-v2'
-      : Mapbox.StyleURL.Dark;
+      ? (lightMode ? 'mapbox://styles/mapbox/traffic-day-v2' : 'mapbox://styles/mapbox/traffic-night-v2')
+      : lightMode
+        ? 'mapbox://styles/mapbox/light-v11'
+        : Mapbox.StyleURL.Dark;
 
   const searchTop = insets.top + spacing.sm;
 
@@ -981,10 +1002,12 @@ export default function MapScreen() {
             sourceLayerID="building"
             minZoomLevel={14}
             style={{
-              fillExtrusionColor: '#1a3a5f',
+              // Light: steel-blue tint with strong contrast for sunny readability
+              // Dark: deep navy matching the dark basemap
+              fillExtrusionColor: lightMode ? '#8fb8d4' : '#1a3a5f',
               fillExtrusionHeight: ['get', 'height'] as unknown as number,
               fillExtrusionBase: ['get', 'min_height'] as unknown as number,
-              fillExtrusionOpacity: 0.65,
+              fillExtrusionOpacity: lightMode ? 0.82 : 0.65,
             }}
           />
         )}
@@ -1167,6 +1190,13 @@ export default function MapScreen() {
                 onPress={() => { setShowTraffic(v => !v); if (!navigating) setMapIsLoaded(false); }}
               >
                 <Text style={styles.mapBtnText}>🚦</Text>
+              </TouchableOpacity>
+              {/* Light/dark theme toggle — overrides auto day/night detection */}
+              <TouchableOpacity
+                style={styles.optionBtn}
+                onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); }}
+              >
+                <Text style={styles.mapBtnText}>{lightMode ? '🌙' : '☀️'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
