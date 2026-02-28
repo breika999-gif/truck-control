@@ -282,6 +282,9 @@ export default function MapScreen() {
   const getIsDay = () => { const h = new Date().getHours(); return h >= 6 && h < 20; };
   const [lightMode, setLightMode] = useState(getIsDay);
 
+  // Real-time traffic: bump key every 30s to remount VectorSource and pull fresh tiles
+  const [trafficKey, setTrafficKey] = useState(0);
+
   // Auto-switch every minute; resets mapIsLoaded so the new style URL loads
   useEffect(() => {
     const timer = setInterval(() => {
@@ -294,6 +297,13 @@ export default function MapScreen() {
     return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [satellite]);
+
+  // Traffic data refresh — bump key every 30s to remount VectorSource
+  useEffect(() => {
+    if (!showTraffic || satellite) return;
+    const timer = setInterval(() => setTrafficKey(k => k + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [showTraffic, satellite]);
 
   // Voice
   const [voiceMuted, setVoiceMuted] = useState(false);
@@ -900,18 +910,16 @@ export default function MapScreen() {
   const stepToShow = navigating ? activeStep : null;
 
   // Style URL strategy:
-  //   satellite=true                          → satellite-streets-v12
-  //   satellite=false + traffic + day         → traffic-day-v2
-  //   satellite=false + traffic + night       → traffic-night-v2
-  //   satellite=false + no traffic + day      → light-v11
-  //   satellite=false + no traffic + night    → dark-v11
+  //   satellite=true   → satellite-streets-v12 (traffic + terrain embedded)
+  //   day (6–20h)      → light-v11   + VectorSource traffic (30s refresh)
+  //   night (20–6h)    → dark-v11    + VectorSource traffic (30s refresh)
+  // Traffic is now a live VectorSource (mapbox-traffic-v1) so base style
+  // stays light/dark and traffic tiles refresh independently every 30 s.
   const mapStyleURL = satellite
     ? 'mapbox://styles/mapbox/satellite-streets-v12'
-    : showTraffic
-      ? (lightMode ? 'mapbox://styles/mapbox/traffic-day-v2' : 'mapbox://styles/mapbox/traffic-night-v2')
-      : lightMode
-        ? 'mapbox://styles/mapbox/light-v11'
-        : Mapbox.StyleURL.Dark;
+    : lightMode
+      ? 'mapbox://styles/mapbox/light-v11'
+      : Mapbox.StyleURL.Dark;
 
   const searchTop = insets.top + spacing.sm;
 
@@ -991,6 +999,66 @@ export default function MapScreen() {
           pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
         />
+
+        {/* ── 3D Terrain DEM + atmosphere lighting ── */}
+        {mapIsLoaded && (
+          <Mapbox.RasterDemSource
+            id="terrain-dem"
+            url="mapbox://mapbox.mapbox-terrain-dem-v1"
+            tileSize={512}
+            maxZoomLevel={14}
+          >
+            {/* exaggeration 1.3 gives realistic relief without over-dramatising */}
+            <Mapbox.Terrain style={{ exaggeration: 1.3 }} />
+          </Mapbox.RasterDemSource>
+        )}
+        {mapIsLoaded && (
+          <Mapbox.SkyLayer
+            id="sky"
+            style={{
+              skyType: 'atmosphere',
+              // Sun higher in the sky during day (polar angle 90° = horizon, 0° = zenith)
+              skyAtmosphereSun: [0.0, lightMode ? 80.0 : 15.0],
+              skyAtmosphereSunIntensity: lightMode ? 15 : 5,
+            }}
+          />
+        )}
+
+        {/* ── Real-time traffic overlay (mapbox-traffic-v1, refreshes every 30 s) ──
+            Rendered before buildings+route so NEON route lines stay on top.
+            key={trafficKey} remounts VectorSource to pull fresh tiles. */}
+        {mapIsLoaded && showTraffic && !satellite && (
+          <Mapbox.VectorSource
+            key={`traffic-${trafficKey}`}
+            id="traffic-v1"
+            url="mapbox://mapbox.mapbox-traffic-v1"
+          >
+            <Mapbox.LineLayer
+              id="traffic-closed"
+              sourceLayerID="traffic"
+              filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']] as unknown as [string, ...unknown[]]}
+              style={{ lineColor: '#e74c3c', lineWidth: 4.5, lineOpacity: 0.92, lineCap: 'round' }}
+            />
+            <Mapbox.LineLayer
+              id="traffic-heavy"
+              sourceLayerID="traffic"
+              filter={['==', ['get', 'congestion'], 'heavy'] as unknown as [string, ...unknown[]]}
+              style={{ lineColor: '#ff6b35', lineWidth: 3.5, lineOpacity: 0.88, lineCap: 'round' }}
+            />
+            <Mapbox.LineLayer
+              id="traffic-moderate"
+              sourceLayerID="traffic"
+              filter={['==', ['get', 'congestion'], 'moderate'] as unknown as [string, ...unknown[]]}
+              style={{ lineColor: '#f39c12', lineWidth: 2.5, lineOpacity: 0.82, lineCap: 'round' }}
+            />
+            <Mapbox.LineLayer
+              id="traffic-low"
+              sourceLayerID="traffic"
+              filter={['==', ['get', 'congestion'], 'low'] as unknown as [string, ...unknown[]]}
+              style={{ lineColor: '#2ecc71', lineWidth: 2, lineOpacity: 0.72, lineCap: 'round' }}
+            />
+          </Mapbox.VectorSource>
+        )}
 
         {/* 3D Buildings — fill-extrusion from composite source.
             Rendered BEFORE route lines so polylines stay on top.
@@ -1149,16 +1217,18 @@ export default function MapScreen() {
                 {nextStep.name || nextStep.maneuver.instruction}
               </Text>
             )}
-            {/* Lane guidance — show active/inactive lane arrows from banner_instructions */}
+            {/* Lane guidance — visual lane boxes with active lane highlighted */}
             {currentLanes.length > 0 && (
               <View style={styles.laneRow}>
                 {currentLanes.map((lane, i) => (
-                  <Text
+                  <View
                     key={i}
-                    style={[styles.laneArrow, lane.active && styles.laneArrowActive]}
+                    style={[styles.laneBox, lane.active && styles.laneBoxActive]}
                   >
-                    {laneDirectionEmoji(lane.directions?.[0])}
-                  </Text>
+                    <Text style={[styles.laneArrow, lane.active && styles.laneArrowActive]}>
+                      {laneDirectionEmoji(lane.directions?.[0])}
+                    </Text>
+                  </View>
                 ))}
               </View>
             )}
@@ -1187,7 +1257,7 @@ export default function MapScreen() {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
-                onPress={() => { setShowTraffic(v => !v); if (!navigating) setMapIsLoaded(false); }}
+                onPress={() => setShowTraffic(v => !v)}
               >
                 <Text style={styles.mapBtnText}>🚦</Text>
               </TouchableOpacity>
@@ -1840,9 +1910,23 @@ const styles = StyleSheet.create({
   navStreet: { fontSize: 18, fontWeight: '700', color: colors.text },
   navNext: { ...typography.caption, color: colors.textSecondary, marginTop: 3 },
 
-  // Lane guidance arrows
-  laneRow: { flexDirection: 'row', marginTop: 5, gap: 4 },
-  laneArrow: { fontSize: 18, opacity: 0.3 },
+  // Lane guidance — road-like lane boxes
+  laneRow: { flexDirection: 'row', marginTop: 6, gap: 3, alignSelf: 'center' },
+  laneBox: {
+    width: 28,
+    height: 34,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  laneBoxActive: {
+    backgroundColor: 'rgba(0,229,255,0.22)',
+    borderColor: NEON,
+  },
+  laneArrow: { fontSize: 16, opacity: 0.3 },
   laneArrowActive: { opacity: 1 },
 
   // GPS chip
