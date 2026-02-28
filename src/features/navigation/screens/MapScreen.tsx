@@ -285,6 +285,10 @@ export default function MapScreen() {
   // Real-time traffic: bump key every 30s to remount VectorSource and pull fresh tiles
   const [trafficKey, setTrafficKey] = useState(0);
 
+  // streets-v8 truck overlays (tunnels + lane dividers) and terrain-v2 contour lines
+  const [showRestrictions, setShowRestrictions] = useState(false);
+  const [showContours, setShowContours]         = useState(false);
+
   // Auto-switch every minute; resets mapIsLoaded so the new style URL loads
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1024,6 +1028,42 @@ export default function MapScreen() {
           />
         )}
 
+        {/* ── Terrain v2: elevation contour lines ──
+            mapbox-terrain-v2 contour sourceLayer. index=1 picks every 5th (index)
+            contour for thicker emphasis. Rendered before traffic so road data stays
+            on top. Only visible in non-satellite, non-navigation mode. */}
+        {mapIsLoaded && !satellite && showContours && (
+          <Mapbox.VectorSource id="terrain-v2-contours" url="mapbox://mapbox.mapbox-terrain-v2">
+            {/* Regular contours — subtle background texture */}
+            <Mapbox.LineLayer
+              id="contour-lines"
+              sourceLayerID="contour"
+              minZoomLevel={11}
+              style={{
+                lineColor: lightMode
+                  ? 'rgba(110, 80, 40, 0.28)'
+                  : 'rgba(190, 160, 100, 0.22)',
+                lineWidth: ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 1.0] as unknown as number,
+                lineOpacity: 0.70,
+              }}
+            />
+            {/* Index contours — every 5th line, slightly bolder */}
+            <Mapbox.LineLayer
+              id="contour-index"
+              sourceLayerID="contour"
+              filter={['==', ['get', 'index'], 1] as unknown as [string, ...unknown[]]}
+              minZoomLevel={10}
+              style={{
+                lineColor: lightMode
+                  ? 'rgba(110, 80, 40, 0.52)'
+                  : 'rgba(190, 160, 100, 0.42)',
+                lineWidth: ['interpolate', ['linear'], ['zoom'], 10, 0.8, 16, 1.6] as unknown as number,
+                lineOpacity: 0.85,
+              }}
+            />
+          </Mapbox.VectorSource>
+        )}
+
         {/* ── Real-time traffic overlay (mapbox-traffic-v1, refreshes every 30 s) ──
             Rendered before buildings+route so NEON route lines stay on top.
             key={trafficKey} remounts VectorSource to pull fresh tiles. */}
@@ -1060,6 +1100,47 @@ export default function MapScreen() {
           </Mapbox.VectorSource>
         )}
 
+        {/* ── Streets-v8: Truck lane visualization + tunnel restriction warnings ──
+            Uses mapbox.mapbox-streets-v8 tileset for:
+            - Tunnel hazards: dashed orange overlay on tunnel roads (trucks must check clearance)
+            - Lane dividers: subtle dashes on motorway/trunk/primary with 2+ lanes
+            Only visible when showRestrictions=true and not in satellite mode. */}
+        {mapIsLoaded && !satellite && showRestrictions && (
+          <Mapbox.VectorSource id="streets-v8" url="mapbox://mapbox.mapbox-streets-v8">
+            {/* Tunnel hazard warning — truckers must verify height clearance */}
+            <Mapbox.LineLayer
+              id="truck-tunnel-warning"
+              sourceLayerID="road"
+              filter={['==', ['get', 'structure'], 'tunnel'] as unknown as [string, ...unknown[]]}
+              minZoomLevel={10}
+              style={{
+                lineColor: lightMode ? '#e07000' : '#ffaa33',
+                lineWidth: 6,
+                lineOpacity: lightMode ? 0.62 : 0.52,
+                lineDasharray: [2, 2] as unknown as number[],
+                lineCap: 'round',
+              }}
+            />
+            {/* Multi-lane dividers — show dashes on wide roads (lanes ≥ 2) */}
+            <Mapbox.LineLayer
+              id="lane-dividers"
+              sourceLayerID="road"
+              filter={['all',
+                ['>=', ['to-number', ['get', 'lanes']], 2],
+                ['in', ['get', 'class'], ['literal', ['motorway', 'trunk', 'primary']]],
+              ] as unknown as [string, ...unknown[]]}
+              minZoomLevel={13}
+              style={{
+                lineColor: lightMode
+                  ? 'rgba(70, 70, 70, 0.32)'
+                  : 'rgba(255, 255, 255, 0.20)',
+                lineWidth: 0.7,
+                lineDasharray: [6, 6] as unknown as number[],
+              }}
+            />
+          </Mapbox.VectorSource>
+        )}
+
         {/* 3D Buildings — fill-extrusion from composite source.
             Rendered BEFORE route lines so polylines stay on top.
             Hidden in satellite mode (style already shows 3D terrain). */}
@@ -1070,12 +1151,16 @@ export default function MapScreen() {
             sourceLayerID="building"
             minZoomLevel={14}
             style={{
-              // Light: steel-blue tint with strong contrast for sunny readability
+              // Light: light warm-grey with AO shadows — readable on white basemap
               // Dark: deep navy matching the dark basemap
-              fillExtrusionColor: lightMode ? '#8fb8d4' : '#1a3a5f',
+              fillExtrusionColor: lightMode ? '#c8d8e8' : '#1a3a5f',
               fillExtrusionHeight: ['get', 'height'] as unknown as number,
               fillExtrusionBase: ['get', 'min_height'] as unknown as number,
-              fillExtrusionOpacity: lightMode ? 0.82 : 0.65,
+              // Higher opacity in light mode so buildings are clearly distinct
+              fillExtrusionOpacity: lightMode ? 0.90 : 0.65,
+              // Ambient occlusion gives crisp shading in light-v11
+              fillExtrusionAmbientOcclusionIntensity: lightMode ? 0.35 : 0.15,
+              fillExtrusionAmbientOcclusionRadius: lightMode ? 3.0 : 2.0,
             }}
           />
         )}
@@ -1275,6 +1360,26 @@ export default function MapScreen() {
                 <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
               </TouchableOpacity>
             </View>
+
+            {/* ── Truck overlay row: road restrictions + terrain contours ── */}
+            {!satellite && (
+              <View style={styles.optionsRow}>
+                {/* 🚧 Streets-v8: tunnel warnings + lane dividers */}
+                <TouchableOpacity
+                  style={[styles.optionBtn, !showRestrictions && styles.optionBtnOff]}
+                  onPress={() => setShowRestrictions(v => !v)}
+                >
+                  <Text style={styles.mapBtnText}>🚧</Text>
+                </TouchableOpacity>
+                {/* 🗻 Terrain-v2: elevation contour lines */}
+                <TouchableOpacity
+                  style={[styles.optionBtn, !showContours && styles.optionBtnOff]}
+                  onPress={() => setShowContours(v => !v)}
+                >
+                  <Text style={styles.mapBtnText}>🗻</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* ── POI category row ── */}
             {!navigating && !route && (
