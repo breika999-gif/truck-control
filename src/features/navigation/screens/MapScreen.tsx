@@ -27,6 +27,7 @@ import { useVehicleStore } from '../../../store/vehicleStore';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import SearchBar from '../components/SearchBar';
+import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import type { GeoPlace } from '../api/geocoding';
 import {
   fetchRoute,
@@ -1418,45 +1419,37 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── Navigation top panel: arrow + street name ── */}
+      {/* ── Navigation top panel ── */}
       {navigating && stepToShow && (
-        <View style={[styles.navBanner, { top: insets.top + spacing.xs }]}>
-          <Text style={styles.navArrow}>
-            {maneuverEmoji(stepToShow.maneuver.type, stepToShow.maneuver.modifier)}
-          </Text>
-          <View style={styles.navBannerBody}>
-            <Text style={styles.navStreet} numberOfLines={1}>
-              {stepToShow.name || stepToShow.maneuver.instruction}
-            </Text>
-            {nextStep && (
-              <Text style={styles.navNext} numberOfLines={1}>
-                после:{' '}
-                {maneuverEmoji(nextStep.maneuver.type, nextStep.maneuver.modifier)}{' '}
-                {nextStep.name || nextStep.maneuver.instruction}
+        <View style={[styles.signWrap, { top: insets.top + spacing.xs }]}>
+          {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? (
+            /* Junction Sign — EU-style sign + split lane view within 800 m */
+            <SignRenderer
+              step={stepToShow}
+              nextStep={nextStep ?? undefined}
+              distToTurn={distToTurn}
+              lanes={currentLanes}
+            />
+          ) : (
+            /* Simple nav banner — outside 800 m range */
+            <View style={styles.navBanner}>
+              <Text style={styles.navArrow}>
+                {maneuverEmoji(stepToShow.maneuver.type, stepToShow.maneuver.modifier)}
               </Text>
-            )}
-            {/* Lane Assistance — road-style lane boxes with active lane highlighted.
-                Label shows total lane count for the current road segment. */}
-            {currentLanes.length > 0 && (
-              <View style={styles.laneAssistWrap}>
-                <Text style={styles.laneAssistLabel}>
-                  {'🛣 ' + currentLanes.length + ' ЛЕНИ'}
+              <View style={styles.navBannerBody}>
+                <Text style={styles.navStreet} numberOfLines={1}>
+                  {stepToShow.name || stepToShow.maneuver.instruction}
                 </Text>
-                <View style={styles.laneRow}>
-                  {currentLanes.map((lane, i) => (
-                    <View
-                      key={i}
-                      style={[styles.laneBox, lane.active && styles.laneBoxActive]}
-                    >
-                      <Text style={[styles.laneArrow, lane.active && styles.laneArrowActive]}>
-                        {laneDirectionEmoji(lane.directions?.[0])}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
+                {nextStep && (
+                  <Text style={styles.navNext} numberOfLines={1}>
+                    после:{' '}
+                    {maneuverEmoji(nextStep.maneuver.type, nextStep.maneuver.modifier)}{' '}
+                    {nextStep.name || nextStep.maneuver.instruction}
+                  </Text>
+                )}
               </View>
-            )}
-          </View>
+            </View>
+          )}
         </View>
       )}
 
@@ -2188,11 +2181,15 @@ const styles = StyleSheet.create({
   mapBtnOff: { opacity: 0.4 },
   mapBtnText: { fontSize: 20 },
 
-  // Navigation top panel
-  navBanner: {
+  // Navigation top panel — wrapper handles absolute positioning for both
+  // simple banner (>800 m) and the junction sign panel (<800 m)
+  signWrap: {
     position: 'absolute',
     left: spacing.md,
     right: spacing.md,
+    zIndex: 20,
+  },
+  navBanner: {
     backgroundColor: 'rgba(0,10,30,0.88)',
     borderRadius: 50,
     flexDirection: 'row',
@@ -2202,7 +2199,6 @@ const styles = StyleSheet.create({
     elevation: 14,
     borderWidth: 1.5,
     borderColor: NEON,
-    zIndex: 20,
     shadowColor: NEON,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.7,
