@@ -13,6 +13,7 @@ Run:
 import json
 import math
 import os
+import re
 import sqlite3
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,6 +26,15 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
+
+
+def _strip_md_fence(s: str) -> str:
+    """Remove ```json ... ``` or ``` ... ``` markdown code fences from GPT responses."""
+    s = s.strip()
+    s = re.sub(r'^```[a-zA-Z]*\s*', '', s)
+    s = re.sub(r'\s*```$', '', s)
+    return s.strip()
+
 
 # ── OpenAI setup ───────────────────────────────────────────────────────────────
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -63,16 +73,28 @@ _SYSTEM_PROMPT = (
     "9. FULL ADDRESS: navigate_to accepts any string — full address, company name, POI. "
     "Use search_business when user wants to SEE multiple options; "
     "use navigate_to when user clearly wants to GO to one specific destination.\n\n"
+    "10. WAYPOINT ADDITION: When user says 'добави X към маршрута', 'спри при X', "
+    "'мини през X', 'добави спирка X', 'add X to route': use add_waypoint tool. "
+    "Translate the place name to English before calling. "
+    "This inserts a stop between current position and final destination.\n\n"
     "Available tools:\n"
     '  navigate_to          → {"action":"route", ...}  (accepts avoid=["serbia","toll",...])\n'
     '  suggest_routes       → {"action":"show_routes", "options":[...], ...}  (accepts avoid=[...])\n'
+    '  add_waypoint         → {"action":"add_waypoint", "name":"...", "coords":[lng,lat]}\n'
     '  search_business      → {"action":"show_pois","category":"business",...}  (ANYTHING: company/address/place)\n'
-    '  find_truck_parking   → {"action":"show_pois", "category":"truck_stop", ...}\n'
-    '  find_fuel_stations   → {"action":"show_pois", "category":"fuel", ...}\n'
-    '  find_speed_cameras   → {"action":"show_pois", "category":"speed_camera", ...}\n'
-    '  calculate_hos_reach  → {"action":"tachograph", ...}\n'
-    '  check_traffic_route  → {"action":"show_routes", ...}\n'
-    '  No tool (info/chat)  → {"action":"message", "text":"<Bulgarian>"}\n\n'
+    '  find_truck_parking      → {"action":"show_pois", "category":"truck_stop", ...}\n'
+    '  find_fuel_stations      → {"action":"show_pois", "category":"fuel", ...}\n'
+    '  find_speed_cameras      → {"action":"show_pois", "category":"speed_camera", ...}\n'
+    '  calculate_hos_reach     → {"action":"tachograph", ...}\n'
+    '  check_traffic_route     → {"action":"show_routes", ...}\n'
+    '  calculate_travel_matrix → {"action":"message", "text":"<оптимален ред + времена>"}\n'
+    '    Use for: multiple stops/deliveries, finding fastest order, comparing travel times.\n'
+    '    After getting result explain optimal order in Bulgarian with durations.\n'
+    '  get_reachable_zone      → {"action":"message", "text":"<зона + препоръка>"}\n'
+    '    Use for: HOS limit approaching, driver asks where to reach in X min.\n'
+    '    After getting result: immediately call find_truck_parking with radius=approx_radius_km*1000.\n'
+    '    Then return show_pois with parking + explain in Bulgarian which are reachable.\n'
+    '  No tool (info/chat)     → {"action":"message", "text":"<Bulgarian>"}\n\n'
     "Known city coords: Sofia≈42.70,23.32; Plovdiv≈42.15,24.75; "
     "Varna≈43.20,27.91; Burgas≈42.50,27.47; Stara Zagora≈42.42,25.64; "
     "Ruse≈43.85,25.95; Blagoevgrad≈42.02,23.10; Vidin≈43.99,22.88; "
@@ -244,6 +266,27 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "add_waypoint",
+            "description": (
+                "Add an intermediate stop/waypoint to the current active route. "
+                "Use when user says 'добави X към маршрута', 'спри при X', 'мини през X', "
+                "'добави спирка X', 'add X to route', or names a specific POI to insert as a stop. "
+                "Searches for the named place and returns its coordinates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Place name, POI, or address to add as stop (in English)"},
+                    "lat":   {"type": "number", "description": "Search proximity latitude"},
+                    "lng":   {"type": "number", "description": "Search proximity longitude"},
+                },
+                "required": ["query", "lat", "lng"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_fuel_stations",
             "description": (
                 "Find fuel/diesel stations near a destination city. "
@@ -257,6 +300,73 @@ _TOOLS = [
                     "radius_m": {"type": "integer", "default": 50000},
                 },
                 "required": ["dest_lat", "dest_lng"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "calculate_travel_matrix",
+            "description": (
+                "Calculate travel times and distances between multiple points using real traffic. "
+                "Use to find the optimal order for multiple waypoints/stops, or to compare "
+                "how long it takes to reach several destinations. "
+                "Returns optimal stop order + travel time for each pair. "
+                "Example: user has 3 deliveries — call this to find the fastest route order."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "points": {
+                        "type": "array",
+                        "description": "List of points (max 10). Each has lat, lng and a label.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "lat":   {"type": "number"},
+                                "lng":   {"type": "number"},
+                                "label": {"type": "string", "description": "Human-readable name"},
+                            },
+                            "required": ["lat", "lng", "label"],
+                        },
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["driving-traffic", "driving"],
+                        "default": "driving-traffic",
+                    },
+                },
+                "required": ["points"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_reachable_zone",
+            "description": (
+                "Get the geographic area reachable within a given drive time from current position. "
+                "Use when driver has limited time (HOS break approaching) and asks 'where can I reach "
+                "in 20 min', or 'find parking within 30 min drive'. "
+                "Returns approximate radius and bounding box to filter parking search."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lat":     {"type": "number", "description": "Driver current latitude"},
+                    "lng":     {"type": "number", "description": "Driver current longitude"},
+                    "minutes": {
+                        "type": "integer",
+                        "description": "Drive time limit in minutes (5–60)",
+                        "default": 30,
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["driving-traffic", "driving"],
+                        "default": "driving-traffic",
+                    },
+                },
+                "required": ["lat", "lng"],
             },
         },
     },
@@ -550,6 +660,13 @@ def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> l
                     "lng":           el_lng,
                     "paid":          False,
                     "showers":       False,
+                    "toilets":       False,
+                    "wifi":          False,
+                    "security":      False,
+                    "lighting":      False,
+                    "capacity":      None,
+                    "operator":      None,
+                    "website":       None,
                     "distance_m":    dist,
                     "opening_hours": props.get("open_hours"),
                     "phone":         props.get("phone"),
@@ -581,15 +698,29 @@ out center 10;
                 el_lng = el.get("lon") or el.get("center", {}).get("lon")
                 if el_lat is None or el_lng is None:
                     continue
+                cap_raw = tags.get("capacity:hgv") or tags.get("capacity:hgv_truck")
+                capacity = None
+                if cap_raw:
+                    try:
+                        capacity = int(cap_raw)
+                    except (ValueError, TypeError):
+                        pass
                 results.append({
                     "name":          tags.get("name", "Паркинг за камиони"),
                     "lat":           el_lat,
                     "lng":           el_lng,
-                    "paid":          tags.get("fee") == "yes",
-                    "showers":       tags.get("shower") == "yes",
+                    "paid":          tags.get("fee") in ("yes", "pay"),
+                    "showers":       tags.get("shower") in ("yes", "public"),
+                    "toilets":       tags.get("toilets") in ("yes", "public") or tags.get("toilet") == "yes",
+                    "wifi":          tags.get("internet_access") in ("yes", "wlan", "wifi"),
+                    "security":      tags.get("supervised") == "yes" or tags.get("security") == "yes",
+                    "lighting":      tags.get("lit") in ("yes", "24/7", "automatic"),
+                    "capacity":      capacity,
+                    "operator":      tags.get("operator"),
+                    "website":       tags.get("website") or tags.get("url") or tags.get("contact:website"),
                     "distance_m":    round(_haversine_m(lat, lng, el_lat, el_lng)),
                     "opening_hours": tags.get("opening_hours"),
-                    "phone":         tags.get("phone"),
+                    "phone":         tags.get("phone") or tags.get("contact:phone"),
                 })
         except Exception:
             pass
@@ -604,6 +735,158 @@ out center 10;
 
     deduped.sort(key=lambda x: x["distance_m"])
     return deduped[:8]
+
+
+def _build_voice_desc(p: dict) -> str:
+    """Build a Bulgarian TTS description summarising parking pros/cons."""
+    name = p.get("name", "паркинга")
+    dist_km = round(p.get("distance_m", 0) / 1000, 1)
+    features: list = []
+    if not p.get("paid"):
+        features.append("безплатен")
+    else:
+        features.append("платен")
+    if p.get("showers"):
+        features.append("с душ")
+    if p.get("toilets"):
+        features.append("с тоалетни")
+    if p.get("wifi"):
+        features.append("с WiFi")
+    if p.get("security"):
+        features.append("охраняем")
+    if p.get("lighting"):
+        features.append("осветен")
+    if p.get("capacity"):
+        features.append(f"до {p['capacity']} камиона")
+    if p.get("opening_hours"):
+        features.append(f"работи {p['opening_hours']}")
+    features_str = ", ".join(features) if features else "стандартен паркинг"
+    return f"{name} е на {dist_km} километра. {features_str.capitalize()}."
+
+
+def _tool_calculate_travel_matrix(
+    points: list,           # [{"lat": float, "lng": float, "label": str}, ...]
+    profile: str = "driving-traffic",
+) -> dict:
+    """Mapbox Directions Matrix API — travel times/distances between N points.
+
+    Used by GPT-4o to optimally order waypoints or estimate inter-stop travel.
+    """
+    if len(points) < 2:
+        return {"error": "Нужни са поне 2 точки"}
+    pts = points[:10]  # Mapbox free tier: max 10×10
+
+    coords_str = ";".join(f"{p['lng']},{p['lat']}" for p in pts)
+    url = (
+        f"https://api.mapbox.com/directions-matrix/v1/mapbox/{profile}/{coords_str}"
+    )
+    try:
+        r = requests.get(
+            url,
+            params={"access_token": _MAPBOX_TOKEN, "annotations": "duration,distance"},
+            timeout=12,
+        )
+        r.raise_for_status()
+        data    = r.json()
+        durations = data.get("durations", [])
+        distances = data.get("distances", [])
+
+        pairs = []
+        for i, row in enumerate(durations):
+            for j, val in enumerate(row):
+                if i != j and val is not None:
+                    pairs.append({
+                        "from":        pts[i].get("label", f"Точка {i + 1}"),
+                        "to":          pts[j].get("label", f"Точка {j + 1}"),
+                        "duration_min": round(val / 60, 1),
+                        "distance_km": (
+                            round(distances[i][j] / 1000, 1)
+                            if distances and distances[i][j] is not None
+                            else None
+                        ),
+                    })
+
+        # Nearest-neighbour order starting from first point (origin)
+        remaining = list(range(1, len(pts)))
+        order = [0]
+        while remaining:
+            last = order[-1]
+            nearest = min(remaining, key=lambda j: durations[last][j] or float("inf"))
+            order.append(nearest)
+            remaining.remove(nearest)
+
+        optimal_order = [pts[i].get("label", f"Точка {i + 1}") for i in order]
+
+        return {
+            "labels":        [p.get("label", f"Точка {i + 1}") for i, p in enumerate(pts)],
+            "pairs":         pairs,
+            "optimal_order": optimal_order,
+            "summary": (
+                f"Оптимален ред на спирките: {' → '.join(optimal_order)}. "
+                f"Изчислени {len(pairs)} двойки от {len(pts)} точки."
+            ),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _tool_get_reachable_zone(
+    lat: float,
+    lng: float,
+    minutes: int = 30,
+    profile: str = "driving-traffic",
+) -> dict:
+    """Mapbox Isochrone API — area reachable within *minutes* from current position.
+
+    GPT-4o uses this when HOS time is limited — 'намери паркинг за 20 мин.'
+    """
+    minutes = max(5, min(minutes, 60))   # Mapbox free: 1-60 min
+    url = (
+        f"https://api.mapbox.com/isochrone/v1/mapbox/{profile}"
+        f"/{lng},{lat}"
+    )
+    try:
+        r = requests.get(
+            url,
+            params={
+                "access_token":     _MAPBOX_TOKEN,
+                "contours_minutes": str(minutes),
+                "polygons":         "true",
+                "denoise":          "1",
+            },
+            timeout=12,
+        )
+        r.raise_for_status()
+        features = r.json().get("features", [])
+        if not features:
+            return {"error": "Няма данни за достижимата зона"}
+
+        coords = features[0]["geometry"]["coordinates"][0]  # outer ring
+        lats_  = [c[1] for c in coords]
+        lngs_  = [c[0] for c in coords]
+
+        # Approximate reachable radius from bounding box
+        approx_radius_km = round(
+            max(max(lats_) - min(lats_), max(lngs_) - min(lngs_)) * 111 / 2, 1
+        )
+
+        return {
+            "center":           {"lat": lat, "lng": lng},
+            "minutes":          minutes,
+            "approx_radius_km": approx_radius_km,
+            "bbox": {
+                "min_lat": round(min(lats_), 4),
+                "max_lat": round(max(lats_), 4),
+                "min_lng": round(min(lngs_), 4),
+                "max_lng": round(max(lngs_), 4),
+            },
+            "summary": (
+                f"За {minutes} мин. шофиране можеш да достигнеш зона с "
+                f"приблизителен радиус ~{approx_radius_km} км около теб."
+            ),
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> dict:
@@ -900,6 +1183,45 @@ out 10;
         return [{"error": str(exc)}]
 
 
+def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
+    """Search for a POI/place and return it as an intermediate waypoint."""
+    try:
+        suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
+        params = {
+            "q":             query,
+            "access_token":  _MAPBOX_TOKEN,
+            "language":      "bg,en",
+            "types":         "poi,address,place",
+            "proximity":     f"{lng},{lat}",
+            "limit":         1,
+            "session_token": "truckai-waypoint-session",
+        }
+        r = requests.get(suggest_url, params=params, timeout=8)
+        r.raise_for_status()
+        suggestions = r.json().get("suggestions", [])
+        if not suggestions:
+            return {"error": f"Не намерих '{query}'"}
+
+        mapbox_id = suggestions[0].get("mapbox_id")
+        name = suggestions[0].get("name", query)
+
+        retrieve_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
+        r2 = requests.get(
+            retrieve_url,
+            params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-waypoint-session"},
+            timeout=8,
+        )
+        r2.raise_for_status()
+        features = r2.json().get("features", [])
+        if not features:
+            return {"error": "Не намерих координати"}
+
+        coords = features[0]["geometry"]["coordinates"]  # [lng, lat]
+        return {"name": name, "coords": coords}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/transcribe")
@@ -1064,16 +1386,7 @@ def chat():
                 )
                 result = raw
                 cards = []
-                for p in raw[:4]:
-                    info_parts = []
-                    if not p.get("paid"):
-                        info_parts.append("Безплатен")
-                    elif p.get("paid"):
-                        info_parts.append("Платен")
-                    if p.get("showers"):
-                        info_parts.append("с душ")
-                    if p.get("opening_hours"):
-                        info_parts.append(p["opening_hours"])
+                for p in raw[:5]:
                     cards.append({
                         "name":          p["name"],
                         "lat":           p["lat"],
@@ -1081,9 +1394,15 @@ def chat():
                         "distance_m":    p["distance_m"],
                         "paid":          p.get("paid", False),
                         "showers":       p.get("showers", False),
-                        "info":          ", ".join(info_parts) if info_parts else None,
+                        "toilets":       p.get("toilets", False),
+                        "wifi":          p.get("wifi", False),
+                        "security":      p.get("security", False),
+                        "lighting":      p.get("lighting", False),
+                        "capacity":      p.get("capacity"),
+                        "website":       p.get("website"),
                         "opening_hours": p.get("opening_hours"),
                         "phone":         p.get("phone"),
+                        "voice_desc":    _build_voice_desc(p),
                     })
                 action = {
                     "action":   "show_pois",
@@ -1172,6 +1491,17 @@ def chat():
                     args["dest_lng"],   args["dest_lat"],
                 )
 
+            elif fn == "add_waypoint":
+                result = _tool_add_waypoint(args["query"], args["lat"], args["lng"])
+                if "coords" in result:
+                    action = {
+                        "action": "add_waypoint",
+                        "name":   result["name"],
+                        "coords": result["coords"],
+                    }
+                else:
+                    action = {"action": "message", "text": result.get("error", "Не намерих спирката.")}
+
             elif fn == "find_fuel_stations":
                 raw = _tool_find_fuel(
                     args["dest_lat"], args["dest_lng"], args.get("radius_m", 50000)
@@ -1194,6 +1524,23 @@ def chat():
                     "category": "fuel",
                     "cards":    cards,
                 }
+
+            elif fn == "calculate_travel_matrix":
+                result = _tool_calculate_travel_matrix(
+                    args["points"],
+                    args.get("profile", "driving-traffic"),
+                )
+                # GPT-4o gets the full matrix and will compose a Bulgarian explanation.
+                # We pass the structured result; the AI formats the final message.
+
+            elif fn == "get_reachable_zone":
+                result = _tool_get_reachable_zone(
+                    args["lat"], args["lng"],
+                    args.get("minutes", 30),
+                    args.get("profile", "driving-traffic"),
+                )
+                # GPT-4o uses approx_radius_km to then call find_truck_parking.
+                # The action is set after the AI composes the follow-up message.
 
             else:
                 result = {"error": "unknown tool"}
@@ -1241,6 +1588,8 @@ def chat():
         elif act_type == "show_routes":
             count = len(action.get("options", []))
             display_text = f"Намерих {count} варианта за маршрут до {action.get('destination', '')}."
+        elif act_type == "add_waypoint":
+            display_text = f"Добавена спирка: {action.get('name', '')}. Преизчислявам маршрута."
         elif act_type == "tachograph":
             driven = action.get("driven_hours", 0)
             rem    = action.get("remaining_hours", 0)
@@ -1255,28 +1604,35 @@ def chat():
         else:
             display_text = reply
     else:
-        # Pure text reply — parse JSON wrapper if GPT returned one
+        # Pure text reply — strip markdown fences then parse JSON wrapper if present
         display_text = reply
-        reply_stripped = reply.strip()
-        if reply_stripped.startswith("{"):
+        reply_clean = _strip_md_fence(reply)
+        if reply_clean.startswith("{"):
             try:
-                parsed = json.loads(reply_stripped)
-                display_text = (
-                    parsed.get("text")
-                    or parsed.get("message")
-                    or reply
-                )
+                parsed = json.loads(reply_clean)
+                # If GPT returned a full action object, promote it
+                if parsed.get("action") and parsed.get("action") != "message":
+                    action = parsed
+                    display_text = parsed.get("message") or parsed.get("text") or ""
+                else:
+                    display_text = (
+                        parsed.get("text")
+                        or parsed.get("message")
+                        or reply
+                    )
             except json.JSONDecodeError:
-                pass
+                display_text = reply_clean  # clean text without fences
 
-    # Final safety: never expose raw JSON in chat bubble
-    _dt = (display_text or "").strip()
+    # Final safety: never expose raw JSON or markdown fences in chat bubble
+    _dt = _strip_md_fence(display_text or "")
     if _dt.startswith("{"):
         try:
             _parsed = json.loads(_dt)
             display_text = _parsed.get("text") or _parsed.get("message") or ""
         except Exception:
-            display_text = ""
+            display_text = _dt  # pass through as-is if not JSON
+    else:
+        display_text = _dt
 
     _db_save_chat(user_msg, display_text)
 

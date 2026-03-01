@@ -33,10 +33,18 @@ export interface POICard {
   // truck_stop fields
   paid?: boolean;
   showers?: boolean;
+  toilets?: boolean;
+  wifi?: boolean;
+  security?: boolean;
+  lighting?: boolean;
+  capacity?: number;
+  website?: string;
   safe?: boolean;
   info?: string;
   opening_hours?: string;
   phone?: string;
+  /** Bulgarian TTS voice description of parking pros/cons */
+  voice_desc?: string;
   // fuel fields
   price?: string;
   truck_lane?: boolean;
@@ -67,6 +75,7 @@ export type MapAction =
   | { action: 'show_pois'; category: 'truck_stop' | 'fuel' | 'speed_camera' | 'business'; center?: [number, number]; cards: POICard[]; message?: string; nearest_m?: number }
   | { action: 'show_routes'; destination: string; dest_coords: [number, number]; options: RouteOption[]; waypoints?: [number, number][]; message?: string }
   | { action: 'tachograph'; driven_hours: number; remaining_hours: number; break_needed?: boolean; suggested_stop?: { lat: number; lng: number; name: string }; message?: string }
+  | { action: 'add_waypoint'; name: string; coords: [number, number]; message?: string }
   | { action: 'message'; text: string };
 
 export interface ChatResponse {
@@ -84,16 +93,7 @@ export interface ChatContext {
 }
 
 /** Backward-compat alias — parking cards now use POICard */
-export interface TruckParking {
-  name: string;
-  lat: number;
-  lng: number;
-  paid: boolean;
-  showers: boolean;
-  distance_m: number;
-  opening_hours?: string;
-  phone?: string;
-}
+export type TruckParking = POICard;
 
 export interface SpeedCamera {
   lat: number;

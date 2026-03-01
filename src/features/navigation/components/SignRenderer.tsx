@@ -10,8 +10,8 @@
  *   Has lanes → split: sign (left, 60 %) + lane diagram (right, 40 %)
  *               — Garmin dēzl style —
  */
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 import type { RouteStep, BannerComponent } from '../api/directions';
 
 // ── Public trigger constant (re-exported so MapScreen can use it) ────────────
@@ -75,6 +75,39 @@ function fmtDist(m: number): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SignRenderer({ step, nextStep, distToTurn, lanes }: Props) {
+  // ── Pulsing glow for active lane boxes ─────────────────────────────────────
+  const laneGlowAnim = useRef(new Animated.Value(0)).current;
+  const laneGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  const hasActiveLane = lanes.some(l => l.active);
+  useEffect(() => {
+    if (hasActiveLane) {
+      laneGlowLoop.current?.stop();
+      laneGlowLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(laneGlowAnim, { toValue: 1, duration: 600, useNativeDriver: false }),
+          Animated.timing(laneGlowAnim, { toValue: 0, duration: 600, useNativeDriver: false }),
+        ]),
+      );
+      laneGlowLoop.current.start();
+    } else {
+      laneGlowLoop.current?.stop();
+      laneGlowAnim.setValue(0);
+    }
+    return () => { laneGlowLoop.current?.stop(); };
+  // laneGlowAnim is a stable ref
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveLane]);
+
+  const laneGlowBg     = laneGlowAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: ['rgba(0,191,255,0.25)', 'rgba(0,191,255,0.65)'],
+  });
+  const laneGlowShadow = laneGlowAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [0.6, 1.0],
+  });
+
   if (distToTurn > SIGN_TRIGGER_M) return null;
 
   const color    = signColor(step);
@@ -121,18 +154,30 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes }: Prop
         <View style={styles.lanePanel}>
           <Text style={styles.lanePanelTitle}>ЛЕНИ</Text>
 
-          {/* Lane boxes */}
+          {/* Lane boxes — active ones pulse with neon glow + scale pop */}
           <View style={styles.laneRow}>
-            {lanes.map((lane, i) => (
-              <View
-                key={i}
-                style={[styles.laneBox, lane.active && styles.laneBoxActive]}
-              >
-                <Text style={[styles.laneArrowTxt, lane.active && styles.laneArrowActive]}>
-                  {laneArrow(lane.directions?.[0])}
-                </Text>
-              </View>
-            ))}
+            {lanes.map((lane, i) =>
+              lane.active ? (
+                <Animated.View
+                  key={i}
+                  style={[
+                    styles.laneBox,
+                    styles.laneBoxActive,
+                    { backgroundColor: laneGlowBg, shadowOpacity: laneGlowShadow },
+                  ]}
+                >
+                  <Text style={[styles.laneArrowTxt, styles.laneArrowActive]}>
+                    {laneArrow(lane.directions?.[0])}
+                  </Text>
+                </Animated.View>
+              ) : (
+                <View key={i} style={styles.laneBox}>
+                  <Text style={styles.laneArrowTxt}>
+                    {laneArrow(lane.directions?.[0])}
+                  </Text>
+                </View>
+              ),
+            )}
           </View>
 
           {/* Active lane underline bar */}
@@ -235,14 +280,20 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 5,
     backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   laneBoxActive: {
-    backgroundColor: '#00bfff',
+    // backgroundColor + shadowOpacity animated via laneGlowBg / laneGlowShadow
     borderColor: '#00bfff',
+    borderWidth: 3,
+    shadowColor: '#00bfff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 12,
+    elevation: 10,
+    transform: [{ scale: 1.12 }],   // 3D "pop-out" — active lane appears closer
   },
   laneArrowTxt: {
     fontSize: 20,

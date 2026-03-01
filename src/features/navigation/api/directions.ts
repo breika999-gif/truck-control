@@ -59,6 +59,18 @@ export interface TruckDimensions {
   max_width?: number;   // meters (0–10)
   max_weight?: number;  // metric tons (0–100)
   max_length?: number;  // meters — vehicle length restriction
+  exclude?: string;     // 'tunnel' | 'tunnel,motorway' | undefined — ADR hazmat routing
+}
+
+/**
+ * Map ADR hazmat class to Mapbox exclude parameter.
+ * Classes 1-6: avoid tunnels (flammable/explosive/toxic cargo).
+ * Class 7 (radioactive): avoid tunnels AND motorways.
+ */
+export function adrToExclude(hazmat: string): string | undefined {
+  if (['1', '2', '3', '4', '5', '6'].includes(hazmat)) return 'tunnel';
+  if (hazmat === '7') return 'tunnel,motorway';
+  return undefined;
 }
 
 /**
@@ -97,6 +109,7 @@ export async function fetchRoute(
   if (truck?.max_width != null)  params.set('max_width',  String(truck.max_width));
   if (truck?.max_weight != null) params.set('max_weight', String(truck.max_weight));
   if (truck?.max_length != null) params.set('max_length', String(truck.max_length));
+  if (truck?.exclude)            params.set('exclude', truck.exclude);
   if (departAt)                  params.set('depart_at', departAt);
 
   const url =
@@ -247,6 +260,33 @@ export function bgInstruction(step: RouteStep): string {
     default:
       return step.maneuver.instruction || `Продължете${road}.`;
   }
+}
+
+/**
+ * Nearest-neighbour TSP approximation for waypoint ordering.
+ * Reorders intermediate stops to minimize total travel distance from origin.
+ * O(n²) — fast enough for ≤20 waypoints.
+ */
+export function optimizeWaypointOrder(
+  origin: [number, number],
+  waypoints: [number, number][],
+): [number, number][] {
+  if (waypoints.length <= 1) return waypoints;
+  const remaining = [...waypoints];
+  const ordered: [number, number][] = [];
+  let cur = origin;
+  while (remaining.length > 0) {
+    let minDist = Infinity;
+    let minIdx = 0;
+    remaining.forEach((wp, i) => {
+      const d = (wp[0] - cur[0]) ** 2 + (wp[1] - cur[1]) ** 2;
+      if (d < minDist) { minDist = d; minIdx = i; }
+    });
+    ordered.push(remaining[minIdx]);
+    cur = remaining[minIdx];
+    remaining.splice(minIdx, 1);
+  }
+  return ordered;
 }
 
 /** Emoji for maneuver type + modifier. */

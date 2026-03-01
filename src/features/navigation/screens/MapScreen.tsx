@@ -12,11 +12,15 @@ import {
   Keyboard,
   Alert,
   Image,
+  Animated,
+  Linking,
 } from 'react-native';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Geolocation from 'react-native-geolocation-service';
 import Mapbox, { locationManager, LocationPuck, type CameraPadding } from '@rnmapbox/maps';
+import type * as GeoJSON from 'geojson';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -31,6 +35,8 @@ import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import type { GeoPlace } from '../api/geocoding';
 import {
   fetchRoute,
+  adrToExclude,
+  optimizeWaypointOrder,
   getSpeedLimitAtPosition,
   getCurrentStepIndex,
   maneuverEmoji,
@@ -184,6 +190,8 @@ function voiceText(act: MapAction): string {
         default:             return `Намерих ${count} резултата.`;
       }
     }
+    case 'add_waypoint':
+      return `Добавена спирка ${act.name}. Преизчислявам маршрута.`;
     case 'route':
       return `Прокладвам маршрут до ${act.destination}.`;
     case 'show_routes': {
@@ -223,6 +231,57 @@ function haversineMeters(a: [number, number], b: [number, number]): number {
     sinLat * sinLat +
     Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * sinLon * sinLon;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+}
+
+/** Open-Meteo WMO weather code → emoji string. */
+function weatherEmoji(code: number): string {
+  if (code === 0)   return '☀️';
+  if (code <= 3)    return '⛅';
+  if (code <= 48)   return '🌫️';
+  if (code <= 67)   return '🌧️';
+  if (code <= 77)   return '🌨️';
+  if (code <= 82)   return '🌦️';
+  if (code <= 95)   return '⛈️';
+  return '🌩️';
+}
+
+/**
+ * Detect ISO-2 country code from GPS coordinates (EU trucking countries).
+ * Used to build the correct truckerapps.eu/transparking/{cc}/map/ URL.
+ */
+function detectCountryCode(lat: number, lng: number): string {
+  if (lat > 41.2 && lat < 44.2 && lng > 22.4 && lng < 28.6) return 'bg';
+  if (lat > 43.6 && lat < 48.3 && lng > 20.3 && lng < 30.0) return 'ro';
+  if (lat > 49.0 && lat < 54.9 && lng > 14.1 && lng < 24.2) return 'pl';
+  if (lat > 47.3 && lat < 55.1 && lng >  6.0 && lng < 15.0) return 'de';
+  if (lat > 46.4 && lat < 49.0 && lng >  9.5 && lng < 17.2) return 'at';
+  if (lat > 45.7 && lat < 48.6 && lng > 16.1 && lng < 22.9) return 'hu';
+  if (lat > 41.3 && lat < 51.1 && lng > -5.2 && lng <  9.6) return 'fr';
+  if (lat > 36.6 && lat < 47.1 && lng >  6.6 && lng < 18.6) return 'it';
+  if (lat > 35.9 && lat < 43.9 && lng > -9.3 && lng <  4.3) return 'es';
+  if (lat > 50.7 && lat < 53.6 && lng >  3.3 && lng <  7.2) return 'nl';
+  if (lat > 49.5 && lat < 51.5 && lng >  2.5 && lng <  6.4) return 'be';
+  if (lat > 48.5 && lat < 51.1 && lng > 12.1 && lng < 18.9) return 'cz';
+  if (lat > 47.7 && lat < 49.6 && lng > 16.8 && lng < 22.6) return 'sk';
+  if (lat > 45.3 && lat < 47.0 && lng > 13.4 && lng < 19.8) return 'hr';
+  if (lat > 44.0 && lat < 46.9 && lng > 19.3 && lng < 23.0) return 'rs';
+  if (lat > 49.0 && lat < 54.0 && lng > 22.0 && lng < 32.7) return 'ua';
+  return 'eu';   // fallback — truckerapps shows European map
+}
+
+/** Open a URL in the external browser, forcing Chrome on Android if available. */
+function openInBrowser(url: string): void {
+  if (Platform.OS === 'android') {
+    // Try Chrome first so truckerapps.eu app (if installed) doesn't intercept
+    Linking.openURL(
+      `intent://${url.replace(/^https?:\/\//, '')}#Intent;scheme=https;`
+      + `action=android.intent.action.VIEW;`
+      + `category=android.intent.category.BROWSABLE;`
+      + `package=com.android.chrome;end`,
+    ).catch(() => Linking.openURL(url).catch(() => null));
+  } else {
+    Linking.openURL(url).catch(() => null);
+  }
 }
 
 // ── StableCamera — re-renders ONLY when navigating OR mapLoaded changes ──────
@@ -274,6 +333,7 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<Mapbox.Camera>(null);
 
+
   // GPS
   const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
   const [gpsReady, setGpsReady] = useState(false);
@@ -303,6 +363,23 @@ export default function MapScreen() {
   const [showTraffic, setShowTraffic] = useState(true);
   const [mapPitch, setMapPitch] = useState(0);
 
+  // ── Navigation Simulator ──────────────────────────────────────────────────
+  const [simulating, setSimulating] = useState(false);
+
+  // ── Visual Debug Mode ─────────────────────────────────────────────────────
+  const [debugMode, setDebugMode] = useState(false);
+  // Test-only: inject mock lanes to verify the pulsing animation visually
+  const [testLanesMode, setTestLanesMode] = useState(false);
+
+  // ── Speed Camera HUD — nearest camera proximity alert ────────────────────
+  const [cameraAlert, setCameraAlert] = useState<{ dist: number; name: string } | null>(null);
+  // ── Elevation Profile — sampled altitudes along route ────────────────────
+  const [elevProfile, setElevProfile] = useState<number[]>([]);
+  // ── Weather Overlay — Open-Meteo current conditions at route points ───────
+  const [weatherPoints, setWeatherPoints] = useState<Array<{
+    coords: [number, number]; emoji: string; temp: number;
+  }>>([]);
+
   // Light / dark theme — auto-computed from time (6:00–20:00 = day), overridable
   const getIsDay = () => { const h = new Date().getHours(); return h >= 6 && h < 20; };
   const [lightMode, setLightMode] = useState(getIsDay);
@@ -314,12 +391,15 @@ export default function MapScreen() {
   const [showRestrictions, setShowRestrictions] = useState(false);
   const [showContours, setShowContours]         = useState(false);
 
-  // Auto-switch every minute; resets mapIsLoaded so the new style URL loads (vector only)
+  // Auto-switch every minute; resets mapIsLoaded so the new style URL loads (vector only).
+  // Skip reset during active navigation — interrupting followUserLocation causes camera jump.
   useEffect(() => {
     const timer = setInterval(() => {
       const next = getIsDay();
       setLightMode(prev => {
-        if (prev !== next && mapMode === 'vector') setMapIsLoaded(false);
+        if (prev !== next && mapMode === 'vector' && !navigatingRef.current) {
+          setMapIsLoaded(false);
+        }
         return next;
       });
     }, 60_000);
@@ -371,8 +451,15 @@ export default function MapScreen() {
     return () => { show.remove(); hide.remove(); };
   }, []);
 
+  // Multi-stop waypoints
+  const [waypoints, setWaypoints]           = useState<[number, number][]>([]);
+  const [waypointNames, setWaypointNames]   = useState<string[]>([]);
+  // Long-press map popup
+  const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
+
   // GPT-4o map action results
-  const [parkingResults, setParkingResults]   = useState<TruckParking[]>([]);
+  const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
+  const [selectedParking, setSelectedParking] = useState<POICard | null>(null);
   const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
   const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
   const [businessResults, setBusinessResults] = useState<POICard[]>([]);
@@ -431,6 +518,7 @@ export default function MapScreen() {
       watchId = Geolocation.watchPosition(
         (pos) => {
           if (!isMountedRef.current) return;
+          if (isSimulatingRef.current) return; // simulator overrides GPS
           const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
           userCoordsRef.current = coords;
           setUserCoords(coords);
@@ -521,10 +609,11 @@ export default function MapScreen() {
           const prof = profileRef.current;
           const truck = prof
             ? { max_height: prof.height_m, max_width: prof.width_m,
-                max_weight: prof.weight_t, max_length: prof.length_m }
+                max_weight: prof.weight_t, max_length: prof.length_m,
+                exclude: adrToExclude(prof.hazmat_class ?? 'none') }
             : undefined;
 
-          fetchRoute(coords, dest, truck)
+          fetchRoute(coords, dest, truck, undefined, waypointsRef.current)
             .then(result => {
               if (result) { routeRef.current = result; setRoute(result); }
             })
@@ -662,6 +751,32 @@ export default function MapScreen() {
     }
   }, [drivingSeconds, navigating, voiceMuted]);
 
+  // ── Speed camera proximity alert — fires TTS + flash every 10 s when < 600 m ──
+  useEffect(() => {
+    if (!navigating || !userCoords || cameraResults.length === 0) {
+      setCameraAlert(null);
+      return;
+    }
+    const nearest = cameraResults
+      .filter(c => c.lat && c.lng)
+      .map(c => ({ ...c, dist: haversineMeters(userCoords, [c.lng as number, c.lat as number]) }))
+      .sort((a, b) => a.dist - b.dist)[0];
+    if (!nearest || nearest.dist >= 600) { setCameraAlert(null); return; }
+    setCameraAlert({ dist: Math.round(nearest.dist), name: nearest.name });
+    const now = Date.now();
+    if (now - lastCameraWarnRef.current >= 10_000) {
+      lastCameraWarnRef.current = now;
+      if (!voiceMutedRef.current) ttsSpeak(`Внимание! Камера на ${Math.round(nearest.dist)} метра.`);
+      Animated.sequence([
+        Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
+        Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
+        Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
+        Animated.timing(cameraFlashAnim, { toValue: 0, duration: 350, useNativeDriver: false }),
+      ]).start();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userCoords, navigating, cameraResults]);
+
   // ── Refs — stable values readable inside the GPS callback ────────────────
   // Pattern: state drives render; refs let the stable callback read latest values
   // without re-creating it (re-creation mid-forEach crashes AnimatedNode).
@@ -669,19 +784,49 @@ export default function MapScreen() {
   const navigatingRef      = useRef(false);
   const routeRef           = useRef<RouteResult | null>(null);
   const userCoordsRef      = useRef<[number, number] | null>(null);
+  const isSimulatingRef    = useRef(false);
+  const simIndexRef        = useRef(0);
+  const simIntervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const destinationRef     = useRef<[number, number] | null>(null);
   const destinationNameRef = useRef('');
   const profileRef         = useRef<VehicleProfile | null>(null);
   const departAtRef        = useRef<string | null>(null);
-  const lastRerouteRef     = useRef<number>(0);
+  const lastRerouteRef        = useRef<number>(0);
+  const waypointsRef          = useRef<[number, number][]>([]);
+  const waypointNamesRef      = useRef<string[]>([]);
+  const profileRerouteTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraFlashAnim       = useRef(new Animated.Value(0)).current;
+  const lastCameraWarnRef     = useRef<number>(0);
+  const laneGlowAnim          = useRef(new Animated.Value(0)).current;
+  const laneGlowLoop          = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => { navigatingRef.current      = navigating;       }, [navigating]);
   useEffect(() => { routeRef.current           = route;            }, [route]);
   useEffect(() => { userCoordsRef.current      = userCoords;       }, [userCoords]);
   useEffect(() => { destinationRef.current     = destination;      }, [destination]);
   useEffect(() => { destinationNameRef.current = destinationName;  }, [destinationName]);
-  useEffect(() => { profileRef.current         = profile;          }, [profile]);
   useEffect(() => { departAtRef.current        = departAt;         }, [departAt]);
+  useEffect(() => { waypointsRef.current       = waypoints;        }, [waypoints]);
+  useEffect(() => { waypointNamesRef.current   = waypointNames;    }, [waypointNames]);
+
+  // Keep profileRef in sync
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+
+
+  // Profile change WHILE navigating → debounced re-route (800 ms).
+  // CRITICAL: deps = [profile] only — navigating must NOT be a dep.
+  // If navigating were in deps, pressing "Тръгваме" would trigger this effect,
+  // fire navigateTo() after 800 ms, and call setNavigating(false) — resetting nav.
+  useEffect(() => {
+    if (!navigatingRef.current || !destinationRef.current) return;
+    if (profileRerouteTimer.current) clearTimeout(profileRerouteTimer.current);
+    profileRerouteTimer.current = setTimeout(() => {
+      if (navigatingRef.current && destinationRef.current) {
+        navigateTo(destinationRef.current, destinationNameRef.current, waypointsRef.current);
+      }
+    }, 800);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile]);
 
   // ── Shared route-to helper ────────────────────────────────────────────────
   // Single source of truth for fetching a route and fitting the camera.
@@ -702,7 +847,6 @@ export default function MapScreen() {
       MAP_CENTER.longitude,
       MAP_CENTER.latitude,
     ];
-
     setLoadingRoute(true);
     try {
       const prof = profileRef.current;
@@ -712,6 +856,7 @@ export default function MapScreen() {
             max_width: prof.width_m,
             max_weight: prof.weight_t,
             max_length: prof.length_m,
+            exclude: adrToExclude(prof.hazmat_class ?? 'none'),
           }
         : undefined;
 
@@ -739,12 +884,85 @@ export default function MapScreen() {
       } else {
         cameraRef.current?.flyTo(dest, 800);
       }
-    } catch {
+    } catch (err) {
       cameraRef.current?.flyTo(dest, 800);
     } finally {
       if (isMountedRef.current) setLoadingRoute(false);
     }
   }, []); // stable — reads everything via refs
+
+  // ── Route elevation profile: sample 8 points from geometry ───────────────
+  const buildElevProfile = useCallback(async (r: RouteResult) => {
+    const coords = r.geometry.coordinates;
+    const step = Math.max(1, Math.floor(coords.length / 8));
+    const samples: [number, number][] = [];
+    for (let i = 0; i < coords.length; i += step) {
+      if (samples.length >= 8) break;
+      samples.push([coords[i][0], coords[i][1]]);
+    }
+    const elevs = await Promise.all(samples.map(([lng, lat]) => fetchElevationAtPoint(lng, lat)));
+    if (isMountedRef.current) setElevProfile(elevs.filter((e): e is number => e != null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // stable
+
+  // ── Route weather: Open-Meteo current_weather at 4 sample points ─────────
+  const fetchWeatherForRoute = useCallback(async (r: RouteResult) => {
+    const coords = r.geometry.coordinates;
+    const indices = [0, Math.floor(coords.length / 3), Math.floor(2 * coords.length / 3), coords.length - 1];
+    const results = await Promise.all(
+      indices.map(async (idx) => {
+        const [lng, lat] = coords[idx];
+        try {
+          const res = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`,
+          );
+          const data = await res.json() as { current_weather: { weathercode: number; temperature: number } };
+          const w = data.current_weather;
+          return { coords: [lng, lat] as [number, number], emoji: weatherEmoji(w.weathercode), temp: Math.round(w.temperature) };
+        } catch { return null; }
+      }),
+    );
+    if (isMountedRef.current) setWeatherPoints(results.filter((p): p is NonNullable<typeof p> => p != null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // stable
+
+  // Trigger elevation + weather fetch whenever route changes
+  useEffect(() => {
+    if (!route) { setElevProfile([]); setWeatherPoints([]); return; }
+    buildElevProfile(route);
+    fetchWeatherForRoute(route);
+  }, [route, buildElevProfile, fetchWeatherForRoute]);
+
+  // ── Add intermediate waypoint + re-route ─────────────────────────────────
+  // Appends a stop before the final destination and recalculates the route.
+  const addWaypoint = useCallback(async (coord: [number, number], name: string) => {
+    const appended = [...waypointsRef.current, coord];
+    const appendedNames = [...waypointNamesRef.current, name];
+
+    // Auto-optimize order when there are 2+ waypoints (nearest-neighbour TSP)
+    const origin: [number, number] = userCoordsRef.current ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
+    const optimized = appended.length >= 2 ? optimizeWaypointOrder(origin, appended) : appended;
+
+    // Sync names to match the optimized order
+    const nameMap = new Map(appended.map((wp, i) => [`${wp[0]},${wp[1]}`, appendedNames[i]]));
+    const optimizedNames = optimized.map(wp => nameMap.get(`${wp[0]},${wp[1]}`) ?? '');
+
+    setWaypoints(optimized);
+    setWaypointNames(optimizedNames);
+    // Immediate ref update so re-route picks up the new list even if state
+    // hasn't propagated yet (React batching).
+    waypointsRef.current     = optimized;
+    waypointNamesRef.current = optimizedNames;
+    const dest = destinationRef.current;
+    if (dest) await navigateTo(dest, destinationNameRef.current, optimized);
+  }, [navigateTo]);
+
+  // ── Long-press map handler — shows popup for navigate / add-as-stop ───────
+  const handleMapLongPress = useCallback((event: GeoJSON.Feature) => {
+    if (event.geometry.type !== 'Point') return;
+    const [lng, lat] = (event.geometry as GeoJSON.Point).coordinates as [number, number];
+    setLongPressCoord([lng, lat]);
+  }, []);
 
   // ── Destination selection (from SearchBar) ────────────────────────────────
 
@@ -757,23 +975,35 @@ export default function MapScreen() {
 
   const handleStart = useCallback(() => {
     lastSpokenStepRef.current = -1; // allow first step to be spoken
-    setNavigating(true);
     setCurrentStep(0);
     setDistToTurn(null);
     // Reset HOS for this trip
     setDrivingSeconds(0);
     hosWarningRef.current = { w30: false, w10: false, limit: false };
-    // Fly to user position immediately for close-up view
-    const uc = userCoordsRef.current;
-    if (uc) cameraRef.current?.flyTo(uc, 600);
+    // Set navigating LAST — StableCamera's followUserLocation will activate and
+    // smoothly move the camera to the user. Do NOT call flyTo() here: it conflicts
+    // with followUserLocation and crashes the native Camera animation node.
+    setNavigating(true);
     if (!voiceMutedRef.current) {
       Tts.stop();
       ttsSpeak('Навигацията е стартирана');
     }
   }, []);
 
-  // ── Clear route & stop navigation ─────────────────────────────────────────
+  // ── Stop navigation, keep route (Спри навигацията) ────────────────────────
+  // Keeps the route so the user can press "Тръгваме!" again without re-searching.
+  const handleStopNav = useCallback(() => {
+    Tts.stop();
+    setNavigating(false);
+    setMapPitch(0);
+    setCurrentStep(0);
+    setDistToTurn(null);
+    setRerouting(false);
+    hosWarningRef.current = { w30: false, w10: false, limit: false };
+    lastRerouteRef.current = 0;
+  }, []);
 
+  // ── Clear route & stop navigation entirely (✕ close button) ───────────────
   const handleClear = useCallback(() => {
     Tts.stop();
     lastSpokenStepRef.current = -1;
@@ -796,9 +1026,58 @@ export default function MapScreen() {
     setRouteOptDest(null);
     setTachographResult(null);
     setDrivingSeconds(0);
+    setWaypoints([]);
+    setWaypointNames([]);
+    setLongPressCoord(null);
+    setCameraAlert(null);
+    setElevProfile([]);
+    setWeatherPoints([]);
+    waypointsRef.current     = [];
+    waypointNamesRef.current = [];
     hosWarningRef.current = { w30: false, w10: false, limit: false };
     lastRerouteRef.current = 0;
     cameraRef.current?.flyTo([MAP_CENTER.longitude, MAP_CENTER.latitude], 800);
+    // Also stop any running simulator
+    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    isSimulatingRef.current = false;
+    setSimulating(false);
+    simIndexRef.current = 0;
+  }, []);
+
+  // ── Navigation Simulator ───────────────────────────────────────────────────
+  // Moves the user position along route.geometry.coordinates at ~80 km/h.
+  const startSim = useCallback(() => {
+    const coords = routeRef.current?.geometry.coordinates;
+    if (!coords || coords.length < 2) return;
+    simIndexRef.current = 0;
+    isSimulatingRef.current = true;
+    setSimulating(true);
+    // ~80 km/h: route coords are ~20 m apart on average; 1 tick = 500ms = 40 m/s ≈ 144 km/h
+    // Skip every 2 coords to land near 80 km/h
+    simIntervalRef.current = setInterval(() => {
+      if (!isMountedRef.current) { clearInterval(simIntervalRef.current!); return; }
+      const idx = simIndexRef.current;
+      if (idx >= coords.length) {
+        clearInterval(simIntervalRef.current!);
+        isSimulatingRef.current = false;
+        setSimulating(false);
+        return;
+      }
+      const pos: [number, number] = [coords[idx][0], coords[idx][1]];
+      userCoordsRef.current = pos;
+      setUserCoords(pos);
+      setGpsReady(true);
+      setSpeed(80);
+      isDrivingRef.current = true;
+      simIndexRef.current = idx + 2; // advance 2 coords per 500ms ≈ 80 km/h
+    }, 500);
+  }, []);
+
+  const stopSim = useCallback(() => {
+    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    isSimulatingRef.current = false;
+    setSimulating(false);
+    simIndexRef.current = 0;
   }, []);
 
   // ── AI chat (GPT-4o) ──────────────────────────────────────────────────────
@@ -853,21 +1132,15 @@ export default function MapScreen() {
       navigateTo(act.coords, act.destination, act.waypoints);
     }
 
+    if (act.action === 'add_waypoint') {
+      addWaypoint(act.coords, act.name);
+    }
+
     if (act.action === 'show_pois') {
       if (act.category === 'truck_stop') {
-        const parking: TruckParking[] = act.cards
+        const parking: POICard[] = act.cards
           .filter(c => c.lat && c.lng)
-          .slice(0, 4)
-          .map(c => ({
-            name:          c.name,
-            lat:           c.lat,
-            lng:           c.lng,
-            paid:          c.paid ?? false,
-            showers:       c.showers ?? false,
-            distance_m:    c.distance_m,
-            opening_hours: c.opening_hours,
-            phone:         c.phone,
-          }));
+          .slice(0, 5);
         setParkingResults(parking);
         setFuelResults([]);
         setCameraResults([]);
@@ -914,7 +1187,7 @@ export default function MapScreen() {
     }
 
     setChatLoading(false);
-  }, [chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo]);
+  }, [chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo, addWaypoint]);
 
   const handleChat = useCallback(() => {
     sendText(chatInput.trim());
@@ -1039,6 +1312,51 @@ export default function MapScreen() {
     ) ?? [];
   }, [stepToShow]);
 
+  // Debug-only mock lanes — 4 lanes, middle two active (tests pulsing animation)
+  const MOCK_LANES = useMemo(() => ([
+    { type: 'lane' as const, text: '', active: false, directions: ['left'] },
+    { type: 'lane' as const, text: '', active: true,  directions: ['straight'] },
+    { type: 'lane' as const, text: '', active: true,  directions: ['slight right'] },
+    { type: 'lane' as const, text: '', active: false, directions: ['right'] },
+  ]), []);
+
+  // In testLanesMode use mock data so animation can be verified without real navigation
+  const displayLanes = testLanesMode ? MOCK_LANES : currentLanes;
+
+  // Stable interpolation nodes for pulsing active-lane glow
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const laneGlowBg     = useMemo(() => laneGlowAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: ['rgba(0,191,255,0.22)', 'rgba(0,191,255,0.60)'],
+  }), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const laneGlowShadow = useMemo(() => laneGlowAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [0.55, 1.0],
+  }), []);
+
+  // Pulse active lane when < 350 m from turn — OR in testLanesMode (no nav required)
+  const lanePulseOn = testLanesMode ||
+    (navigating && distToTurn != null && distToTurn < 350 && displayLanes.some(l => l.active));
+  useEffect(() => {
+    if (lanePulseOn) {
+      laneGlowLoop.current?.stop();
+      laneGlowLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(laneGlowAnim, { toValue: 1, duration: 550, useNativeDriver: false }),
+          Animated.timing(laneGlowAnim, { toValue: 0, duration: 550, useNativeDriver: false }),
+        ]),
+      );
+      laneGlowLoop.current.start();
+    } else {
+      laneGlowLoop.current?.stop();
+      laneGlowAnim.setValue(0);
+    }
+    return () => { laneGlowLoop.current?.stop(); };
+  // laneGlowAnim is a stable ref — not a dep
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lanePulseOn]);
+
   // ETA — clock time of arrival (current time + route duration)
   const eta = useMemo(() => {
     if (!route) return null;
@@ -1070,6 +1388,7 @@ export default function MapScreen() {
         styleURL={mapStyleURL}
         pitchEnabled
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
+        onLongPress={handleMapLongPress}
       >
         {/* Register nav-arrow PNG for LocationPuck bearingImage (middle rotating layer).
             Must be inside MapView so the image is added to the native map atlas. */}
@@ -1315,15 +1634,24 @@ export default function MapScreen() {
           </Mapbox.PointAnnotation>
         )}
 
-        {/* Parking pins from GPT-4o */}
+        {/* Parking pins from GPT-4o — interactive bubbles */}
         {mapIsLoaded && parkingResults.map((p, i) => (
           <Mapbox.PointAnnotation
             key={`park-${i}`}
             id={`park-${i}`}
             coordinate={[p.lng, p.lat]}
+            onSelected={() => {
+              setSelectedParking(p);
+              if (p.voice_desc && !voiceMutedRef.current) {
+                ttsSpeak(p.voice_desc);
+              }
+            }}
           >
-            <View style={styles.parkingPin}>
-              <Text style={styles.parkingPinText}>🅿️</Text>
+            <View style={[
+              styles.parkingPin,
+              selectedParking?.name === p.name && styles.parkingPinSelected,
+            ]}>
+              <Icon name="parking" size={20} color="#00bfff" />
             </View>
           </Mapbox.PointAnnotation>
         ))}
@@ -1336,7 +1664,7 @@ export default function MapScreen() {
             coordinate={[f.lng, f.lat]}
           >
             <View style={styles.fuelPin}>
-              <Text style={styles.fuelPinText}>⛽</Text>
+              <Icon name="gas-station" size={20} color="#f59e0b" />
             </View>
           </Mapbox.PointAnnotation>
         ))}
@@ -1349,7 +1677,7 @@ export default function MapScreen() {
             coordinate={[b.lng, b.lat]}
           >
             <View style={styles.bizPin}>
-              <Text style={styles.bizPinText}>🏢</Text>
+              <Icon name="office-building-marker" size={18} color="#00e5ff" />
             </View>
           </Mapbox.PointAnnotation>
         ))}
@@ -1388,6 +1716,20 @@ export default function MapScreen() {
           </Mapbox.ShapeSource>
         ))}
 
+        {/* Waypoint markers — numbered intermediate stops */}
+        {mapIsLoaded && waypoints.map((wp, i) => (
+          <Mapbox.PointAnnotation
+            key={`wp-${i}`}
+            id={`wp-${i}`}
+            coordinate={wp}
+          >
+            <View style={styles.waypointPin}>
+              <Icon name="map-marker-plus" size={20} color="#fff" />
+              <Text style={styles.waypointPinBadge}>{i + 1}</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
         {/* POI markers */}
         {mapIsLoaded && poiResults.map((poi) => (
           <Mapbox.PointAnnotation
@@ -1403,7 +1745,173 @@ export default function MapScreen() {
             </View>
           </Mapbox.PointAnnotation>
         ))}
+
+        {/* ── Weather markers along route (Open-Meteo) ── */}
+        {mapIsLoaded && weatherPoints.map((wp, i) => (
+          <Mapbox.PointAnnotation
+            key={`wx-${i}`}
+            id={`wx-${i}`}
+            coordinate={wp.coords}
+          >
+            <View style={styles.weatherPin}>
+              <Text style={styles.weatherPinEmoji}>{wp.emoji}</Text>
+              <Text style={styles.weatherPinTemp}>{wp.temp}°</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
       </Mapbox.MapView>
+
+      {/* ── Floating parking detail bubble (appears when map pin is tapped) ── */}
+      {selectedParking && (
+        <View style={[styles.parkingBubble, { top: insets.top + 68 }]}>
+          {/* Header row */}
+          <View style={styles.parkingBubbleHeader}>
+            <Text style={styles.parkingBubbleName} numberOfLines={2}>
+              🅿️ {selectedParking.name}
+            </Text>
+            <TouchableOpacity
+              onPress={() => setSelectedParking(null)}
+              style={styles.parkingBubbleClose}
+            >
+              <Text style={styles.parkingBubbleCloseTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Distance + hours */}
+          <Text style={styles.parkingBubbleDist}>
+            {fmtDistance(selectedParking.distance_m)}
+            {selectedParking.opening_hours ? `  ·  ${selectedParking.opening_hours}` : ''}
+          </Text>
+
+          {/* Amenity badge row */}
+          <View style={styles.parkingBubbleBadgeRow}>
+            <View style={[styles.pkBadge, selectedParking.paid ? styles.pkBadgePaid : styles.pkBadgeFree]}>
+              <Text style={styles.pkBadgeTxt}>{selectedParking.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
+            </View>
+            {selectedParking.showers && (
+              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚿</Text></View>
+            )}
+            {selectedParking.toilets && (
+              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚽</Text></View>
+            )}
+            {selectedParking.wifi && (
+              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>📶 WiFi</Text></View>
+            )}
+            {selectedParking.security && (
+              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔒 Охрана</Text></View>
+            )}
+            {selectedParking.lighting && (
+              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔦 Осветен</Text></View>
+            )}
+            {selectedParking.capacity != null && (
+              <View style={styles.pkBadge}>
+                <Text style={styles.pkBadgeTxt}>🚛 {selectedParking.capacity}</Text>
+              </View>
+            )}
+          </View>
+
+          {/* Action buttons */}
+          <View style={styles.parkingBubbleBtns}>
+            <TouchableOpacity
+              style={styles.parkingBubbleNavBtn}
+              activeOpacity={0.8}
+              onPress={() => {
+                const p = selectedParking;
+                setSelectedParking(null);
+                setParkingResults([]);
+                navigateTo([p.lng, p.lat], p.name);
+              }}
+            >
+              <Icon name="navigation-variant" size={16} color="#0a0c1c" />
+              <Text style={styles.parkingBubbleNavBtnTxt}>Навигация</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.parkingBubbleWebBtn}
+              activeOpacity={0.8}
+              onPress={() => {
+                const cc = detectCountryCode(selectedParking.lat, selectedParking.lng);
+                const base = cc === 'eu'
+                  ? 'https://truckerapps.eu/transparking/'
+                  : `https://truckerapps.eu/transparking/${cc}/map/`;
+                openInBrowser(base);
+              }}
+            >
+              <Icon name="web" size={16} color={NEON} />
+              <Text style={styles.parkingBubbleWebBtnTxt}>Коментари</Text>
+            </TouchableOpacity>
+
+            {selectedParking.voice_desc && (
+              <TouchableOpacity
+                style={styles.parkingBubbleTtsBtn}
+                activeOpacity={0.8}
+                onPress={() => ttsSpeak(selectedParking.voice_desc!)}
+              >
+                <Icon name="volume-high" size={16} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* ── Long-press popup — glassmorphism card with icon buttons ── */}
+      {longPressCoord && (
+        <View style={styles.longPressPopup}>
+          {/* Header row */}
+          <View style={styles.longPressHeader}>
+            <Icon name="map-marker" size={18} color="#00bfff" />
+            <Text style={styles.longPressTitle}> Задържана точка</Text>
+            <TouchableOpacity
+              style={styles.longPressCloseBtn}
+              activeOpacity={0.7}
+              onPress={() => setLongPressCoord(null)}
+            >
+              <Icon name="close" size={18} color="rgba(255,255,255,0.6)" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.longPressCoords}>
+            {longPressCoord[1].toFixed(5)}, {longPressCoord[0].toFixed(5)}
+          </Text>
+
+          {/* Action buttons */}
+          <View style={styles.longPressBtns}>
+            {/* Navigate button */}
+            <TouchableOpacity
+              style={styles.longPressBtn}
+              activeOpacity={0.75}
+              onPress={() => {
+                const coord = longPressCoord;
+                setLongPressCoord(null);
+                navigateTo(coord, `${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`);
+              }}
+            >
+              <View style={styles.longPressBtnInner}>
+                <Icon name="navigation" size={20} color="#0a0c1c" />
+                <Text style={styles.longPressBtnTxt}>Упътване</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Add as waypoint — only when route exists */}
+            {destination && (
+              <TouchableOpacity
+                style={[styles.longPressBtn, styles.longPressBtnWaypoint]}
+                activeOpacity={0.75}
+                onPress={() => {
+                  const coord = longPressCoord;
+                  setLongPressCoord(null);
+                  addWaypoint(coord, `Спирка ${waypointsRef.current.length + 1}`);
+                }}
+              >
+                <View style={styles.longPressBtnInner}>
+                  <Icon name="map-marker-plus" size={20} color="#0a0c1c" />
+                  <Text style={styles.longPressBtnTxt}>Добави спирка</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* ── Search bar (hidden during navigation) ── */}
       {!navigating && (
@@ -1449,6 +1957,36 @@ export default function MapScreen() {
                 )}
               </View>
             </View>
+          )}
+        </View>
+      )}
+
+      {/* ── Sygic-style lane strip — horizontal bar above nav banner, < 350 m from turn ── */}
+      {(testLanesMode || (navigating && distToTurn != null && distToTurn < 350)) && displayLanes.length > 0 && (
+        <View style={styles.laneStrip}>
+          {displayLanes.map((lane, i) =>
+            lane.active ? (
+              /* Active lane — neon pulsing glow + 3D scale pop */
+              <Animated.View
+                key={i}
+                style={[
+                  styles.laneSCell,
+                  styles.laneSCellActive,
+                  { backgroundColor: laneGlowBg, shadowOpacity: laneGlowShadow },
+                ]}
+              >
+                <Text style={styles.laneSCellArrowActive}>
+                  {laneDirectionEmoji(lane.directions?.[0])}
+                </Text>
+              </Animated.View>
+            ) : (
+              /* Inactive lane — static dimmed cell */
+              <View key={i} style={styles.laneSCell}>
+                <Text style={styles.laneSCellArrow}>
+                  {laneDirectionEmoji(lane.directions?.[0])}
+                </Text>
+              </View>
+            ),
           )}
         </View>
       )}
@@ -1535,6 +2073,28 @@ export default function MapScreen() {
                 ))}
               </View>
             )}
+
+            {/* ── Dev tools row — hidden inside ⚙️, only when route loaded ── */}
+            {route && (
+              <>
+                <View style={styles.optionsDivider} />
+                <View style={styles.optionsRow}>
+                  <TouchableOpacity
+                    style={[styles.optionBtn, simulating && styles.simBtnActive]}
+                    onPress={() => { simulating ? stopSim() : startSim(); setOptionsOpen(false); }}
+                  >
+                    <Text style={styles.mapBtnText}>{simulating ? '⏹' : '▶'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.optionBtn, debugMode && styles.simBtnDebug]}
+                    onPress={() => setDebugMode(v => !v)}
+                  >
+                    <Text style={styles.mapBtnText}>🐛</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.devRowLabel}>DEV</Text>
+                </View>
+              </>
+            )}
           </View>
         )}
       </View>
@@ -1613,32 +2173,80 @@ export default function MapScreen() {
             contentContainerStyle={styles.parkingListContent}
           >
             {parkingResults.map((p, i) => (
-              <TouchableOpacity
-                key={i}
-                style={styles.parkingCard}
-                activeOpacity={0.75}
-                onPress={() => {
-                  setParkingResults([]);
-                  navigateTo([p.lng, p.lat], p.name);
-                }}
-              >
+              <View key={i} style={styles.parkingCard}>
                 <Text style={styles.parkingCardName} numberOfLines={2}>{p.name}</Text>
                 <Text style={styles.parkingCardDist}>{fmtDistance(p.distance_m)}</Text>
+
+                {/* Amenity badges */}
                 <View style={styles.parkingBadgeRow}>
                   <View style={[styles.parkingBadge, p.paid ? styles.parkingBadgePaid : styles.parkingBadgeFree]}>
                     <Text style={styles.parkingBadgeTxt}>{p.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
                   </View>
                   {p.showers && (
-                    <View style={styles.parkingBadge}>
-                      <Text style={styles.parkingBadgeTxt}>🚿 Душ</Text>
-                    </View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚿</Text></View>
+                  )}
+                  {p.toilets && (
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚽</Text></View>
+                  )}
+                  {p.wifi && (
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>📶</Text></View>
+                  )}
+                  {p.security && (
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🔒</Text></View>
+                  )}
+                  {p.lighting && (
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🔦</Text></View>
+                  )}
+                  {p.capacity != null && (
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚛 {p.capacity}</Text></View>
                   )}
                 </View>
+
                 {p.opening_hours ? (
                   <Text style={styles.parkingHours} numberOfLines={1}>{p.opening_hours}</Text>
                 ) : null}
-                <Text style={styles.parkingGoBtnTxt}>🚀 Натисни за маршрут</Text>
-              </TouchableOpacity>
+
+                {/* Action row: Navigate + Web + TTS */}
+                <View style={styles.parkingCardActions}>
+                  <TouchableOpacity
+                    style={styles.parkingGoBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setParkingResults([]);
+                      setSelectedParking(null);
+                      navigateTo([p.lng, p.lat], p.name);
+                    }}
+                  >
+                    <Icon name="navigation-variant" size={12} color="#0a0c1c" />
+                    <Text style={styles.parkingGoBtnTxt2}>Маршрут</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.parkingWebBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      const cc = detectCountryCode(p.lat, p.lng);
+                      const base = cc === 'eu'
+                        ? 'https://truckerapps.eu/transparking/'
+                        : `https://truckerapps.eu/transparking/${cc}/map/`;
+                      openInBrowser(base);
+                    }}
+                  >
+                    <Icon name="web" size={12} color={NEON} />
+                    <Text style={styles.parkingWebBtnTxt}>Web</Text>
+                  </TouchableOpacity>
+
+                  {p.voice_desc && (
+                    <TouchableOpacity
+                      style={styles.parkingTtsBtn}
+                      activeOpacity={0.8}
+                      onPress={() => ttsSpeak(p.voice_desc!)}
+                    >
+                      <Icon name="volume-high" size={13} color="#fff" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
             ))}
           </ScrollView>
         </View>
@@ -1687,7 +2295,10 @@ export default function MapScreen() {
                 {f.opening_hours ? (
                   <Text style={styles.fuelHours} numberOfLines={1}>{f.opening_hours}</Text>
                 ) : null}
-                <Text style={styles.fuelGoTxt}>🚀 Натисни за маршрут</Text>
+                <View style={[styles.goBtn, styles.goBtnFuel]}>
+                  <Icon name="gas-station" size={14} color="#0a0c1c" />
+                  <Text style={styles.goBtnTxt}>Маршрут</Text>
+                </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -1852,15 +2463,21 @@ export default function MapScreen() {
               <Text style={styles.hosBadgeLabel}>HOS</Text>
               <Text style={styles.hosBadgeValue}>{fmtHOS(drivingSeconds)}</Text>
             </View>
-            <View style={styles.speedBox}>
+            <View style={[
+              styles.speedRing,
+              speedLimit != null && speed > speedLimit
+                ? styles.speedRingRed
+                : speedLimit != null && speed > speedLimit - 10
+                ? styles.speedRingYellow
+                : styles.speedRingGreen,
+            ]}>
               <Text style={styles.speedValue}>{speed}</Text>
               <Text style={styles.speedUnit}>км/ч</Text>
             </View>
           </View>
           {speedLimit != null && (
-            <View style={[styles.speedLimitBox, speed > speedLimit && styles.speedLimitExceeded]}>
-              <Text style={styles.speedLimitLabel}>LIMIT</Text>
-              <Text style={styles.speedLimitValue}>{speedLimit}</Text>
+            <View style={[styles.speedCircle, speed > speedLimit && styles.speedCircleExceeded]}>
+              <Text style={styles.speedCircleNum}>{speedLimit}</Text>
             </View>
           )}
         </View>
@@ -1875,6 +2492,28 @@ export default function MapScreen() {
         }]}>
           <Text style={styles.elevationText}>▲ {elevation} м н.в.</Text>
         </View>
+      )}
+
+      {/* ── Speed Camera HUD — visible when < 600 m from a camera ── */}
+      {navigating && cameraAlert && (
+        <Animated.View style={[
+          styles.cameraHUD,
+          { bottom: 320 + insets.bottom },
+          {
+            borderColor: cameraFlashAnim.interpolate({
+              inputRange: [0, 1], outputRange: ['#cc0000', '#ff5555'],
+            }),
+            backgroundColor: cameraFlashAnim.interpolate({
+              inputRange: [0, 1], outputRange: ['rgba(100,0,0,0.90)', 'rgba(210,15,15,0.97)'],
+            }),
+          },
+        ]}>
+          <Text style={styles.cameraHUDIcon}>📷</Text>
+          <View>
+            <Text style={styles.cameraHUDDist}>{cameraAlert.dist} м</Text>
+            <Text style={styles.cameraHUDLabel}>КАМЕРА</Text>
+          </View>
+        </Animated.View>
       )}
 
       {/* ── Bottom-right: distance to next turn ── */}
@@ -1931,6 +2570,11 @@ export default function MapScreen() {
               <View style={styles.truckDimBadge}>
                 <Text style={styles.truckDimText}>↔ {profile.length_m} м</Text>
               </View>
+              {profile.hazmat_class && profile.hazmat_class !== 'none' && (
+                <View style={[styles.truckDimBadge, styles.adrBadge]}>
+                  <Text style={styles.truckDimText}>⚠ ADR {profile.hazmat_class}</Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -1954,6 +2598,37 @@ export default function MapScreen() {
           )}
 
           {/* Departure time chips — re-fetches route with depart_at for traffic prediction */}
+          {/* ── Route elevation profile mini bar chart ── */}
+          {elevProfile.length > 1 && (
+            <View style={styles.elevProfileStrip}>
+              <Text style={styles.elevProfileLabel}>
+                ⛰ {Math.round(Math.min(...elevProfile))}–{Math.round(Math.max(...elevProfile))} м н.в.
+              </Text>
+              <View style={styles.elevProfileBars}>
+                {(() => {
+                  const min = Math.min(...elevProfile);
+                  const max = Math.max(...elevProfile);
+                  return elevProfile.map((e, i) => {
+                    const pct = max > min ? (e - min) / (max - min) : 0.5;
+                    return <View key={i} style={[styles.elevBar, { height: Math.max(4, pct * 28) }]} />;
+                  });
+                })()}
+              </View>
+            </View>
+          )}
+
+          {/* ── Weather strip along route ── */}
+          {weatherPoints.length > 0 && (
+            <View style={styles.weatherStrip}>
+              {weatherPoints.map((wp, i) => (
+                <View key={i} style={styles.weatherChip}>
+                  <Text style={styles.weatherChipEmoji}>{wp.emoji}</Text>
+                  <Text style={styles.weatherChipTemp}>{wp.temp}°C</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
           {!navigating && (
             <View style={styles.departRow}>
               {DEPART_LABELS.map(label => (
@@ -1973,13 +2648,65 @@ export default function MapScreen() {
             </View>
           )}
 
+          {/* Waypoint strip — shows intermediate stops, tap ✕ to remove */}
+          {waypoints.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.waypointStrip}
+              contentContainerStyle={styles.waypointStripContent}
+            >
+              {waypointNames.map((name, i) => (
+                <View key={i} style={styles.waypointChip}>
+                  <Icon name="map-marker-plus" size={14} color="#ff8c00" style={{ marginRight: 4 }} />
+                  <Text style={styles.waypointChipText} numberOfLines={1}>
+                    {i + 1}. {name}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.waypointChipRemoveBtn}
+                    onPress={() => {
+                      const newWps   = waypoints.filter((_, idx) => idx !== i);
+                      const newNames = waypointNames.filter((_, idx) => idx !== i);
+                      setWaypoints(newWps);
+                      setWaypointNames(newNames);
+                      waypointsRef.current     = newWps;
+                      waypointNamesRef.current = newNames;
+                      const dest = destinationRef.current;
+                      if (dest) navigateTo(dest, destinationNameRef.current, newWps);
+                    }}
+                  >
+                    <Icon name="close-circle" size={16} color="rgba(255,107,107,0.9)" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {/* Optimize waypoints — nearest-neighbour TSP reorder */}
+          {waypoints.length >= 2 && (
+            <TouchableOpacity
+              style={styles.optimizeBtn}
+              onPress={() => {
+                const coords: [number, number] = userCoordsRef.current ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
+                const optimized = optimizeWaypointOrder(coords, waypoints);
+                setWaypoints(optimized);
+                waypointsRef.current = optimized;
+                if (destinationRef.current) {
+                  navigateTo(destinationRef.current, destinationNameRef.current, optimized);
+                }
+              }}
+            >
+              <Text style={styles.optimizeBtnText}>⚡ Оптимизирай спирките</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[
               styles.startBtn,
               navigating && styles.startBtnActive,
               !navigating && !gpsReady && styles.startBtnDisabled,
             ]}
-            onPress={navigating ? handleClear : (gpsReady ? handleStart : undefined)}
+            onPress={navigating ? handleStopNav : (gpsReady ? handleStart : undefined)}
             activeOpacity={0.85}
           >
             <Text style={styles.startBtnText}>
@@ -2052,6 +2779,37 @@ export default function MapScreen() {
         >
           <Text style={styles.fabEmoji}>🚚</Text>
         </TouchableOpacity>
+      )}
+
+
+      {/* ── Visual Debug Overlay ── */}
+      {debugMode && (
+        <View style={[styles.debugOverlay, { top: insets.top + 120 }]}>
+          <Text style={styles.debugTitle}>▌ DEBUG</Text>
+          <Text style={styles.debugRow}>📍 Крачка: {currentStep + 1}</Text>
+          <Text style={styles.debugRow}>
+            📏 До завой: {distToTurn != null ? `${Math.round(distToTurn)} м` : '—'}
+          </Text>
+          <Text style={styles.debugRow}>
+            🛣️ EU знак: {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? '✅ ВИДИМ' : '⬜ скрит'}
+          </Text>
+          <Text style={styles.debugRow}>
+            🚦 Ленти: {displayLanes.length > 0 ? `${displayLanes.length} (${displayLanes.filter(l => l.active).length} активни)` : '—'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.debugLaneTestBtn, testLanesMode && styles.debugLaneTestBtnOn]}
+            onPress={() => setTestLanesMode(v => !v)}
+          >
+            <Text style={styles.debugLaneTestTxt}>
+              {testLanesMode ? '🚦 TEST LANES ON' : '🚦 Test Lanes'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.debugRow}>⚡ Скорост: {speed} км/ч</Text>
+          <Text style={styles.debugRow}>🎯 Лимит: {speedLimit ?? '—'} км/ч</Text>
+          <Text style={styles.debugRow}>
+            {simulating ? '🟢 SIM активен' : '🔴 GPS реален'}
+          </Text>
+        </View>
       )}
 
       {/* ── Gemini FAB (bottom-left) ── */}
@@ -2175,7 +2933,7 @@ const styles = StyleSheet.create({
     elevation: 12,
     shadowColor: NEON,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
+    shadowOpacity: 0.95,
     shadowRadius: 8,
   },
   mapBtnOff: { opacity: 0.4 },
@@ -2197,11 +2955,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     elevation: 14,
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: NEON,
     shadowColor: NEON,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.7,
+    shadowOpacity: 0.90,
     shadowRadius: 10,
   },
   navArrow: { fontSize: 36, marginRight: spacing.md },
@@ -2238,6 +2996,49 @@ const styles = StyleSheet.create({
   laneArrow: { fontSize: 20, opacity: 0.30 },
   laneArrowActive: { opacity: 1 },
 
+  // Sygic-style absolute lane strip — bottom of screen, < 350 m from turn
+  laneStrip: {
+    position: 'absolute',
+    bottom: 210,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: 4,
+    backgroundColor: 'rgba(0,8,20,0.88)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 10,
+    elevation: 18,
+    zIndex: 20,
+  },
+  laneSCell: {
+    width: 40,
+    height: 52,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  laneSCellActive: {
+    // backgroundColor + shadowOpacity are animated via laneGlowBg / laneGlowShadow
+    borderColor: NEON,
+    borderWidth: 3,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 14,
+    elevation: 10,
+    transform: [{ scale: 1.10 }],   // 3D "pop out" — active lane appears closer
+  },
+  laneSCellArrow:       { fontSize: 22, opacity: 0.35 },
+  laneSCellArrowActive: { fontSize: 22, opacity: 1 },
+
   // Truck geometry badge — amber pill showing active routing constraints
   truckDimRow: {
     flexDirection: 'row',
@@ -2250,11 +3051,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,170,0,0.12)',
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,170,0,0.40)',
+    borderColor: 'rgba(0,191,255,0.6)',
     paddingHorizontal: 7,
     paddingVertical: 2,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
   },
   truckDimText: { fontSize: 10, color: '#ffaa00', fontWeight: '600' },
+  adrBadge: {
+    borderColor: '#ff8c00',
+    backgroundColor: 'rgba(255,140,0,0.18)',
+    shadowColor: '#ff8c00',
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+  },
 
   // ── Tilequery UI ────────────────────────────────────────────────────────────
 
@@ -2456,35 +3268,39 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 19,
+    backgroundColor: '#091529',          // тъмно синьо header strip
+    paddingBottom: 8,
+    borderTopWidth: 1.5,
+    borderTopColor: '#1a8fd1',
   },
   parkingPanelHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   parkingPanelTitle: {
     ...typography.label,
-    color: NEON,
-    fontWeight: '700',
-    fontSize: 12,
+    color: '#60c0ff',                    // светло синьо заглавие
+    fontWeight: '800',
+    fontSize: 13,
   },
   parkingDismissBtn: { padding: 4 },
   parkingDismissTxt: { color: colors.textSecondary, fontSize: 14 },
   parkingListContent: { paddingHorizontal: spacing.sm, paddingBottom: spacing.xs },
   parkingCard: {
-    backgroundColor: 'rgba(180,0,0,0.18)',
+    backgroundColor: '#0d1e3d',          // тъмно синьо, плътно
     borderRadius: radius.md,
     padding: spacing.sm,
     marginRight: spacing.sm,
-    width: 165,
+    width: 170,
     borderWidth: 2,
-    borderColor: '#ff3b3b',
+    borderColor: '#1a8fd1',              // синя рамка
     elevation: 12,
-    shadowColor: '#ff3b3b',
+    shadowColor: '#1a8fd1',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
+    shadowOpacity: 0.70,
     shadowRadius: 8,
   },
   parkingCardName: {
@@ -2517,20 +3333,20 @@ const styles = StyleSheet.create({
     fontSize: 9,
     marginBottom: 6,
   },
-  parkingGoBtn: {
-    backgroundColor: NEON,
-    borderRadius: radius.sm,
-    paddingVertical: 6,
-    alignItems: 'center',
-    marginTop: 'auto' as any,
-  },
-  parkingGoBtnTxt: { color: '#ff3b3b', fontWeight: '800', fontSize: 12, marginTop: 6 },
   parkingPin: {
-    backgroundColor: 'rgba(0,10,30,0.85)',
-    borderRadius: radius.full,
-    padding: 3,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,191,255,0.12)',
     borderWidth: 1.5,
     borderColor: NEON,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
   },
   parkingPinText: { fontSize: 16 },
 
@@ -2573,20 +3389,34 @@ const styles = StyleSheet.create({
   speedValue: { fontSize: 32, fontWeight: '800', color: colors.text },
   speedUnit:  { ...typography.label, color: colors.textSecondary },
 
-  speedLimitBox: {
-    backgroundColor: 'rgba(15,15,30,0.92)',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  speedCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#fff',
+    borderWidth: 5,
+    borderColor: '#e00000',
+    justifyContent: 'center',
     alignItems: 'center',
-    minWidth: 60,
-    borderWidth: 2,
-    borderColor: colors.warning,
-    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.55,
+    shadowRadius: 5,
+    elevation: 12,
   },
-  speedLimitExceeded: { borderColor: colors.error },
-  speedLimitLabel: { ...typography.label, color: colors.warning, fontSize: 9 },
-  speedLimitValue: { fontSize: 22, fontWeight: '800', color: colors.warning },
+  speedCircleExceeded: {
+    borderColor: '#ff0000',
+    backgroundColor: '#fff8f8',
+    shadowColor: '#ff0000',
+    shadowOpacity: 1,
+    shadowRadius: 14,
+  },
+  speedCircleNum: {
+    fontSize: 21,
+    fontWeight: '900',
+    color: '#111',
+    letterSpacing: -0.5,
+  },
 
   // Bottom-right: distance to turn
   distBox: {
@@ -2953,11 +3783,19 @@ const styles = StyleSheet.create({
 
   // Fuel pins on map
   fuelPin: {
-    backgroundColor: 'rgba(0,10,20,0.85)',
-    borderRadius: radius.full,
-    padding: 3,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(245,158,11,0.12)',
     borderWidth: 1.5,
-    borderColor: '#00ff88',
+    borderColor: '#f59e0b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 6,
   },
   fuelPinText: { fontSize: 16 },
 
@@ -3147,11 +3985,19 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   bizPin: {
-    backgroundColor: 'rgba(0,40,60,0.88)',
-    borderRadius: 20,
-    padding: 4,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,229,255,0.1)',
     borderWidth: 1.5,
     borderColor: '#00e5ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#00e5ff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 6,
   },
   bizPinText: { fontSize: 18 },
   bizCardPhoto: {
@@ -3203,7 +4049,7 @@ const styles = StyleSheet.create({
     elevation: 18,
     shadowColor: NEON,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.65,
+    shadowOpacity: 0.85,
     shadowRadius: 10,
   },
   optionsRow: {
@@ -3230,4 +4076,514 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.8,
     shadowRadius: 6,
   },
+
+  // ── Waypoint map pins ─────────────────────────────────────────────────────
+  waypointPin: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,140,0,0.18)',
+    borderWidth: 2,
+    borderColor: '#ff8c00',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    shadowColor: '#ff8c00',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 6,
+  },
+  waypointPinBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#ff8c00',
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+    textAlign: 'center',
+    lineHeight: 16,
+  },
+
+  // ── Long-press popup — Glassmorphism card ────────────────────────────────
+  longPressPopup: {
+    position: 'absolute',
+    bottom: 150,
+    alignSelf: 'center',
+    // Glassmorphism base
+    backgroundColor: 'rgba(6, 12, 35, 0.85)',
+    borderRadius: 18,
+    padding: 16,
+    paddingTop: 12,
+    zIndex: 50,
+    elevation: 32,
+    minWidth: 270,
+    // Neon border glow
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.45)',
+    // Outer glow
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.75,
+    shadowRadius: 14,
+  },
+  longPressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  longPressTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    flex: 1,
+    letterSpacing: 0.3,
+  },
+  longPressCoords: {
+    color: 'rgba(0,191,255,0.55)',
+    fontSize: 10,
+    marginBottom: 14,
+    fontFamily: 'monospace',
+    letterSpacing: 0.5,
+  },
+  longPressBtns: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  // Navigate button — neon blue glass pill
+  longPressBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(0,191,255,0.18)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    elevation: 4,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+  },
+  // Waypoint button — orange glass pill
+  longPressBtnWaypoint: {
+    backgroundColor: 'rgba(255,140,0,0.18)',
+    borderColor: '#ff8c00',
+    shadowColor: '#ff8c00',
+  },
+  longPressBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  longPressBtnTxt: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  longPressCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Waypoint strip (bottom panel) ─────────────────────────────────────────
+  waypointStrip: {
+    maxHeight: 42,
+    marginBottom: 10,
+  },
+  waypointStripContent: {
+    paddingHorizontal: 4,
+    gap: 8,
+    alignItems: 'center',
+  },
+  waypointChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,140,0,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,140,0,0.5)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+    elevation: 3,
+    shadowColor: '#ff8c00',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  waypointChipText: {
+    color: '#ffaa44',
+    fontSize: 12,
+    fontWeight: '600',
+    maxWidth: 120,
+  },
+  waypointChipRemove: {
+    color: 'rgba(255,107,107,0.85)',
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 4,
+  },
+  waypointChipRemoveBtn: {
+    marginLeft: 2,
+  },
+  optimizeBtn: {
+    backgroundColor: 'rgba(0,191,255,0.15)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    alignSelf: 'center',
+    marginTop: 6,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  optimizeBtnText: { color: NEON, fontSize: 13, fontWeight: '700' },
+
+  // ── Shared "Go" button for POI cards ─────────────────────────────────────
+  goBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: NEON,
+    borderRadius: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    marginTop: 8,
+  },
+  goBtnFuel: {
+    backgroundColor: '#f59e0b',
+  },
+  goBtnTxt: {
+    color: '#0a0c1c',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+
+  // ── Interactive parking bubble (floating over map) ────────────────────────
+  parkingBubble: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: '#0d1e3d',          // тъмно синьо, напълно плътно
+    borderRadius: 14,
+    borderWidth: 2.5,
+    borderColor: '#1a8fd1',              // синя рамка
+    padding: 13,
+    shadowColor: '#1a8fd1',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.90,
+    shadowRadius: 14,
+    elevation: 22,
+  },
+  parkingBubbleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  parkingBubbleName: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+    marginRight: 8,
+  },
+  parkingBubbleClose: { padding: 2 },
+  parkingBubbleCloseTxt: { color: 'rgba(255,255,255,0.5)', fontSize: 15 },
+  parkingBubbleDist: {
+    color: NEON,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  parkingBubbleBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: 10,
+  },
+  pkBadge: {
+    backgroundColor: 'rgba(26,143,209,0.20)',   // синкав badge
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(26,143,209,0.45)',
+  },
+  pkBadgePaid: { backgroundColor: 'rgba(239,68,68,0.22)', borderColor: 'rgba(239,68,68,0.5)' },
+  pkBadgeFree: { backgroundColor: 'rgba(34,197,94,0.22)', borderColor: 'rgba(34,197,94,0.5)' },
+  pkBadgeTxt: { color: '#e8f4ff', fontSize: 10, fontWeight: '700' },
+  parkingBubbleBtns: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  parkingBubbleNavBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: NEON,
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  parkingBubbleNavBtnTxt: { color: '#0a0c1c', fontWeight: '800', fontSize: 13 },
+  parkingBubbleWebBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,191,255,0.12)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  parkingBubbleWebBtnTxt: { color: NEON, fontWeight: '700', fontSize: 12 },
+  parkingBubbleTtsBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Parking card action row ───────────────────────────────────────────────
+  parkingCardActions: {
+    flexDirection: 'row',
+    gap: 5,
+    alignItems: 'center',
+    marginTop: 'auto' as any,
+  },
+  parkingGoBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: NEON,
+    borderRadius: 6,
+    paddingVertical: 5,
+  },
+  parkingGoBtnTxt2: { color: '#0a0c1c', fontWeight: '800', fontSize: 10 },
+  parkingWebBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,191,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 6,
+    paddingVertical: 5,
+  },
+  parkingWebBtnTxt: { color: NEON, fontWeight: '700', fontSize: 10 },
+  parkingTtsBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Selected parking pin highlight ───────────────────────────────────────
+  parkingPinSelected: {
+    backgroundColor: 'rgba(255,59,59,0.25)',
+    borderColor: '#ff3b3b',
+    borderWidth: 2.5,
+    shadowColor: '#ff3b3b',
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+  },
+
+  // ── Dev tools inside ⚙️ options panel ─────────────────────────────────────
+  optionsDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    marginVertical: 4,
+  },
+  devRowLabel: {
+    color: 'rgba(255,255,255,0.30)',
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    alignSelf: 'center',
+    marginLeft: 4,
+  },
+  // kept for state-highlight reuse
+  simBtnActive: {
+    borderColor: '#ff4444',
+    backgroundColor: 'rgba(255,30,30,0.18)',
+    shadowColor: '#ff4444',
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+  },
+  simBtnDebug: {
+    borderColor: '#ffaa00',
+    backgroundColor: 'rgba(255,170,0,0.18)',
+    shadowColor: '#ffaa00',
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+  },
+
+  // ── Visual Debug Overlay ──────────────────────────────────────────────────
+  debugOverlay: {
+    position: 'absolute',
+    left: spacing.md,
+    backgroundColor: 'rgba(0,4,12,0.92)',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#ffaa00',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    zIndex: 25,
+    minWidth: 190,
+    shadowColor: '#ffaa00',
+    shadowOpacity: 0.7,
+    shadowRadius: 8,
+    elevation: 20,
+  },
+  debugTitle: {
+    color: '#ffaa00',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 5,
+  },
+  debugRow: { color: '#e0e8ff', fontSize: 11, fontWeight: '600', marginBottom: 2 },
+  debugLaneTestBtn: {
+    marginTop: 6, paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(0,191,255,0.5)',
+    backgroundColor: 'rgba(0,191,255,0.08)',
+  },
+  debugLaneTestBtnOn: {
+    borderColor: NEON,
+    backgroundColor: 'rgba(0,191,255,0.30)',
+    shadowColor: NEON, shadowOpacity: 0.8, shadowRadius: 6, elevation: 6,
+  },
+  debugLaneTestTxt: { color: NEON, fontSize: 11, fontWeight: '800' },
+
+  // ── Live Speedometer Ring (replaces speedBox) ─────────────────────────────
+  speedRing: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,10,25,0.92)',
+    elevation: 12,
+    shadowOffset: { width: 0, height: 0 },
+    shadowRadius: 10,
+    shadowOpacity: 0.85,
+  },
+  speedRingGreen:  { borderColor: '#00e676', shadowColor: '#00e676' },
+  speedRingYellow: { borderColor: '#ffcc00', shadowColor: '#ffcc00' },
+  speedRingRed:    { borderColor: '#ff1744', shadowColor: '#ff1744' },
+
+  // ── Speed Camera HUD ──────────────────────────────────────────────────────
+  cameraHUD: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    borderWidth: 2.5,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    elevation: 22,
+    zIndex: 30,
+    shadowColor: '#ff0000',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.95,
+    shadowRadius: 14,
+  },
+  cameraHUDIcon:  { fontSize: 30 },
+  cameraHUDDist:  { fontSize: 22, fontWeight: '900', color: '#fff', letterSpacing: -0.5 },
+  cameraHUDLabel: { fontSize: 9,  fontWeight: '800', color: 'rgba(255,180,180,0.85)', letterSpacing: 1.8 },
+
+  // ── Elevation Profile bar chart ───────────────────────────────────────────
+  elevProfileStrip: {
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  elevProfileLabel: {
+    fontSize: 9,
+    color: 'rgba(0,191,255,0.75)',
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  elevProfileBars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    height: 32,
+    paddingHorizontal: 4,
+  },
+  elevBar: {
+    flex: 1,
+    borderRadius: 2,
+    backgroundColor: 'rgba(0,191,255,0.50)',
+    minHeight: 4,
+  },
+
+  // ── Weather strip in bottom panel ─────────────────────────────────────────
+  weatherStrip: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  weatherChip: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,8,20,0.65)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.30)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  weatherChipEmoji: { fontSize: 18 },
+  weatherChipTemp:  { fontSize: 10, color: NEON, fontWeight: '700', marginTop: 1 },
+
+  // ── Weather markers on map ────────────────────────────────────────────────
+  weatherPin: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,8,20,0.82)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.45)',
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    elevation: 6,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+  },
+  weatherPinEmoji: { fontSize: 16 },
+  weatherPinTemp:  { fontSize: 9, color: NEON, fontWeight: '700' },
 });
