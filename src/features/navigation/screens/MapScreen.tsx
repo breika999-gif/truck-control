@@ -1284,15 +1284,16 @@ export default function MapScreen() {
   const stepToShow = navigating ? activeStep : null;
 
   // Style URL strategy:
-  //   'satellite' → satellite-v9          (pure aerial, no labels)
-  //   'hybrid'    → satellite-streets-v12 (aerial + road labels — default)
-  //   'vector'    → light-v11 / dark-v11  (vector map, auto day/night)
+  //   'satellite' → satellite-v9              (pure aerial, no labels)
+  //   'hybrid'    → satellite-streets-v12     (aerial + road labels)
+  //   'vector'    → mapbox://styles/mapbox/standard
+  //                 Mapbox Standard style — 3D buildings, lane markings,
+  //                 dynamic lighting, automatic day/night, 3d-lanes layer built-in.
   // Traffic VectorSource overlays work in vector + hybrid modes.
   const mapStyleURL =
     mapMode === 'satellite' ? 'mapbox://styles/mapbox/satellite-v9'          :
     mapMode === 'hybrid'    ? 'mapbox://styles/mapbox/satellite-streets-v12' :
-    lightMode               ? 'mapbox://styles/mapbox/light-v11'             :
-                              Mapbox.StyleURL.Dark;
+                              'mapbox://styles/mapbox/standard';
 
   const searchTop = insets.top + spacing.sm;
 

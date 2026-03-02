@@ -734,6 +734,14 @@ out center 10;
             deduped.append(item)
 
     deduped.sort(key=lambda x: x["distance_m"])
+
+    # Fallback website — link to truckerapps.eu map centred on the parking spot
+    for item in deduped:
+        if not item.get("website"):
+            item["website"] = (
+                f"https://truckerapps.eu/search?lat={item['lat']}&lng={item['lng']}"
+            )
+
     return deduped[:8]
 
 
@@ -1687,6 +1695,28 @@ def delete_poi(poi_id: int):
     if deleted == 0:
         return jsonify({"ok": False, "error": "POI not found"}), 404
     return jsonify({"ok": True})
+
+
+# ── Google Sync (placeholder) ──────────────────────────────────────────────────
+
+@app.route("/api/google-sync", methods=["GET", "POST"])
+def google_sync():
+    """
+    Placeholder endpoint for Google Maps / Google Drive POI sync.
+
+    Planned features:
+      GET  /api/google-sync        → list synced Google Places / starred locations
+      POST /api/google-sync        → import Google Maps saved places into truckai.db
+      POST /api/google-sync/export → push local POIs back to Google My Maps
+
+    Auth flow (upcoming): OAuth2 PKCE → google.com/maps → access_token stored per user.
+    """
+    return jsonify({
+        "ok":      True,
+        "status":  "not_implemented",
+        "message": "Google Sync endpoint — integration coming soon.",
+        "planned": ["import_saved_places", "export_pois", "sync_starred"],
+    })
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
