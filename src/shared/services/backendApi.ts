@@ -192,11 +192,11 @@ export async function checkTruckRestrictions(
   }
 }
 
-// ── GPT-4o chat ───────────────────────────────────────────────────────────────
+// ── GPT-4o chat (direct — internal/legacy) ────────────────────────────────────
 
 /**
- * Send a message to GPT-4o.
- * Response is always a MapAction — the frontend executes it on Mapbox.
+ * Send a message directly to GPT-4o map engine.
+ * Prefer sendGeminiMessage() for normal chat — this is kept for internal use.
  */
 export async function sendChatMessage(
   message: string,
@@ -207,6 +207,44 @@ export async function sendChatMessage(
     return await apiRequest<ChatResponse>('/api/chat', {
       method: 'POST',
       body: JSON.stringify({ message, history, context }),
+    });
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ── Gemini key validation ─────────────────────────────────────────────────────
+
+export async function validateGeminiKey(
+  apiKey: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    return await apiRequest<{ ok: boolean; error?: string }>('/api/gemini/validate', {
+      method: 'POST',
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ── Gemini AI command chain ────────────────────────────────────────────────────
+
+/**
+ * Send a message to Gemini (primary voice assistant).
+ * Gemini processes conversationally; if navigation intent detected,
+ * it auto-forwards to GPT-4o map engine and returns the MapAction.
+ */
+export async function sendGeminiMessage(
+  message: string,
+  history: ChatMessage[] = [],
+  context?: ChatContext,
+  userApiKey?: string,
+): Promise<ChatResponse> {
+  try {
+    return await apiRequest<ChatResponse>('/api/gemini/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, history, context, user_api_key: userApiKey }),
     });
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -273,4 +311,21 @@ export async function deletePOI(id: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ── Starred / Favorites ───────────────────────────────────────────────────────
+
+/** Save a location as a starred favourite (category='starred'). */
+export async function starPlace(
+  name: string,
+  lat: number,
+  lng: number,
+  address?: string,
+): Promise<SavedPOI | null> {
+  return savePOI({ name, lat, lng, address, category: 'starred' });
+}
+
+/** List all starred places. */
+export async function listStarred(): Promise<SavedPOI[]> {
+  return listPOIs('starred');
 }

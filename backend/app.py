@@ -43,6 +43,41 @@ _gpt4o_ready = bool(os.getenv("OPENAI_API_KEY"))
 _GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY")
 _places_ready = bool(_GOOGLE_PLACES_KEY)
 
+# ── Gemini setup ───────────────────────────────────────────────────────────────
+try:
+    from google import genai as _google_genai
+    _gemini_client = _google_genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+    _gemini_ready = bool(os.getenv("GEMINI_API_KEY"))
+except ImportError:
+    _gemini_client = None
+    _gemini_ready = False
+
+_GEMINI_SYSTEM = (
+    "Ти си Gemini — гласовият асистент на TruckAI Pro за шофьори на камиони. "
+    "Говори САМО на БЪЛГАРСКИ. Бъди кратък (1-2 изречения). "
+    "Когато потребителят иска навигация, маршрут, паркинг, горива, камери, спирка или друга "
+    "карто/логистична заявка — ЗАДЪЛЖИТЕЛНО добавяй в самия КРАЙ на отговора:\n"
+    "[NAV:{\"command\":\"<точната заявка на потребителя>\"}]\n"
+    "Пример: ако кажат 'маршрут до Пловдив' — отговори нормално, после добави:\n"
+    "[NAV:{\"command\":\"маршрут до Пловдив\"}]\n"
+    "НЕ добавяй [NAV:...] за общи разговори, метео, новини или въпроси без навигация."
+)
+
+_NAV_RE = re.compile(r'\[NAV:\s*(\{.*?\})\s*\]', re.DOTALL)
+
+
+def _extract_nav_intent(text: str):
+    """Extract navigation command from Gemini response.
+    Returns (nav_command_str | None, clean_reply_text)."""
+    m = _NAV_RE.search(text)
+    if m:
+        try:
+            data = json.loads(m.group(1))
+            return data.get("command"), text[:m.start()].strip()
+        except Exception:
+            pass
+    return None, text
+
 _MAPBOX_TOKEN = (
     "pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ"
     ".hprmbhb8EVFSfF7cqc4lkw"
@@ -1257,44 +1292,23 @@ def transcribe():
 @app.get("/api/health")
 def health():
     return jsonify({
-        "status":      "ok",
-        "gpt4o_ready": _gpt4o_ready,
-        "db":          DB_PATH,
-        "timestamp":   now_iso(),
+        "status":        "ok",
+        "gpt4o_ready":   _gpt4o_ready,
+        "gemini_ready":  _gemini_ready,
+        "db":            DB_PATH,
+        "timestamp":     now_iso(),
     })
 
 
-# ── GPT-4o chat — JSON-only map brain ─────────────────────────────────────────
+# ── GPT-4o map engine (shared internal helper) ────────────────────────────────
 
-@app.post("/api/chat")
-def chat():
-    """
-    Body: {
-      "message": "...",
-      "history": [{"role":"user"|"model","text":"..."}],
-      "context": {"lat":..., "lng":..., "driven_seconds":..., "speed_kmh":...}
-    }
-    Response: { "ok": true, "action": <MapAction>, "reply": "<text>" }
-
-    action is ALWAYS a JSON map command:
-      {"action":"route", "destination":"...", "coords":[lng,lat], "message":"..."}
-      {"action":"show_pois", "category":"truck_stop"|"fuel"|"speed_camera", "cards":[...], "message":"..."}
-      {"action":"show_routes", "destination":"...", "options":[...], "message":"..."}
-      {"action":"message", "text":"..."}
-    """
-    body = request.get_json(silent=True) or {}
-    user_msg: str = (body.get("message") or "").strip()
-    history: list = body.get("history") or []
-    context: dict = body.get("context") or {}
-
-    if not user_msg:
-        return jsonify({"ok": False, "error": "message is required"}), 400
-
+def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
+    """Core GPT-4o map brain. Returns dict — called by /api/chat and /api/gemini/chat."""
     if not _gpt4o_ready:
-        return jsonify({
+        return {
             "ok":    False,
             "error": "GPT-4o не е конфигуриран. Добави OPENAI_API_KEY в backend/.env",
-        }), 503
+        }
 
     system_txt = _SYSTEM_PROMPT
     if context:
@@ -1574,7 +1588,7 @@ def chat():
                 })
 
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return {"ok": False, "error": str(exc)}
 
     reply = (last_msg.content or "") if last_msg else ""
 
@@ -1653,7 +1667,102 @@ def chat():
     else:
         final_action = {**action, "message": display_text}
 
-    return jsonify({"ok": True, "action": final_action, "reply": display_text})
+    return {"ok": True, "action": final_action, "reply": display_text}
+
+
+# ── GPT-4o REST endpoint (thin wrapper) ───────────────────────────────────────
+
+@app.post("/api/chat")
+def chat():
+    """GPT-4o map brain — thin REST wrapper over _run_gpt4o_internal."""
+    body = request.get_json(silent=True) or {}
+    user_msg = (body.get("message") or "").strip()
+    if not user_msg:
+        return jsonify({"ok": False, "error": "message is required"}), 400
+    result = _run_gpt4o_internal(
+        user_msg, body.get("history") or [], body.get("context") or {}
+    )
+    if not result.get("ok"):
+        code = 503 if "конфигуриран" in result.get("error", "") else 500
+        return jsonify(result), code
+    return jsonify(result)
+
+
+# ── Gemini AI command chain ────────────────────────────────────────────────────
+
+@app.post("/api/gemini/chat")
+def gemini_chat():
+    """
+    Gemini as primary voice assistant — auto-forwards navigation intents to GPT-4o map engine.
+
+    Flow:
+      1. Gemini processes message conversationally (Bulgarian, short reply)
+      2. If Gemini detects navigation intent → appends [NAV:{...}] to its reply
+      3. Backend extracts NAV command → calls _run_gpt4o_internal()
+      4. Returns combined: Gemini reply text + GPT-4o MapAction
+
+    Body: {"message": "...", "history": [...], "context": {...}}
+    Response: {"ok": true, "reply": "...", "action": <MapAction | null>}
+    """
+    body = request.get_json(silent=True) or {}
+    user_msg = (body.get("message") or "").strip()
+    if not user_msg:
+        return jsonify({"ok": False, "error": "message is required"}), 400
+
+    # Use personal user API key if provided, else fall back to server key
+    user_api_key = (body.get("user_api_key") or "").strip()
+    if user_api_key:
+        try:
+            gemini_client_to_use = _google_genai.Client(api_key=user_api_key)
+        except Exception:
+            gemini_client_to_use = _gemini_client
+    elif _gemini_ready:
+        gemini_client_to_use = _gemini_client
+    else:
+        return jsonify({
+            "ok":    False,
+            "error": "GEMINI_API_KEY не е конфигуриран в backend/.env",
+        }), 503
+
+    history = body.get("history") or []
+    context = body.get("context") or {}
+
+    # Build conversation for Gemini
+    contents = []
+    for h in history[-6:]:
+        role = "user" if h.get("role") == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
+    ctx_note = ""
+    if context.get("lat"):
+        ctx_note = f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+    contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
+
+    try:
+        resp = gemini_client_to_use.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config={
+                "system_instruction": _GEMINI_SYSTEM,
+                "temperature":        0.65,
+                "max_output_tokens":  300,
+            },
+        )
+        gemini_text = (resp.text or "").strip()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Gemini грешка: {str(exc)}"}), 500
+
+    # Extract navigation intent → forward to GPT-4o map engine
+    nav_command, clean_reply = _extract_nav_intent(gemini_text)
+    action = None
+    if nav_command and _gpt4o_ready:
+        gpt_result = _run_gpt4o_internal(nav_command, history, context)
+        if gpt_result.get("ok"):
+            action = gpt_result.get("action")
+            if not clean_reply:
+                clean_reply = gpt_result.get("reply", "")
+
+    _db_save_chat(user_msg, clean_reply)
+    return jsonify({"ok": True, "reply": clean_reply, "action": action})
 
 
 # ── POI endpoints ──────────────────────────────────────────────────────────────
@@ -1747,6 +1856,42 @@ def check_truck_restrictions():
         "safe":     not critical,
         "warnings": warnings,
     })
+
+
+# ── Gemini key validation ──────────────────────────────────────────────────────
+
+@app.post("/api/gemini/validate")
+def gemini_validate():
+    """
+    Validate a personal Gemini API key.
+    Sends a minimal ping to Gemini and returns ok/error.
+
+    Body: {"api_key": "AIza..."}
+    Response: {"ok": true, "model": "gemini-2.5-flash"} | {"ok": false, "error": "..."}
+    """
+    body = request.get_json(silent=True) or {}
+    api_key = (body.get("api_key") or "").strip()
+    if not api_key:
+        return jsonify({"ok": False, "error": "api_key is required"}), 400
+
+    try:
+        test_client = _google_genai.Client(api_key=api_key)
+        resp = test_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[{"role": "user", "parts": [{"text": "ping"}]}],
+            config={"max_output_tokens": 5},
+        )
+        _ = resp.text  # trigger any auth errors
+        return jsonify({"ok": True, "model": "gemini-2.5-flash"})
+    except Exception as exc:
+        err = str(exc)
+        if "API_KEY_INVALID" in err or "INVALID_ARGUMENT" in err:
+            msg = "Невалиден Gemini API ключ. Провери на ai.google.dev."
+        elif "RESOURCE_EXHAUSTED" in err or "429" in err:
+            msg = "Gemini API квотата е изчерпана. Изчакай малко и опитай пак."
+        else:
+            msg = f"Gemini грешка: {err[:120]}"
+        return jsonify({"ok": False, "error": msg}), 400
 
 
 # ── Google Sync (placeholder) ──────────────────────────────────────────────────

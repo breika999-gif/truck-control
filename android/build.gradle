@@ -26,6 +26,8 @@ apply plugin: "com.facebook.react.rootproject"
 
 allprojects {
     repositories {
+        google()
+        mavenCentral()
         maven {
             url 'https://api.mapbox.com/downloads/v2/releases/maven'
             credentials {

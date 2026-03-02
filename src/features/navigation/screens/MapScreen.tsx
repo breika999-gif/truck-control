@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   StyleSheet,
   View,
@@ -32,6 +33,7 @@ import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import SearchBar from '../components/SearchBar';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
+import GeminiConnectModal, { GEMINI_KEY_STORAGE } from '../components/GeminiConnectModal';
 import type { GeoPlace } from '../api/geocoding';
 import {
   fetchRoute,
@@ -45,6 +47,7 @@ import {
 } from '../api/directions';
 import {
   searchNearbyPOI,
+  searchAlongRoute,
   POI_META,
   type POICategory,
   type TruckPOI,
@@ -56,13 +59,16 @@ import {
   type ParkingSpot,
 } from '../api/tilequery';
 import {
-  sendChatMessage,
+  sendGeminiMessage,
   transcribeAudio,
   savePOI,
+  starPlace,
+  listStarred,
   fetchHealth,
   checkTruckRestrictions,
   type ChatMessage,
   type ChatContext,
+  type SavedPOI,
   type TruckParking,
   type POICard,
   type RouteOption,
@@ -436,6 +442,11 @@ export default function MapScreen() {
   // Backend / GPT-4o chat
   const [backendOnline, setBackendOnline] = useState(false);
   const [chatOpen, setChatOpen]           = useState(false);
+  const [starredPOIs, setStarredPOIs]     = useState<SavedPOI[]>([]);
+  const [showStarredLayer, setShowStarredLayer] = useState(true);
+  const [geminiApiKey, setGeminiApiKey]   = useState('');
+  const [geminiConnected, setGeminiConnected] = useState(false);
+  const [showGeminiModal, setShowGeminiModal] = useState(false);
   const [chatInput, setChatInput]         = useState('');
   const [chatHistory, setChatHistory]     = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading]     = useState(false);
@@ -484,10 +495,12 @@ export default function MapScreen() {
   const [poiCategory, setPoiCategory] = useState<POICategory | null>(null);
   const [poiResults, setPoiResults]   = useState<TruckPOI[]>([]);
   const [loadingPOI, setLoadingPOI]   = useState(false);
-  // Ref mirror — lets handlePOISearch read the current category without closing
-  // over state (stale closure on rapid double-tap).
+  const [sarMode, setSarMode]         = useState(false); // true = results are SAR (along route)
+  // Ref mirrors — avoids stale closures on rapid taps.
   const poiCategoryRef = useRef<POICategory | null>(null);
+  const sarModeRef     = useRef(false);
   useEffect(() => { poiCategoryRef.current = poiCategory; }, [poiCategory]);
+  useEffect(() => { sarModeRef.current     = sarMode;     }, [sarMode]);
 
   // HOS (EU 4.5 h driving limit — Regulation 561/2006)
   const [drivingSeconds, setDrivingSeconds] = useState(0);
@@ -673,6 +686,23 @@ export default function MapScreen() {
     check();
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
+  }, []);
+
+  // ── Load starred POIs (Google Favorites layer) ────────────────────────────
+  useEffect(() => {
+    listStarred().then(places => {
+      if (isMountedRef.current) setStarredPOIs(places);
+    });
+  }, []);
+
+  // ── Load persisted Gemini API key ─────────────────────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem(GEMINI_KEY_STORAGE).then(saved => {
+      if (saved && isMountedRef.current) {
+        setGeminiApiKey(saved);
+        setGeminiConnected(true);
+      }
+    });
   }, []);
 
   // ── TTS initialisation — Bulgarian voice with auto-detection ────────────
@@ -1026,6 +1056,7 @@ export default function MapScreen() {
     setRerouting(false);
     setPoiCategory(null);
     setPoiResults([]);
+    setSarMode(false);
     setParkingResults([]);
     setFuelResults([]);
     setCameraResults([]);
@@ -1117,7 +1148,7 @@ export default function MapScreen() {
     simIndexRef.current = 0;
   }, []);
 
-  // ── AI chat (GPT-4o) ──────────────────────────────────────────────────────
+  // ── AI chat (Gemini → GPT-4o command chain) ──────────────────────────────
   // Core send — accepts explicit text so both keyboard and mic can call it.
   const sendText = useCallback(async (text: string) => {
     if (!text || chatLoading) return;
@@ -1135,12 +1166,17 @@ export default function MapScreen() {
       speed_kmh:      speed,
     };
 
-    // Limit history to last 6 messages (3 exchanges) — prevents GPT-4o context poisoning
-    const response = await sendChatMessage(text, chatHistory.slice(-6), context);
+    // Gemini handles conversation; auto-forwards navigation intents to GPT-4o
+    const response = await sendGeminiMessage(
+      text,
+      chatHistory.slice(-6),
+      context,
+      geminiApiKey || undefined,
+    );
     if (!isMountedRef.current) return;
 
     if (!response.ok) {
-      setChatHistory([...newHistory, { role: 'model', text: 'Грешка: GPT-4o не отговаря.' }]);
+      setChatHistory([...newHistory, { role: 'model', text: 'Грешка: Gemini не отговаря.' }]);
       setChatLoading(false);
       return;
     }
@@ -1266,12 +1302,13 @@ export default function MapScreen() {
   // ── POI search ────────────────────────────────────────────────────────────
 
   const handlePOISearch = useCallback(async (cat: POICategory) => {
-    // Read via ref — avoids stale closure on rapid double-tap
-    if (poiCategoryRef.current === cat) {
+    // Toggle off if same category (and not SAR mode)
+    if (!sarModeRef.current && poiCategoryRef.current === cat) {
       setPoiCategory(null);
       setPoiResults([]);
       return;
     }
+    setSarMode(false);
     setPoiCategory(cat);
     setPoiResults([]);
     const center = userCoordsRef.current ??
@@ -1286,7 +1323,38 @@ export default function MapScreen() {
     } finally {
       if (isMountedRef.current) setLoadingPOI(false);
     }
-  }, []); // stable — reads category via poiCategoryRef
+  }, []); // stable — reads via refs
+
+  // ── Search Along Route ────────────────────────────────────────────────────
+  const handleSARSearch = useCallback(async (cat: POICategory) => {
+    const currentRoute = routeRef.current;
+    if (!currentRoute) return;
+    // Toggle off if same SAR category
+    if (sarModeRef.current && poiCategoryRef.current === cat) {
+      setSarMode(false);
+      setPoiCategory(null);
+      setPoiResults([]);
+      return;
+    }
+    setSarMode(true);
+    setPoiCategory(cat);
+    setPoiResults([]);
+    setLoadingPOI(true);
+    try {
+      const results = await searchAlongRoute(
+        currentRoute.geometry.coordinates,
+        cat,
+        10,   // 10 min max detour
+        10,   // up to 10 results
+      );
+      if (!isMountedRef.current) return;
+      setPoiResults(results);
+    } catch {
+      if (isMountedRef.current) setPoiResults([]);
+    } finally {
+      if (isMountedRef.current) setLoadingPOI(false);
+    }
+  }, []); // stable — reads via refs
 
   // ── Navigate to POI ───────────────────────────────────────────────────────
 
@@ -1669,6 +1737,20 @@ export default function MapScreen() {
           </Mapbox.ShapeSource>
         )}
 
+        {/* ── Starred / Google Favourites layer ─────────────────────────── */}
+        {showStarredLayer && starredPOIs.map((poi) => (
+          <Mapbox.PointAnnotation
+            key={`starred-${poi.id}`}
+            id={`starred-${poi.id}`}
+            coordinate={[poi.lng, poi.lat]}
+            onSelected={() => navigateTo([poi.lng, poi.lat], poi.name)}
+          >
+            <View style={styles.starPin}>
+              <Text style={styles.starPinEmoji}>⭐</Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        ))}
+
         {/* Destination pin */}
         {destination && (
           <Mapbox.PointAnnotation id="dest-pin" coordinate={destination}>
@@ -1963,6 +2045,24 @@ export default function MapScreen() {
                 </View>
               </TouchableOpacity>
             )}
+
+            {/* ⭐ Star — save as Google Favourite */}
+            <TouchableOpacity
+              style={[styles.longPressBtn, styles.longPressBtnStar]}
+              activeOpacity={0.75}
+              onPress={async () => {
+                const coord = longPressCoord!;
+                setLongPressCoord(null);
+                const name = `⭐ ${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`;
+                const saved = await starPlace(name, coord[1], coord[0]);
+                if (saved) setStarredPOIs(prev => [...prev, saved]);
+              }}
+            >
+              <View style={styles.longPressBtnInner}>
+                <Text style={{ fontSize: 18 }}>⭐</Text>
+                <Text style={styles.longPressBtnTxt}>Запази</Text>
+              </View>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -2134,13 +2234,13 @@ export default function MapScreen() {
               </View>
             )}
 
-            {/* ── POI category row ── */}
+            {/* ── Proximity POI row — only when no route ── */}
             {!navigating && !route && (
               <View style={styles.optionsRow}>
                 {POI_CATEGORIES.map((cat) => (
                   <TouchableOpacity
                     key={cat}
-                    style={[styles.optionBtn, poiCategory === cat && styles.optionBtnActive]}
+                    style={[styles.optionBtn, !sarMode && poiCategory === cat && styles.optionBtnActive]}
                     onPress={() => { handlePOISearch(cat); setOptionsOpen(false); }}
                   >
                     <Text style={styles.mapBtnText}>{POI_META[cat].emoji}</Text>
@@ -2148,6 +2248,54 @@ export default function MapScreen() {
                 ))}
               </View>
             )}
+
+            {/* ── Search Along Route row — only when route is loaded ── */}
+            {route && (
+              <>
+                <View style={styles.optionsDivider} />
+                <View style={styles.optionsRow}>
+                  <Text style={styles.sarRowLabel}>SAR</Text>
+                  {POI_CATEGORIES.map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[styles.optionBtn, sarMode && poiCategory === cat && styles.sarBtnActive]}
+                      onPress={() => { handleSARSearch(cat); setOptionsOpen(false); }}
+                    >
+                      <Text style={styles.mapBtnText}>{POI_META[cat].emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+
+            {/* ── Starred / Google Favourites layer toggle ── */}
+            <View style={styles.optionsDivider} />
+            <View style={styles.optionsRow}>
+              <TouchableOpacity
+                style={[styles.optionBtn, !showStarredLayer && styles.optionBtnOff]}
+                onPress={() => setShowStarredLayer(v => !v)}
+              >
+                <Text style={styles.mapBtnText}>⭐</Text>
+              </TouchableOpacity>
+              <Text style={styles.devRowLabel}>
+                STARRED {starredPOIs.length > 0 ? `(${starredPOIs.length})` : ''}
+              </Text>
+            </View>
+
+            {/* ── Gemini personal AI key ── */}
+            <View style={styles.optionsDivider} />
+            <TouchableOpacity
+              style={styles.geminiConnectBtn}
+              onPress={() => { setShowGeminiModal(true); setOptionsOpen(false); }}
+            >
+              <Text style={styles.geminiConnectEmoji}>😉</Text>
+              <Text style={styles.geminiConnectLabel}>
+                {geminiConnected ? 'Gemini свързан ✅' : 'Свържи моето Gemini'}
+              </Text>
+              {geminiConnected && (
+                <View style={styles.geminiDot} />
+              )}
+            </TouchableOpacity>
 
             {/* ── Dev tools row — hidden inside ⚙️, only when route loaded ── */}
             {route && (
@@ -2205,9 +2353,23 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── POI results horizontal scroll ── */}
-      {!navigating && !route && (poiResults.length > 0 || loadingPOI) && (
-        <View style={[styles.poiListContainer, { top: searchTop + 110 }]}>
+      {/* ── POI / SAR results horizontal scroll ── */}
+      {!navigating && (poiResults.length > 0 || loadingPOI) && (!route || sarMode) && (
+        <View style={[styles.poiListContainer, { top: searchTop + (sarMode ? 68 : 110) }]}>
+          {/* SAR badge */}
+          {sarMode && (
+            <View style={styles.sarHeaderBadge}>
+              <Text style={styles.sarHeaderTxt}>
+                🗺️ По маршрут · до 10 мин отклонение
+              </Text>
+              <TouchableOpacity
+                onPress={() => { setSarMode(false); setPoiCategory(null); setPoiResults([]); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={[styles.sarHeaderTxt, { marginLeft: 8 }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           {loadingPOI && (
             <ActivityIndicator size="small" color={colors.accent} style={styles.poiLoading} />
           )}
@@ -2215,7 +2377,7 @@ export default function MapScreen() {
             {poiResults.map((poi) => (
               <TouchableOpacity
                 key={poi.id}
-                style={styles.poiCard}
+                style={[styles.poiCard, sarMode && styles.poiCardSAR]}
                 onPress={() => handlePOINavigate(poi)}
               >
                 <Text style={styles.poiCardEmoji}>{POI_META[poi.category].emoji}</Text>
@@ -3002,6 +3164,20 @@ export default function MapScreen() {
           </View>
         </View>
       )}
+
+      {/* ── Gemini Connect Modal ── */}
+      <GeminiConnectModal
+        visible={showGeminiModal}
+        onClose={() => setShowGeminiModal(false)}
+        onConnected={(key) => {
+          setGeminiApiKey(key);
+          setGeminiConnected(true);
+          // Reload starred POIs after connecting
+          listStarred().then(places => {
+            if (isMountedRef.current) setStarredPOIs(places);
+          });
+        }}
+      />
     </View>
   );
 }
@@ -3283,6 +3459,20 @@ const styles = StyleSheet.create({
 
   pin: { alignItems: 'center' },
   pinEmoji: { fontSize: 30 },
+  starPin: {
+    alignItems: 'center' as const,
+    backgroundColor: 'rgba(255,215,0,0.15)',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: '#ffd700',
+    padding: 3,
+    shadowColor: '#ffd700',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  starPinEmoji: { fontSize: 22 },
 
   loadingChip: {
     position: 'absolute',
@@ -3366,6 +3556,13 @@ const styles = StyleSheet.create({
   poiCardName: { ...typography.label, color: colors.text, fontWeight: '700', fontSize: 11 },
   poiCardBrand: { ...typography.label, color: colors.accent, fontSize: 10, marginTop: 1 },
   poiCardAddr: { ...typography.label, color: colors.textMuted, fontSize: 9, marginTop: 2 },
+  poiCardSAR: {
+    borderColor: '#ff8c00',
+    shadowColor: '#ff8c00',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 6,
+  },
 
   // Parking cards panel (from GPT-4o show_parking action)
   parkingPanel: {
@@ -4237,6 +4434,48 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
   },
 
+  // ── SAR (Search Along Route) ────────────────────────────────────────────────
+  sarRowLabel: {
+    color: NEON,
+    fontSize: 10,
+    fontWeight: '800' as const,
+    letterSpacing: 1.2,
+    marginRight: 6,
+    alignSelf: 'center',
+  },
+  sarBtnActive: {
+    borderColor: '#ff8c00',
+    backgroundColor: 'rgba(255,140,0,0.20)',
+    elevation: 8,
+    shadowColor: '#ff8c00',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+  },
+  sarHeaderBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    alignSelf: 'flex-start' as const,
+    backgroundColor: 'rgba(0,8,20,0.90)',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#ff8c00',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginBottom: 6,
+    marginLeft: spacing.md,
+    elevation: 10,
+    shadowColor: '#ff8c00',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 8,
+  },
+  sarHeaderTxt: {
+    color: '#ff8c00',
+    fontSize: 11,
+    fontWeight: '700' as const,
+  },
+
   // ── Waypoint map pins ─────────────────────────────────────────────────────
   waypointPin: {
     width: 36,
@@ -4333,6 +4572,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,140,0,0.18)',
     borderColor: '#ff8c00',
     shadowColor: '#ff8c00',
+  },
+  longPressBtnStar: {
+    backgroundColor: 'rgba(255,215,0,0.18)',
+    borderColor: '#ffd700',
+    shadowColor: '#ffd700',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.7,
+    shadowRadius: 6,
   },
   longPressBtnInner: {
     flexDirection: 'row',
@@ -4589,6 +4836,40 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
     alignSelf: 'center',
     marginLeft: 4,
+  },
+
+  // ── Gemini Connect button in options panel ─────────────────────────────────
+  geminiConnectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,191,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,191,255,0.45)',
+    marginVertical: 2,
+    shadowColor: NEON,
+    shadowOpacity: 0.55,
+    shadowRadius: 6,
+  },
+  geminiConnectEmoji: { fontSize: 18 },
+  geminiConnectLabel: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  geminiDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4cff91',
+    shadowColor: '#4cff91',
+    shadowOpacity: 1,
+    shadowRadius: 4,
   },
   // kept for state-highlight reuse
   simBtnActive: {
