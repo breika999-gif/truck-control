@@ -1286,14 +1286,20 @@ export default function MapScreen() {
   // Style URL strategy:
   //   'satellite' → satellite-v9              (pure aerial, no labels)
   //   'hybrid'    → satellite-streets-v12     (aerial + road labels)
-  //   'vector'    → mapbox://styles/mapbox/standard
-  //                 Mapbox Standard style — 3D buildings, lane markings,
-  //                 dynamic lighting, automatic day/night, 3d-lanes layer built-in.
+  //   'vector'    → Mapbox Standard via inline style JSON so we can pass
+  //                 lightPreset ('day' | 'night') for proper 3D night buildings.
   // Traffic VectorSource overlays work in vector + hybrid modes.
   const mapStyleURL =
     mapMode === 'satellite' ? 'mapbox://styles/mapbox/satellite-v9'          :
     mapMode === 'hybrid'    ? 'mapbox://styles/mapbox/satellite-streets-v12' :
-                              'mapbox://styles/mapbox/standard';
+    JSON.stringify({
+      version: 8,
+      imports: [{
+        id: 'basemap',
+        url: 'mapbox://styles/mapbox/standard',
+        config: { lightPreset: lightMode ? 'day' : 'night' },
+      }],
+    });
 
   const searchTop = insets.top + spacing.sm;
 
@@ -2003,6 +2009,18 @@ export default function MapScreen() {
 
         {optionsOpen && (
           <View style={styles.optionsPanel}>
+            {/* ── Truck profile row ── */}
+            <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
+              <TouchableOpacity
+                style={styles.optionBtn}
+                onPress={() => { navigation.navigate('VehicleProfile'); setOptionsOpen(false); }}
+              >
+                <Text style={styles.mapBtnText}>🚚</Text>
+              </TouchableOpacity>
+              <Text style={styles.devRowLabel}>ПРОФИЛ</Text>
+            </View>
+            <View style={styles.optionsDivider} />
+
             {/* ── Map toggles row ── */}
             <View style={styles.optionsRow}>
               <TouchableOpacity
@@ -2451,9 +2469,9 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── Bottom-left: HOS badge + speed + limit ── */}
+      {/* ── Bottom-left: HOS badge + speed + limit — anchored just above elevationChip ── */}
       {navigating && (
-        <View style={[styles.speedRow, { bottom: 240 + insets.bottom }]}>
+        <View style={[styles.speedRow, { bottom: 224 + insets.bottom }]}>
           <View>
             {/* HOS countdown badge */}
             <View style={[
@@ -2771,16 +2789,6 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── FAB: vehicle profile ── */}
-      {!route && !loadingRoute && (
-        <TouchableOpacity
-          style={[styles.fab, { bottom: insets.bottom + spacing.xl }]}
-          onPress={() => navigation.navigate('VehicleProfile')}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.fabEmoji}>🚚</Text>
-        </TouchableOpacity>
-      )}
 
 
       {/* ── Visual Debug Overlay ── */}
@@ -2813,7 +2821,7 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── Gemini FAB (bottom-left) ── */}
+      {/* ── AI Assistant FAB (bottom-right) ── */}
       <TouchableOpacity
         style={[
           styles.geminiFab,
@@ -2823,7 +2831,7 @@ export default function MapScreen() {
         onPress={() => setChatOpen(v => !v)}
         activeOpacity={0.85}
       >
-        <Text style={styles.geminiFabEmoji}>{chatOpen ? '✕' : '🤖'}</Text>
+        <Text style={styles.geminiFabEmoji}>{chatOpen ? '✕' : '😉'}</Text>
         {/* Online dot */}
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
       </TouchableOpacity>
@@ -3578,10 +3586,10 @@ const styles = StyleSheet.create({
   },
   tiltBtnTxt: { fontSize: 18 },
 
-  // Gemini chat FAB (bottom-left)
+  // AI Assistant FAB (bottom-right)
   geminiFab: {
     position: 'absolute',
-    left: spacing.md,
+    right: spacing.md,
     width: 56,
     height: 56,
     borderRadius: radius.full,
