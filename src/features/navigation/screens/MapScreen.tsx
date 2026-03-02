@@ -60,6 +60,7 @@ import {
   transcribeAudio,
   savePOI,
   fetchHealth,
+  checkTruckRestrictions,
   type ChatMessage,
   type ChatContext,
   type TruckParking,
@@ -465,6 +466,13 @@ export default function MapScreen() {
   const [businessResults, setBusinessResults] = useState<POICard[]>([]);
   const [routeOptions, setRouteOptions]     = useState<RouteOption[]>([]);
   const [routeOptDest, setRouteOptDest]     = useState<{ name: string; coords: [number, number]; waypoints?: [number, number][] } | null>(null);
+  const [selectedRouteIdx, setSelectedRouteIdx]       = useState<number | null>(null);
+  const [restrictionWarnings, setRestrictionWarnings] = useState<string[]>([]);
+  const [restrictionChecking, setRestrictionChecking] = useState(false);
+
+  // Custom origin (overrides GPS for routing)
+  const [customOriginName, setCustomOriginName] = useState<string>('');
+  const customOriginRef = useRef<[number, number] | null>(null);
   const [tachographResult, setTachographResult] = useState<{
     drivenHours: number;
     remainingHours: number;
@@ -842,11 +850,11 @@ export default function MapScreen() {
     setSpeedLimit(null);
     setDistToTurn(null);
 
-    // Unified GPS origin: always read from ref (never stale, never re-creates callback)
-    const origin: [number, number] = userCoordsRef.current ?? [
-      MAP_CENTER.longitude,
-      MAP_CENTER.latitude,
-    ];
+    // Origin priority: custom (manually set) > GPS > fallback centre
+    const origin: [number, number] =
+      customOriginRef.current ??
+      userCoordsRef.current ??
+      [MAP_CENTER.longitude, MAP_CENTER.latitude];
     setLoadingRoute(true);
     try {
       const prof = profileRef.current;
@@ -1024,6 +1032,8 @@ export default function MapScreen() {
     setBusinessResults([]);
     setRouteOptions([]);
     setRouteOptDest(null);
+    setSelectedRouteIdx(null);
+    setRestrictionWarnings([]);
     setTachographResult(null);
     setDrivingSeconds(0);
     setWaypoints([]);
@@ -1042,6 +1052,33 @@ export default function MapScreen() {
     isSimulatingRef.current = false;
     setSimulating(false);
     simIndexRef.current = 0;
+  }, []);
+
+  // ── Custom origin handler ─────────────────────────────────────────────────
+  const handleOriginChange = useCallback((place: import('../api/geocoding').GeoPlace | null) => {
+    customOriginRef.current = place?.center ?? null;
+    setCustomOriginName(place?.text ?? '');
+  }, []);
+
+  // ── Route option selection + restrictions check ───────────────────────────
+  const handleSelectRouteOption = useCallback(async (idx: number) => {
+    setSelectedRouteIdx(idx);
+    setRestrictionWarnings([]);
+    const prof = profileRef.current;
+    if (!prof) return;
+    setRestrictionChecking(true);
+    try {
+      const result = await checkTruckRestrictions({
+        weight_t:     prof.weight_t,
+        height_m:     prof.height_m,
+        width_m:      prof.width_m,
+        length_m:     prof.length_m,
+        hazmat_class: prof.hazmat_class ?? undefined,
+      });
+      setRestrictionWarnings(result.warnings);
+    } finally {
+      setRestrictionChecking(false);
+    }
   }, []);
 
   // ── Navigation Simulator ───────────────────────────────────────────────────
@@ -1705,23 +1742,33 @@ export default function MapScreen() {
           </Mapbox.PointAnnotation>
         ))}
 
-        {/* Multiple route options polylines */}
-        {mapIsLoaded && routeOptions.map((opt, i) => (
-          <Mapbox.ShapeSource
-            key={`route-opt-${i}`}
-            id={`route-opt-src-${i}`}
-            shape={{ type: 'Feature', properties: {}, geometry: opt.geometry }}
-          >
-            <Mapbox.LineLayer
-              id={`route-opt-casing-${i}`}
-              style={{ lineColor: '#000', lineWidth: 7, lineCap: 'round', lineJoin: 'round' }}
-            />
-            <Mapbox.LineLayer
-              id={`route-opt-line-${i}`}
-              style={{ lineColor: opt.color, lineWidth: 4, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
-            />
-          </Mapbox.ShapeSource>
-        ))}
+        {/* Multiple route options polylines — tappable */}
+        {mapIsLoaded && routeOptions.map((opt, i) => {
+          const isSelected = selectedRouteIdx === i;
+          const dimmed     = selectedRouteIdx !== null && !isSelected;
+          return (
+            <Mapbox.ShapeSource
+              key={`route-opt-${i}`}
+              id={`route-opt-src-${i}`}
+              shape={{ type: 'Feature', properties: {}, geometry: opt.geometry }}
+              onPress={() => handleSelectRouteOption(i)}
+            >
+              <Mapbox.LineLayer
+                id={`route-opt-casing-${i}`}
+                style={{ lineColor: '#000', lineWidth: isSelected ? 9 : 7, lineCap: 'round', lineJoin: 'round' }}
+              />
+              <Mapbox.LineLayer
+                id={`route-opt-line-${i}`}
+                style={{
+                  lineColor:   opt.color,
+                  lineWidth:   isSelected ? 6 : 4,
+                  lineOpacity: dimmed ? 0.35 : 0.9,
+                  lineCap: 'round', lineJoin: 'round',
+                }}
+              />
+            </Mapbox.ShapeSource>
+          );
+        })}
 
         {/* Waypoint markers — numbered intermediate stops */}
         {mapIsLoaded && waypoints.map((wp, i) => (
@@ -1923,7 +1970,16 @@ export default function MapScreen() {
       {/* ── Search bar (hidden during navigation) ── */}
       {!navigating && (
         <View style={[styles.searchContainer, { top: searchTop }]}>
-          <SearchBar onSelect={handleDestinationSelect} onClear={handleClear} />
+          <SearchBar
+            onSelect={handleDestinationSelect}
+            onClear={handleClear}
+            onOriginChange={handleOriginChange}
+          />
+          {customOriginName ? (
+            <View style={styles.originActiveBadge}>
+              <Text style={styles.originActiveTxt}>📍 Начало: {customOriginName}</Text>
+            </View>
+          ) : null}
         </View>
       )}
 
@@ -2437,35 +2493,75 @@ export default function MapScreen() {
           <View style={styles.routeOptionsHeader}>
             <Text style={styles.routeOptionsTitle}>🗺️ Изберете маршрут</Text>
             <TouchableOpacity
-              onPress={() => { setRouteOptions([]); setRouteOptDest(null); }}
+              onPress={() => {
+                setRouteOptions([]); setRouteOptDest(null);
+                setSelectedRouteIdx(null); setRestrictionWarnings([]);
+              }}
               style={styles.parkingDismissBtn}
             >
               <Text style={styles.parkingDismissTxt}>✕</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Cards row */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.routeOptionsContent}
           >
-            {routeOptions.map((opt, i) => (
+            {routeOptions.map((opt, i) => {
+              const isSelected = selectedRouteIdx === i;
+              const trafficEmoji =
+                opt.traffic === 'heavy' ? '🔴' : opt.traffic === 'moderate' ? '🟡' : opt.traffic === 'low' ? '🟢' : null;
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[
+                    styles.routeOptionCard,
+                    { borderColor: opt.color },
+                    isSelected && styles.routeOptionCardSelected,
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => handleSelectRouteOption(i)}
+                >
+                  <View style={[styles.routeOptionDot, { backgroundColor: opt.color }]} />
+                  <Text style={styles.routeOptionLabel} numberOfLines={3}>{opt.label}</Text>
+                  <Text style={styles.routeOptionDist}>{fmtDistance(opt.distance)}</Text>
+                  <Text style={styles.routeOptionDur}>{fmtDuration(opt.duration)}</Text>
+                  {trafficEmoji && (
+                    <Text style={styles.routeOptionTraffic}>
+                      {trafficEmoji} {opt.traffic === 'heavy' ? 'Задръстване' : opt.traffic === 'moderate' ? 'Умерено' : 'Свободно'}
+                    </Text>
+                  )}
+                  {!isSelected && <Text style={styles.routeOptionTap}>Избери →</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Restrictions + Start button */}
+          {selectedRouteIdx !== null && (
+            <View style={styles.routeSelectedSummary}>
+              {restrictionChecking && (
+                <ActivityIndicator size="small" color={NEON} style={{ alignSelf: 'center' }} />
+              )}
+              {restrictionWarnings.map((w, i) => (
+                <Text key={i} style={styles.routeRestrictionWarn}>{w}</Text>
+              ))}
               <TouchableOpacity
-                key={i}
-                style={[styles.routeOptionCard, { borderColor: opt.color }]}
-                activeOpacity={0.8}
+                style={styles.routeStartBtn}
+                activeOpacity={0.85}
                 onPress={() => {
-                  setRouteOptions([]);
                   if (routeOptDest) navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints);
+                  setRouteOptions([]);
+                  setSelectedRouteIdx(null);
+                  setRestrictionWarnings([]);
                 }}
               >
-                <View style={[styles.routeOptionDot, { backgroundColor: opt.color }]} />
-                <Text style={styles.routeOptionLabel} numberOfLines={3}>{opt.label}</Text>
-                <Text style={styles.routeOptionDist}>{fmtDistance(opt.distance)}</Text>
-                <Text style={styles.routeOptionDur}>{fmtDuration(opt.duration)}</Text>
-                <Text style={styles.routeOptionTap}>Избери →</Text>
+                <Text style={styles.routeStartBtnTxt}>🚀 Старт</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+            </View>
+          )}
         </View>
       )}
 
@@ -3894,6 +3990,61 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'right',
   },
+  routeOptionCardSelected: {
+    borderWidth: 2.5,
+    backgroundColor: 'rgba(0,191,255,0.14)',
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.75,
+    shadowRadius: 8,
+    elevation: 14,
+  },
+  routeOptionTraffic: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#00ff88',
+    marginTop: 3,
+  },
+  routeSelectedSummary: {
+    paddingTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    gap: 4,
+  },
+  routeRestrictionWarn: {
+    color: '#ffcc00',
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  routeStartBtn: {
+    backgroundColor: NEON_DIM,
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 28,
+    alignSelf: 'center',
+    marginTop: spacing.xs,
+    shadowColor: NEON,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+    elevation: 12,
+  },
+  routeStartBtnTxt: { color: NEON, fontSize: 15, fontWeight: '800' },
+
+  // Origin active badge — shown below SearchBar when custom origin is set
+  originActiveBadge: {
+    marginTop: 4,
+    backgroundColor: 'rgba(0,191,255,0.12)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  originActiveTxt: { color: NEON, fontSize: 11, fontWeight: '600' },
 
   // ── Tachograph card ──────────────────────────────────────────────────────
   tachPanel: {

@@ -29,17 +29,28 @@ const DEBOUNCE_MS = 350;
 interface Props {
   onSelect: (place: GeoPlace) => void;
   onClear?: () => void;
+  onOriginChange?: (place: GeoPlace | null) => void;
 }
 
-export default function SearchBar({ onSelect, onClear }: Props) {
+export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) {
   const [query, setQuery]           = useState('');
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading]       = useState(false);
   const [retrieving, setRetrieving] = useState(false);
 
+  // Origin search state
+  const [originQuery, setOriginQuery]       = useState('');
+  const [originSuggestions, setOriginSuggestions] = useState<SearchSuggestion[]>([]);
+  const [originLoading, setOriginLoading]   = useState(false);
+  const [originLabel, setOriginLabel]       = useState<string | null>(null); // null = GPS
+  const [originFocused, setOriginFocused]   = useState(false);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timeoutRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef    = useRef<AbortController | null>(null);
+
+  const originDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const originAbortRef    = useRef<AbortController | null>(null);
 
   // ── Fully exit search mode ─────────────────────────────────────────────────
   const exitSearch = useCallback(() => {
@@ -52,6 +63,42 @@ export default function SearchBar({ onSelect, onClear }: Props) {
     Keyboard.dismiss();
     onClear?.();
   }, [onClear]);
+
+  // ── Origin search ──────────────────────────────────────────────────────────
+  const handleOriginChange = useCallback((text: string) => {
+    setOriginQuery(text);
+    originAbortRef.current?.abort();
+    if (originDebounceRef.current) clearTimeout(originDebounceRef.current);
+
+    if (text.trim().length < 2) { setOriginSuggestions([]); setOriginLoading(false); return; }
+
+    originDebounceRef.current = setTimeout(() => {
+      const ctrl = new AbortController();
+      originAbortRef.current = ctrl;
+      setOriginLoading(true);
+      suggestPlaces(text, ctrl.signal).then(results => {
+        setOriginSuggestions(results);
+        setOriginLoading(false);
+      });
+    }, DEBOUNCE_MS);
+  }, []);
+
+  const handleOriginSelect = useCallback(async (s: SearchSuggestion) => {
+    setOriginSuggestions([]);
+    setOriginQuery(s.name);
+    setOriginFocused(false);
+    Keyboard.dismiss();
+    const place = await retrievePlace(s.mapbox_id);
+    if (place) { setOriginLabel(place.text); onOriginChange?.(place); }
+  }, [onOriginChange]);
+
+  const resetOrigin = useCallback(() => {
+    setOriginQuery('');
+    setOriginLabel(null);
+    setOriginSuggestions([]);
+    setOriginFocused(false);
+    onOriginChange?.(null);
+  }, [onOriginChange]);
 
   // ── Handle text input ──────────────────────────────────────────────────────
   const handleChange = useCallback((text: string) => {
@@ -108,6 +155,61 @@ export default function SearchBar({ onSelect, onClear }: Props) {
     // box-none: the View itself doesn't intercept taps — only its children do.
     // This lets the map remain interactive when the dropdown is NOT showing.
     <View pointerEvents="box-none">
+
+      {/* ── Origin row ── */}
+      {onOriginChange && (
+        <View pointerEvents="auto">
+          <View style={styles.originRow}>
+            <Text style={styles.originIcon}>📍</Text>
+            {originFocused ? (
+              <TextInput
+                style={styles.originInput}
+                placeholder="Начална точка..."
+                placeholderTextColor={colors.textMuted}
+                value={originQuery}
+                onChangeText={handleOriginChange}
+                onBlur={() => { if (!originQuery.trim()) setOriginFocused(false); }}
+                autoFocus
+                autoCorrect={false}
+                returnKeyType="search"
+              />
+            ) : (
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => setOriginFocused(true)}>
+                <Text style={styles.originLabel} numberOfLines={1}>
+                  {originLabel ?? 'Моето местоположение'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {originLoading && <ActivityIndicator size="small" color={NEON} style={styles.spinner} />}
+            {originLabel && (
+              <TouchableOpacity onPress={resetOrigin} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={styles.exitIcon}>✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {originSuggestions.length > 0 && (
+            <FlatList
+              style={styles.dropdown}
+              data={originSuggestions}
+              keyExtractor={(item) => item.mapbox_id}
+              keyboardShouldPersistTaps="handled"
+              scrollEnabled
+              nestedScrollEnabled
+              renderItem={({ item }) => (
+                <TouchableOpacity style={styles.resultItem} onPress={() => handleOriginSelect(item)}>
+                  <Text style={styles.resultText} numberOfLines={1}>{item.name}</Text>
+                  {(item.full_address ?? item.place_formatted) ? (
+                    <Text style={styles.resultSubtext} numberOfLines={1}>{item.full_address ?? item.place_formatted}</Text>
+                  ) : null}
+                </TouchableOpacity>
+              )}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+            />
+          )}
+          <View style={styles.originDivider} />
+        </View>
+      )}
+
       <View style={styles.inputRow} pointerEvents="auto">
         <Text style={styles.searchIcon}>🔍</Text>
 
@@ -199,7 +301,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  exitIcon: { color: NEON, fontSize: 13, fontWeight: '700' },
+  exitIcon: { color: NEON, fontSize: 13, fontWeight: '700' as const },
+
+  // Origin row
+  originRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: 'rgba(0,8,20,0.92)',
+    borderRadius: 50,
+    borderWidth: 1.5,
+    borderColor: 'rgba(0,191,255,0.45)',
+    paddingHorizontal: spacing.md,
+    height: 40,
+    marginBottom: 6,
+    elevation: 8,
+  },
+  originIcon: { fontSize: 14, marginRight: spacing.sm },
+  originLabel: { flex: 1, color: colors.textSecondary, fontSize: 13 },
+  originInput: { flex: 1, color: colors.text, fontSize: 13 },
+  originDivider: { height: 4 },
 
   dropdown: {
     backgroundColor: 'rgba(0,8,20,0.95)',

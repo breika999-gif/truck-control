@@ -65,8 +65,16 @@ export interface RouteOption {
   color: string;
   duration: number;
   distance: number;
+  traffic?: 'low' | 'moderate' | 'heavy';
   geometry: { type: 'LineString'; coordinates: [number, number][] };
   dest_coords: [number, number];
+}
+
+/** Result from /api/check-truck-restrictions */
+export interface TruckRestrictionsResult {
+  ok: boolean;
+  safe: boolean;
+  warnings: string[];
 }
 
 /** All possible map actions GPT-4o can return */
@@ -165,6 +173,22 @@ export async function fetchHealth(): Promise<BackendHealth | null> {
     return await apiRequest<BackendHealth>('/api/health');
   } catch {
     return null;
+  }
+}
+
+// ── Truck restriction checker ────────────────────────────────────────────────
+
+export async function checkTruckRestrictions(
+  profile: Partial<{ weight_t: number; height_m: number; width_m: number; length_m: number; hazmat_class: string }>,
+  coords?: [number, number][],
+): Promise<TruckRestrictionsResult> {
+  try {
+    return await apiRequest<TruckRestrictionsResult>('/api/check-truck-restrictions', {
+      method: 'POST',
+      body: JSON.stringify({ profile, coords }),
+    });
+  } catch {
+    return { ok: false, safe: true, warnings: [] };
   }
 }
 

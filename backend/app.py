@@ -594,11 +594,15 @@ def _tool_suggest_routes(
             dur_h = int(rt["duration"] / 3600)
             dur_m = int((rt["duration"] % 3600) / 60)
             dur_str = f"{dur_h}ч {dur_m}мин" if dur_h else f"{dur_m}мин"
+            # Traffic estimation: avg speed heuristic
+            avg_kmh = (rt["distance"] / rt["duration"]) * 3.6 if rt["duration"] > 0 else 80
+            traffic = "low" if avg_kmh > 70 else "moderate" if avg_kmh > 40 else "heavy"
             options.append({
                 "label": f"{labels[i]} — {dist_km}км, {dur_str}",
                 "color": colors[i],
                 "duration": round(rt["duration"]),
                 "distance": round(rt["distance"]),
+                "traffic": traffic,
                 "geometry": rt["geometry"],
                 "dest_coords": [dest_lng, dest_lat],
             })
@@ -1695,6 +1699,54 @@ def delete_poi(poi_id: int):
     if deleted == 0:
         return jsonify({"ok": False, "error": "POI not found"}), 404
     return jsonify({"ok": True})
+
+
+# ── Truck Restriction Checker ─────────────────────────────────────────────────
+
+@app.route("/api/check-truck-restrictions", methods=["POST"])
+def check_truck_restrictions():
+    """
+    Check if route is compatible with the truck profile.
+    Returns a list of human-readable warnings (Bulgarian).
+    """
+    data    = request.json or {}
+    profile = data.get("profile", {})
+
+    warnings: list = []
+
+    try:
+        weight_t = float(profile.get("weight_t") or 0)
+        height_m = float(profile.get("height_m") or 0)
+        width_m  = float(profile.get("width_m")  or 0)
+        hazmat   = str(profile.get("hazmat_class") or "none")
+    except (ValueError, TypeError):
+        return jsonify({"ok": True, "safe": True, "warnings": []})
+
+    if weight_t > 60:
+        warnings.append(f"🚫 Теглото {weight_t}т надвишава максималния лимит 60т — пътят може да е забранен")
+    elif weight_t > 44:
+        warnings.append(f"⚠️ Теглото {weight_t}т надвишава стандартното EU ограничение от 44т")
+
+    if height_m > 4.0:
+        warnings.append(f"⚠️ Височина {height_m}м — проверете мостове и тунели (стандарт 4.0м)")
+
+    if width_m > 2.55:
+        warnings.append(f"⚠️ Ширина {width_m}м — необходимо специално разрешително (>2.55м)")
+
+    if hazmat and hazmat != "none" and hazmat.isdigit():
+        cls = int(hazmat)
+        if cls in [1, 2, 3, 4, 5, 6]:
+            warnings.append(f"ℹ️ ADR клас {hazmat}: маршрутът автоматично избягва тунели")
+        elif cls == 7:
+            warnings.append(f"ℹ️ ADR клас 7 (радиоактивно): маршрутът избягва тунели и магистрали")
+
+    critical = any("🚫" in w for w in warnings)
+
+    return jsonify({
+        "ok":       True,
+        "safe":     not critical,
+        "warnings": warnings,
+    })
 
 
 # ── Google Sync (placeholder) ──────────────────────────────────────────────────
