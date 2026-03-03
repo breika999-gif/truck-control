@@ -1,5 +1,4 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   StyleSheet,
   View,
@@ -33,7 +32,8 @@ import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import SearchBar from '../components/SearchBar';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
-import GeminiConnectModal, { GEMINI_KEY_STORAGE } from '../components/GeminiConnectModal';
+import GoogleAccountModal from '../components/GoogleAccountModal';
+import { loadSavedAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 import type { GeoPlace } from '../api/geocoding';
 import {
   fetchRoute,
@@ -59,6 +59,7 @@ import {
   type ParkingSpot,
 } from '../api/tilequery';
 import {
+  sendChatMessage,
   sendGeminiMessage,
   transcribeAudio,
   savePOI,
@@ -73,6 +74,7 @@ import {
   type POICard,
   type RouteOption,
   type MapAction,
+  type AppIntent,
 } from '../../../shared/services/backendApi';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -94,6 +96,27 @@ const NAV_ARROW = require('../../../shared/assets/nav_arrow.png') as number;
 // Always pass all four fields; some native builds crash on partial/undefined.
 const NAV_PADDING: CameraPadding  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
 const ZERO_PADDING: CameraPadding = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
+
+// ── App deep-link URL builders ────────────────────────────────────────────────
+const APP_URL_MAP: Record<string, (query?: string) => string> = {
+  youtube:    q => q
+    ? `intent://www.youtube.com/results?search_query=${encodeURIComponent(q)}#Intent;scheme=https;package=com.google.android.youtube;end`
+    : `vnd.youtube://`,
+  spotify:    q => q ? `spotify://search/${encodeURIComponent(q)}` : `spotify://`,
+  whatsapp:   q => q ? `https://wa.me/?text=${encodeURIComponent(q)}` : `whatsapp://`,
+  telegram:   () => `tg://`,
+  viber:      () => `viber://`,
+  maps:       q => `geo:0,0?q=${encodeURIComponent(q ?? '')}`,
+  settings:   () => `intent:#Intent;action=android.settings.SETTINGS;end`,
+  phone:      q => q ? `tel:${q.replace(/\D/g, '')}` : `tel://`,
+  camera:     () => `intent:#Intent;action=android.media.action.IMAGE_CAPTURE;end`,
+  calculator: () => `intent:#Intent;action=android.intent.action.MAIN;package=com.google.android.calculator;end`,
+  chrome:     q => q
+    ? `intent://${q.replace(/^https?:\/\//, '')}#Intent;scheme=https;package=com.android.chrome;end`
+    : `intent://google.com#Intent;scheme=https;package=com.android.chrome;end`,
+  facebook:   () => `fb://`,
+  instagram:  () => `instagram://`,
+};
 
 const HOS_LIMIT_S = 16200; // EU 4.5 h = 16 200 s
 const POI_CATEGORIES: POICategory[] = [
@@ -439,17 +462,26 @@ export default function MapScreen() {
   // Options pocket menu
   const [optionsOpen, setOptionsOpen] = useState(false);
 
-  // Backend / GPT-4o chat
-  const [backendOnline, setBackendOnline] = useState(false);
-  const [chatOpen, setChatOpen]           = useState(false);
-  const [starredPOIs, setStarredPOIs]     = useState<SavedPOI[]>([]);
+  // Backend / AI chat
+  const [backendOnline, setBackendOnline]       = useState(false);
+  const [starredPOIs, setStarredPOIs]           = useState<SavedPOI[]>([]);
   const [showStarredLayer, setShowStarredLayer] = useState(true);
-  const [geminiApiKey, setGeminiApiKey]   = useState('');
-  const [geminiConnected, setGeminiConnected] = useState(false);
-  const [showGeminiModal, setShowGeminiModal] = useState(false);
-  const [chatInput, setChatInput]         = useState('');
-  const [chatHistory, setChatHistory]     = useState<ChatMessage[]>([]);
-  const [chatLoading, setChatLoading]     = useState(false);
+
+  // Google account (replaces manual Gemini API key)
+  const [googleUser, setGoogleUser]           = useState<GoogleAccount | null>(null);
+  const [showAccountModal, setShowAccountModal] = useState(false);
+
+  // Dual chat panels — GPT-4o (navigation) + Gemini (free chat + apps)
+  const [gptChatOpen, setGptChatOpen]         = useState(false);
+  const [geminiChatOpen, setGeminiChatOpen]   = useState(false);
+  const [gptHistory, setGptHistory]           = useState<ChatMessage[]>([]);
+  const [geminiHistory, setGeminiHistory]     = useState<ChatMessage[]>([]);
+  const [gptLoading, setGptLoading]           = useState(false);
+  const [geminiLoading, setGeminiLoading]     = useState(false);
+
+  // Shared input / mic state — routed to whichever panel is open
+  const [chatInput, setChatInput]             = useState('');
+  const chatLoading = gptChatOpen ? gptLoading : geminiLoading;
 
   // Voice / Whisper input
   const [isRecording, setIsRecording] = useState(false);
@@ -688,21 +720,16 @@ export default function MapScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Load starred POIs (Google Favorites layer) ────────────────────────────
+  // ── Load Google account + starred POIs on mount ───────────────────────────
   useEffect(() => {
-    listStarred().then(places => {
-      if (isMountedRef.current) setStarredPOIs(places);
+    loadSavedAccount().then(acc => {
+      if (!acc || !isMountedRef.current) return;
+      setGoogleUser(acc);
+      listStarred(acc.email).then(places => {
+        if (isMountedRef.current) setStarredPOIs(places);
+      });
     });
-  }, []);
-
-  // ── Load persisted Gemini API key ─────────────────────────────────────────
-  useEffect(() => {
-    AsyncStorage.getItem(GEMINI_KEY_STORAGE).then(saved => {
-      if (saved && isMountedRef.current) {
-        setGeminiApiKey(saved);
-        setGeminiConnected(true);
-      }
-    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── TTS initialisation — Bulgarian voice with auto-detection ────────────
@@ -1148,16 +1175,26 @@ export default function MapScreen() {
     simIndexRef.current = 0;
   }, []);
 
-  // ── AI chat (Gemini → GPT-4o command chain) ──────────────────────────────
-  // Core send — accepts explicit text so both keyboard and mic can call it.
-  const sendText = useCallback(async (text: string) => {
-    if (!text || chatLoading) return;
+  // ── App deep-link handler ──────────────────────────────────────────────────
+  const handleAppIntent = useCallback((intent: AppIntent) => {
+    const builder = APP_URL_MAP[intent.app.toLowerCase()];
+    const url = builder ? builder(intent.query) : null;
+    if (!url) return;
+    Linking.openURL(url).catch(() => {
+      const q = intent.query ?? intent.app;
+      Linking.openURL(`https://www.google.com/search?q=${encodeURIComponent(q)}`).catch(() => null);
+    });
+  }, []);
+
+  // ── GPT-4o direct chat (navigation brain) ────────────────────────────────
+  const sendGptText = useCallback(async (text: string) => {
+    if (!text || gptLoading) return;
 
     const userMsg: ChatMessage = { role: 'user', text };
-    const newHistory = [...chatHistory, userMsg];
-    setChatHistory(newHistory);
+    const newHistory = [...gptHistory, userMsg];
+    setGptHistory(newHistory);
     setChatInput('');
-    setChatLoading(true);
+    setGptLoading(true);
 
     const context: ChatContext = {
       lat:            userCoords?.[1],
@@ -1166,28 +1203,26 @@ export default function MapScreen() {
       speed_kmh:      speed,
     };
 
-    // Gemini handles conversation; auto-forwards navigation intents to GPT-4o
-    const response = await sendGeminiMessage(
-      text,
-      chatHistory.slice(-6),
-      context,
-      geminiApiKey || undefined,
-    );
+    const response = await sendChatMessage(text, gptHistory.slice(-6), context);
     if (!isMountedRef.current) return;
 
     if (!response.ok) {
-      setChatHistory([...newHistory, { role: 'model', text: 'Грешка: Gemini не отговаря.' }]);
-      setChatLoading(false);
+      setGptHistory([...newHistory, { role: 'model', text: 'Грешка: GPT-4o не отговаря.' }]);
+      setGptLoading(false);
       return;
     }
 
     const act = response.action;
     if (!act) {
-      setChatLoading(false);
+      const replyText = (response.reply ?? '').trim();
+      if (replyText) {
+        setGptHistory([...newHistory, { role: 'model', text: replyText }]);
+        if (!voiceMutedRef.current) { Tts.stop(); ttsSpeak(replyText); }
+      }
+      setGptLoading(false);
       return;
     }
 
-    // ── Display text in chat — show "message" from any action, "text" for message action ──
     const displayText =
       act.action === 'message'
         ? (act.text ?? '')
@@ -1196,60 +1231,40 @@ export default function MapScreen() {
     const cleanText = displayText.trim()
       ? parseBubbleText(displayText)
       : (voiceText(act) || '✓');
-    setChatHistory([...newHistory, { role: 'model', text: cleanText }]);
+    setGptHistory([...newHistory, { role: 'model', text: cleanText }]);
     const ttsMsg = voiceText(act);
     if (ttsMsg && !voiceMutedRef.current) { Tts.stop(); ttsSpeak(ttsMsg); }
 
-    // ── Execute map command ───────────────────────────────────────────────
     if (act.action === 'route') {
       navigateTo(act.coords, act.destination, act.waypoints);
     }
-
     if (act.action === 'add_waypoint') {
       addWaypoint(act.coords, act.name);
     }
-
     if (act.action === 'show_pois') {
       if (act.category === 'truck_stop') {
-        const parking: POICard[] = act.cards
-          .filter(c => c.lat && c.lng)
-          .slice(0, 5);
-        setParkingResults(parking);
-        setFuelResults([]);
-        setCameraResults([]);
-        setBusinessResults([]);
-        setTachographResult(null);
+        setParkingResults(act.cards.filter(c => c.lat && c.lng).slice(0, 5));
+        setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       }
       if (act.category === 'fuel') {
         setFuelResults(act.cards.slice(0, 4));
-        setParkingResults([]);
-        setCameraResults([]);
-        setBusinessResults([]);
-        setTachographResult(null);
+        setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       }
       if (act.category === 'speed_camera') {
         setCameraResults(act.cards);
-        setParkingResults([]);
-        setFuelResults([]);
-        setBusinessResults([]);
+        setParkingResults([]); setFuelResults([]); setBusinessResults([]);
       }
       if (act.category === 'business') {
         setBusinessResults(act.cards.filter(c => c.lat && c.lng).slice(0, 6));
-        setParkingResults([]);
-        setFuelResults([]);
-        setCameraResults([]);
-        setTachographResult(null);
+        setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
       }
     }
-
     if (act.action === 'show_routes') {
       setRouteOptions(act.options);
       setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
-      // Clear any previous route so options polylines show
       setRoute(null);
       setDestination(null);
     }
-
     if (act.action === 'tachograph') {
       setTachographResult({
         drivenHours:    act.driven_hours,
@@ -1259,17 +1274,61 @@ export default function MapScreen() {
       });
     }
 
-    setChatLoading(false);
-  }, [chatHistory, chatLoading, userCoords, drivingSeconds, speed, navigateTo, addWaypoint]);
+    setGptLoading(false);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, navigateTo, addWaypoint]);
+
+  // ── Gemini free chat (apps + general knowledge, no navigation) ────────────
+  const sendGeminiText = useCallback(async (text: string) => {
+    if (!text || geminiLoading) return;
+
+    const userMsg: ChatMessage = { role: 'user', text };
+    const newHistory = [...geminiHistory, userMsg];
+    setGeminiHistory(newHistory);
+    setChatInput('');
+    setGeminiLoading(true);
+
+    const context: ChatContext = {
+      lat:            userCoords?.[1],
+      lng:            userCoords?.[0],
+      driven_seconds: drivingSeconds,
+      speed_kmh:      speed,
+    };
+
+    const response = await sendGeminiMessage(text, geminiHistory.slice(-6), context);
+    if (!isMountedRef.current) return;
+
+    if (!response.ok) {
+      setGeminiHistory([...newHistory, { role: 'model', text: 'Грешка: Gemini не отговаря.' }]);
+      setGeminiLoading(false);
+      return;
+    }
+
+    const replyText = (response.reply ?? '').trim();
+    if (replyText) {
+      setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
+      if (!voiceMutedRef.current) { Tts.stop(); ttsSpeak(replyText); }
+    }
+    if (response.app_intent) { handleAppIntent(response.app_intent); }
+
+    setGeminiLoading(false);
+  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, handleAppIntent]);
+
+  // Unified send — routes to whichever panel is open
+  const sendText = useCallback((text: string) => {
+    if (gptChatOpen) return sendGptText(text);
+    return sendGeminiText(text);
+  }, [gptChatOpen, sendGptText, sendGeminiText]);
 
   const handleChat = useCallback(() => {
-    sendText(chatInput.trim());
-  }, [chatInput, sendText]);
+    const t = chatInput.trim();
+    if (gptChatOpen) sendGptText(t);
+    else sendGeminiText(t);
+  }, [chatInput, gptChatOpen, sendGptText, sendGeminiText]);
 
   // ── Whisper voice input (push-to-talk → Whisper API) ────────────────────
 
   const handleMicStart = useCallback(async () => {
-    if (chatLoading || micLoading || isRecording) return;
+    if (gptLoading || geminiLoading || micLoading || isRecording) return;
     const granted = await PermissionsAndroid.request(
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
       {
@@ -1284,7 +1343,7 @@ export default function MapScreen() {
       await AudioRecorderPlayer.startRecorder();
       setIsRecording(true);
     } catch { /* silent fail — mic busy or unavailable */ }
-  }, [chatLoading, micLoading, isRecording]);
+  }, [gptLoading, geminiLoading, micLoading, isRecording]);
 
   const handleMicStop = useCallback(async () => {
     if (!isRecording) return;
@@ -1391,8 +1450,9 @@ export default function MapScreen() {
   // Style URL strategy:
   //   'satellite' → satellite-v9              (pure aerial, no labels)
   //   'hybrid'    → satellite-streets-v12     (aerial + road labels)
-  //   'vector'    → Mapbox Standard via inline style JSON so we can pass
-  //                 lightPreset ('day' | 'night') for proper 3D night buildings.
+  //   'vector'    → Mapbox Standard — built-in 3D landmarks + real lighting presets.
+  //                 lightPreset: 'day' | 'night' based on system time.
+  //                 showPointOfInterestLabels: true enables 3D landmark icons.
   // Traffic VectorSource overlays work in vector + hybrid modes.
   const mapStyleURL =
     mapMode === 'satellite' ? 'mapbox://styles/mapbox/satellite-v9'          :
@@ -1402,7 +1462,13 @@ export default function MapScreen() {
       imports: [{
         id: 'basemap',
         url: 'mapbox://styles/mapbox/standard',
-        config: { lightPreset: lightMode ? 'day' : 'night' },
+        config: {
+          lightPreset: lightMode ? 'day' : 'night',
+          showPointOfInterestLabels: true,
+          showTransitLabels: true,
+          showPlaceLabels: true,
+          showRoadLabels: true,
+        },
       }],
     });
 
@@ -1699,39 +1765,17 @@ export default function MapScreen() {
           </Mapbox.VectorSource>
         )}
 
-        {/* 3D Buildings — fill-extrusion from composite source.
-            Rendered BEFORE route lines so polylines stay on top.
-            Vector-only: satellite-streets has its own built-in 3D buildings. */}
-        {mapIsLoaded && mapMode === 'vector' && (
-          <Mapbox.FillExtrusionLayer
-            id="3d-buildings"
-            sourceID="composite"
-            sourceLayerID="building"
-            minZoomLevel={14}
-            style={{
-              // Light: light warm-grey with AO shadows — readable on white basemap
-              // Dark: deep navy matching the dark basemap
-              fillExtrusionColor: lightMode ? '#c8d8e8' : '#1a3a5f',
-              fillExtrusionHeight: ['get', 'height'] as unknown as number,
-              fillExtrusionBase: ['get', 'min_height'] as unknown as number,
-              // Higher opacity in light mode so buildings are clearly distinct
-              fillExtrusionOpacity: lightMode ? 0.90 : 0.65,
-              // Ambient occlusion gives crisp shading in light-v11
-              fillExtrusionAmbientOcclusionIntensity: lightMode ? 0.35 : 0.15,
-              fillExtrusionAmbientOcclusionRadius: lightMode ? 3.0 : 2.0,
-            }}
-          />
-        )}
-
-        {/* Route polyline — only after style loaded */}
+        {/* Route polyline — slot="top" ensures it renders above Standard's 3D buildings/landmarks */}
         {mapIsLoaded && routeShape && (
           <Mapbox.ShapeSource id="route-source" shape={routeShape}>
             <Mapbox.LineLayer
               id="route-casing"
+              slot="top"
               style={{ lineColor: '#0a0a1a', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }}
             />
             <Mapbox.LineLayer
               id="route-line"
+              slot="top"
               style={{ lineColor: NEON, lineWidth: 5, lineCap: 'round', lineJoin: 'round' }}
             />
           </Mapbox.ShapeSource>
@@ -2054,7 +2098,7 @@ export default function MapScreen() {
                 const coord = longPressCoord!;
                 setLongPressCoord(null);
                 const name = `⭐ ${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`;
-                const saved = await starPlace(name, coord[1], coord[0]);
+                const saved = await starPlace(name, coord[1], coord[0], undefined, googleUser?.email);
                 if (saved) setStarredPOIs(prev => [...prev, saved]);
               }}
             >
@@ -2282,17 +2326,17 @@ export default function MapScreen() {
               </Text>
             </View>
 
-            {/* ── Gemini personal AI key ── */}
+            {/* ── Google акаунт (per-user starred POIs) ── */}
             <View style={styles.optionsDivider} />
             <TouchableOpacity
               style={styles.geminiConnectBtn}
-              onPress={() => { setShowGeminiModal(true); setOptionsOpen(false); }}
+              onPress={() => { setShowAccountModal(true); setOptionsOpen(false); }}
             >
-              <Text style={styles.geminiConnectEmoji}>😉</Text>
+              <Text style={styles.geminiConnectEmoji}>G</Text>
               <Text style={styles.geminiConnectLabel}>
-                {geminiConnected ? 'Gemini свързан ✅' : 'Свържи моето Gemini'}
+                {googleUser ? googleUser.email : 'Свържи Google акаунт'}
               </Text>
-              {geminiConnected && (
+              {googleUser && (
                 <View style={styles.geminiDot} />
               )}
             </TouchableOpacity>
@@ -3079,36 +3123,54 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── AI Assistant FAB (bottom-right) ── */}
+      {/* ── Gemini FAB (bottom-left) — free chat + apps ── */}
+      <TouchableOpacity
+        style={[
+          styles.geminiLeftFab,
+          { bottom: insets.bottom + spacing.xl },
+          backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+        ]}
+        onPress={() => {
+          setGeminiChatOpen(v => !v);
+          setGptChatOpen(false);
+        }}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+      </TouchableOpacity>
+
+      {/* ── GPT-4o FAB (bottom-right) — navigation ── */}
       <TouchableOpacity
         style={[
           styles.geminiFab,
           { bottom: insets.bottom + spacing.xl },
           backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
         ]}
-        onPress={() => setChatOpen(v => !v)}
+        onPress={() => {
+          setGptChatOpen(v => !v);
+          setGeminiChatOpen(false);
+        }}
         activeOpacity={0.85}
       >
-        <Text style={styles.geminiFabEmoji}>{chatOpen ? '✕' : '😉'}</Text>
+        <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
         {/* Online dot */}
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
       </TouchableOpacity>
 
-      {/* ── Gemini chat panel ── */}
-      {chatOpen && (
+      {/* ── GPT-4o chat panel (navigation) ── */}
+      {gptChatOpen && (
         <View style={[styles.chatPanel, { bottom: insets.bottom + 80 + kbHeight }]}>
-          {/* Messages */}
           <ScrollView
             style={styles.chatMessages}
             contentContainerStyle={styles.chatMessagesContent}
             keyboardShouldPersistTaps="handled"
           >
-            {chatHistory.length === 0 && (
+            {gptHistory.length === 0 && (
               <Text style={styles.chatPlaceholder}>
-                Питай TruckAI за маршрути, паркинг, камери...
+                Навигация: маршрути, паркинг, горива, камери...
               </Text>
             )}
-            {chatHistory.map((msg, i) => (
+            {gptHistory.map((msg, i) => (
               <View
                 key={i}
                 style={[
@@ -3119,23 +3181,20 @@ export default function MapScreen() {
                 <Text style={styles.chatBubbleText}>{parseBubbleText(msg.text)}</Text>
               </View>
             ))}
-            {chatLoading && (
+            {gptLoading && (
               <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
             )}
           </ScrollView>
-
-          {/* Input row */}
           <View style={styles.chatInputRow}>
-            {/* Mic button — press and hold to record */}
             <TouchableOpacity
               style={[
                 styles.chatMicBtn,
                 isRecording && styles.chatMicBtnRecording,
-                (chatLoading || micLoading) && { opacity: 0.4 },
+                (gptLoading || micLoading) && { opacity: 0.4 },
               ]}
               onPressIn={handleMicStart}
               onPressOut={handleMicStop}
-              disabled={chatLoading || micLoading}
+              disabled={gptLoading || micLoading}
               activeOpacity={0.75}
             >
               {micLoading
@@ -3143,7 +3202,6 @@ export default function MapScreen() {
                 : <Text style={styles.chatMicText}>{isRecording ? '⏹' : '🎙'}</Text>
               }
             </TouchableOpacity>
-
             <TextInput
               style={styles.chatInput}
               value={chatInput}
@@ -3152,12 +3210,12 @@ export default function MapScreen() {
               placeholderTextColor={colors.textMuted}
               onSubmitEditing={handleChat}
               returnKeyType="send"
-              editable={!chatLoading}
+              editable={!gptLoading}
             />
             <TouchableOpacity
-              style={[styles.chatSendBtn, chatLoading && { opacity: 0.4 }]}
+              style={[styles.chatSendBtn, gptLoading && { opacity: 0.4 }]}
               onPress={handleChat}
-              disabled={chatLoading}
+              disabled={gptLoading}
             >
               <Text style={styles.chatSendText}>➤</Text>
             </TouchableOpacity>
@@ -3165,17 +3223,86 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* ── Gemini Connect Modal ── */}
-      <GeminiConnectModal
-        visible={showGeminiModal}
-        onClose={() => setShowGeminiModal(false)}
-        onConnected={(key) => {
-          setGeminiApiKey(key);
-          setGeminiConnected(true);
-          // Reload starred POIs after connecting
-          listStarred().then(places => {
+      {/* ── Gemini chat panel (free chat + apps) ── */}
+      {geminiChatOpen && (
+        <View style={[styles.chatPanel, { bottom: insets.bottom + 80 + kbHeight }]}>
+          <ScrollView
+            style={styles.chatMessages}
+            contentContainerStyle={styles.chatMessagesContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {geminiHistory.length === 0 && (
+              <Text style={styles.chatPlaceholder}>
+                Питай Gemini или кажи 'отвори YouTube'...
+              </Text>
+            )}
+            {geminiHistory.map((msg, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.chatBubble,
+                  msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
+                ]}
+              >
+                <Text style={styles.chatBubbleText}>{parseBubbleText(msg.text)}</Text>
+              </View>
+            ))}
+            {geminiLoading && (
+              <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
+            )}
+          </ScrollView>
+          <View style={styles.chatInputRow}>
+            <TouchableOpacity
+              style={[
+                styles.chatMicBtn,
+                isRecording && styles.chatMicBtnRecording,
+                (geminiLoading || micLoading) && { opacity: 0.4 },
+              ]}
+              onPressIn={handleMicStart}
+              onPressOut={handleMicStop}
+              disabled={geminiLoading || micLoading}
+              activeOpacity={0.75}
+            >
+              {micLoading
+                ? <ActivityIndicator size="small" color="#ff3b3b" />
+                : <Text style={styles.chatMicText}>{isRecording ? '⏹' : '🎙'}</Text>
+              }
+            </TouchableOpacity>
+            <TextInput
+              style={styles.chatInput}
+              value={chatInput}
+              onChangeText={setChatInput}
+              placeholder="Питай Gemini..."
+              placeholderTextColor={colors.textMuted}
+              onSubmitEditing={handleChat}
+              returnKeyType="send"
+              editable={!geminiLoading}
+            />
+            <TouchableOpacity
+              style={[styles.chatSendBtn, geminiLoading && { opacity: 0.4 }]}
+              onPress={handleChat}
+              disabled={geminiLoading}
+            >
+              <Text style={styles.chatSendText}>➤</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── Google Account Modal ── */}
+      <GoogleAccountModal
+        visible={showAccountModal}
+        onClose={() => setShowAccountModal(false)}
+        currentAccount={googleUser}
+        onConnected={(email) => {
+          setGoogleUser({ email });
+          listStarred(email).then(places => {
             if (isMountedRef.current) setStarredPOIs(places);
           });
+        }}
+        onDisconnected={() => {
+          setGoogleUser(null);
+          setStarredPOIs([]);
         }}
       />
     </View>
@@ -3879,7 +4006,20 @@ const styles = StyleSheet.create({
   },
   tiltBtnTxt: { fontSize: 18 },
 
-  // AI Assistant FAB (bottom-right)
+  // Gemini FAB (bottom-left) — free chat + apps
+  geminiLeftFab: {
+    position: 'absolute',
+    left: spacing.md,
+    width: 56,
+    height: 56,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
+    borderWidth: 1.5,
+  },
+
+  // GPT-4o FAB (bottom-right) — navigation
   geminiFab: {
     position: 'absolute',
     right: spacing.md,

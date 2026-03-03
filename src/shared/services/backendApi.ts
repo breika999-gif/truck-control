@@ -86,11 +86,17 @@ export type MapAction =
   | { action: 'add_waypoint'; name: string; coords: [number, number]; message?: string }
   | { action: 'message'; text: string };
 
+export interface AppIntent {
+  app: string;    // 'youtube' | 'spotify' | 'whatsapp' | 'maps' | ...
+  query?: string; // optional search/navigation query
+}
+
 export interface ChatResponse {
   ok: boolean;
   error?: string;
   action?: MapAction;
   reply?: string; // kept for backward compat — use action.message instead
+  app_intent?: AppIntent;
 }
 
 export interface ChatContext {
@@ -128,6 +134,7 @@ export interface POIPayload {
   lat: number;
   lng: number;
   notes?: string;
+  user_email?: string;
 }
 
 export interface BackendHealth {
@@ -280,9 +287,12 @@ export async function transcribeAudio(audioPath: string): Promise<string | null>
 
 // ── POI CRUD ─────────────────────────────────────────────────────────────────
 
-export async function listPOIs(category?: string): Promise<SavedPOI[]> {
+export async function listPOIs(category?: string, userEmail?: string): Promise<SavedPOI[]> {
   try {
-    const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+    const params = new URLSearchParams();
+    if (category)   params.set('category',   category);
+    if (userEmail)  params.set('user_email', userEmail);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(`/api/pois${qs}`);
     return res.ok ? res.pois : [];
   } catch {
@@ -321,11 +331,12 @@ export async function starPlace(
   lat: number,
   lng: number,
   address?: string,
+  userEmail?: string,
 ): Promise<SavedPOI | null> {
-  return savePOI({ name, lat, lng, address, category: 'starred' });
+  return savePOI({ name, lat, lng, address, category: 'starred', user_email: userEmail });
 }
 
-/** List all starred places. */
-export async function listStarred(): Promise<SavedPOI[]> {
-  return listPOIs('starred');
+/** List all starred places, optionally filtered by Google account email. */
+export async function listStarred(userEmail?: string): Promise<SavedPOI[]> {
+  return listPOIs('starred', userEmail);
 }

@@ -124,4 +124,7 @@ dependencies {
     // unless another app is already requesting location.
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
+    // Google AccountPicker — system Google account chooser dialog
+    implementation("com.google.android.gms:play-services-auth:21.0.0")
+
 }

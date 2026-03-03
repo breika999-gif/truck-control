@@ -53,27 +53,50 @@ except ImportError:
     _gemini_ready = False
 
 _GEMINI_SYSTEM = (
-    "Ти си Gemini — гласовият асистент на TruckAI Pro за шофьори на камиони. "
-    "Говори САМО на БЪЛГАРСКИ. Бъди кратък (1-2 изречения). "
-    "Когато потребителят иска навигация, маршрут, паркинг, горива, камери, спирка или друга "
-    "карто/логистична заявка — ЗАДЪЛЖИТЕЛНО добавяй в самия КРАЙ на отговора:\n"
-    "[NAV:{\"command\":\"<точната заявка на потребителя>\"}]\n"
-    "Пример: ако кажат 'маршрут до Пловдив' — отговори нормално, после добави:\n"
-    "[NAV:{\"command\":\"маршрут до Пловдив\"}]\n"
-    "НЕ добавяй [NAV:...] за общи разговори, метео, новини или въпроси без навигация."
+    "Ти си Gemini — свободният AI асистент на TruckAI Pro.\n"
+    "ПРАВИЛА:\n"
+    "1. Говори САМО на БЪЛГАРСКИ. Бъди МНОГО КРАТЪК (1-2 изречения).\n"
+    "2. Помагаш с общи въпроси, метео, музика, отваряне на приложения.\n"
+    "3. За навигация потребителят има отделен GPT-4o навигационен асистент.\n\n"
+    "📱 ПРИЛОЖЕНИЯ — добавяй в КРАЯ при нужда:\n"
+    "[APP:{\"app\":\"<app_name>\",\"query\":\"<опционална заявка>\"}]\n"
+    "app_name: youtube, spotify, whatsapp, telegram, viber, maps, "
+    "settings, phone, camera, calculator, chrome, facebook, instagram\n\n"
+    "ПРИМЕРИ:\n"
+    "- 'отвори YouTube' → [APP:{\"app\":\"youtube\"}]\n"
+    "- 'пусни Spotify' → [APP:{\"app\":\"spotify\"}]\n"
+    "- 'какво е времето?' → отговори директно\n"
 )
 
 _NAV_RE = re.compile(r'\[NAV:\s*(\{.*?\})\s*\]', re.DOTALL)
+_APP_RE = re.compile(r'\[APP:\s*(\{.*?\})\s*\]', re.DOTALL)
 
 
 def _extract_nav_intent(text: str):
     """Extract navigation command from Gemini response.
-    Returns (nav_command_str | None, clean_reply_text)."""
+    Returns (nav_command_str | None, clean_reply_text).
+    Removes only the [NAV:...] tag; preserves surrounding text."""
     m = _NAV_RE.search(text)
     if m:
         try:
             data = json.loads(m.group(1))
-            return data.get("command"), text[:m.start()].strip()
+            clean = (text[:m.start()] + text[m.end():]).strip()
+            return data.get("command"), clean
+        except Exception:
+            pass
+    return None, text
+
+
+def _extract_app_intent(text: str):
+    """Extract app-launch intent from Gemini response.
+    Returns (app_dict | None, clean_text).
+    Removes only the [APP:...] tag; preserves surrounding text."""
+    m = _APP_RE.search(text)
+    if m:
+        try:
+            data = json.loads(m.group(1))
+            clean = (text[:m.start()] + text[m.end():]).strip()
+            return data, clean
         except Exception:
             pass
     return None, text
@@ -448,6 +471,13 @@ def init_db() -> None:
             """
         )
         conn.commit()
+    # Migration: add user_email column if it does not exist yet
+    try:
+        with get_db() as db:
+            db.execute("ALTER TABLE pois ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
+            db.commit()
+    except Exception:
+        pass  # column already exists
 
 
 init_db()
@@ -468,6 +498,7 @@ def row_to_poi(row: sqlite3.Row) -> dict:
         "lat":        row["lat"],
         "lng":        row["lng"],
         "notes":      row["notes"],
+        "user_email": row["user_email"] if "user_email" in row.keys() else "",
         "created_at": row["created_at"],
     }
 
@@ -1753,6 +1784,7 @@ def gemini_chat():
 
     # Extract navigation intent → forward to GPT-4o map engine
     nav_command, clean_reply = _extract_nav_intent(gemini_text)
+    app_intent, clean_reply = _extract_app_intent(clean_reply)
     action = None
     if nav_command and _gpt4o_ready:
         gpt_result = _run_gpt4o_internal(nav_command, history, context)
@@ -1762,18 +1794,28 @@ def gemini_chat():
                 clean_reply = gpt_result.get("reply", "")
 
     _db_save_chat(user_msg, clean_reply)
-    return jsonify({"ok": True, "reply": clean_reply, "action": action})
+    return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent})
 
 
 # ── POI endpoints ──────────────────────────────────────────────────────────────
 
 @app.get("/api/pois")
 def list_pois():
-    category = request.args.get("category")
+    category   = request.args.get("category")
+    user_email = request.args.get("user_email", "")
     with get_db() as conn:
-        if category:
+        if category and user_email:
+            rows = conn.execute(
+                "SELECT * FROM pois WHERE category = ? AND user_email = ? ORDER BY created_at DESC",
+                (category, user_email),
+            ).fetchall()
+        elif category:
             rows = conn.execute(
                 "SELECT * FROM pois WHERE category = ? ORDER BY created_at DESC", (category,)
+            ).fetchall()
+        elif user_email:
+            rows = conn.execute(
+                "SELECT * FROM pois WHERE user_email = ? ORDER BY created_at DESC", (user_email,)
             ).fetchall()
         else:
             rows = conn.execute("SELECT * FROM pois ORDER BY created_at DESC").fetchall()
@@ -1783,16 +1825,18 @@ def list_pois():
 @app.post("/api/pois")
 def save_poi():
     body = request.get_json(silent=True) or {}
-    name = (body.get("name") or "").strip()
-    lat  = body.get("lat")
-    lng  = body.get("lng")
+    name       = (body.get("name") or "").strip()
+    lat        = body.get("lat")
+    lng        = body.get("lng")
+    user_email = body.get("user_email", "")
     if not name or lat is None or lng is None:
         return jsonify({"ok": False, "error": "name, lat, lng are required"}), 400
     with get_db() as conn:
         cur = conn.execute(
-            "INSERT INTO pois (name, address, category, lat, lng, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (name, body.get("address", ""), body.get("category", "custom"),
-             float(lat), float(lng), body.get("notes", ""), now_iso()),
+             float(lat), float(lng), body.get("notes", ""), user_email, now_iso()),
         )
         conn.commit()
         poi_id = cur.lastrowid
