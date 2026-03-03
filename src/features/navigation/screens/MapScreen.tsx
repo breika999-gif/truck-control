@@ -67,6 +67,8 @@ import {
   listStarred,
   fetchHealth,
   checkTruckRestrictions,
+  saveTachoSession,
+  fetchTachoSummary,
   type ChatMessage,
   type ChatContext,
   type SavedPOI,
@@ -75,6 +77,7 @@ import {
   type RouteOption,
   type MapAction,
   type AppIntent,
+  type TachoSummary,
 } from '../../../shared/services/backendApi';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -534,8 +537,10 @@ export default function MapScreen() {
   useEffect(() => { poiCategoryRef.current = poiCategory; }, [poiCategory]);
   useEffect(() => { sarModeRef.current     = sarMode;     }, [sarMode]);
 
-  // HOS (EU 4.5 h driving limit — Regulation 561/2006)
+  // HOS (EU Regulation 561/2006) — continuous + daily + weekly tracking
   const [drivingSeconds, setDrivingSeconds] = useState(0);
+  const [tachoSummary, setTachoSummary]     = useState<TachoSummary | null>(null);
+  const sessionStartRef = useRef<string | null>(null); // ISO start time of current session
   const isDrivingRef   = useRef(false);
   const hosIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hosWarningRef  = useRef({ w30: false, w10: false, limit: false });
@@ -720,13 +725,20 @@ export default function MapScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Load Google account + starred POIs on mount ───────────────────────────
+  // ── Load Google account + starred POIs + tacho summary on mount ──────────
   useEffect(() => {
     loadSavedAccount().then(acc => {
-      if (!acc || !isMountedRef.current) return;
-      setGoogleUser(acc);
-      listStarred(acc.email).then(places => {
-        if (isMountedRef.current) setStarredPOIs(places);
+      if (!isMountedRef.current) return;
+      const email = acc?.email;
+      if (acc) {
+        setGoogleUser(acc);
+        listStarred(email).then(places => {
+          if (isMountedRef.current) setStarredPOIs(places);
+        });
+      }
+      // Load today's tacho summary regardless of account
+      fetchTachoSummary(email).then(s => {
+        if (s && isMountedRef.current) setTachoSummary(s);
       });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -864,6 +876,9 @@ export default function MapScreen() {
   const lastCameraWarnRef     = useRef<number>(0);
   const laneGlowAnim          = useRef(new Animated.Value(0)).current;
   const laneGlowLoop          = useRef<Animated.CompositeAnimation | null>(null);
+  // Stable refs for callbacks that close over mutable state (avoids stale closure)
+  const drivingSecondsRef = useRef(0);
+  const googleUserRef     = useRef<typeof googleUser>(null);
 
   useEffect(() => { navigatingRef.current      = navigating;       }, [navigating]);
   useEffect(() => { routeRef.current           = route;            }, [route]);
@@ -873,6 +888,8 @@ export default function MapScreen() {
   useEffect(() => { departAtRef.current        = departAt;         }, [departAt]);
   useEffect(() => { waypointsRef.current       = waypoints;        }, [waypoints]);
   useEffect(() => { waypointNamesRef.current   = waypointNames;    }, [waypointNames]);
+  useEffect(() => { drivingSecondsRef.current  = drivingSeconds;   }, [drivingSeconds]);
+  useEffect(() => { googleUserRef.current      = googleUser;       }, [googleUser]);
 
   // Keep profileRef in sync
   useEffect(() => { profileRef.current = profile; }, [profile]);
@@ -1042,8 +1059,9 @@ export default function MapScreen() {
     lastSpokenStepRef.current = -1; // allow first step to be spoken
     setCurrentStep(0);
     setDistToTurn(null);
-    // Reset HOS for this trip
+    // Reset continuous HOS counter; record session start time
     setDrivingSeconds(0);
+    sessionStartRef.current = new Date().toISOString();
     hosWarningRef.current = { w30: false, w10: false, limit: false };
     // Set navigating LAST — StableCamera's followUserLocation will activate and
     // smoothly move the camera to the user. Do NOT call flyTo() here: it conflicts
@@ -1066,6 +1084,20 @@ export default function MapScreen() {
     setRerouting(false);
     hosWarningRef.current = { w30: false, w10: false, limit: false };
     lastRerouteRef.current = 0;
+    // Persist session to backend (only if meaningfully long, ≥ 60 s)
+    const driven = drivingSecondsRef.current;
+    if (driven >= 60 && sessionStartRef.current) {
+      const payload = {
+        user_email:     googleUserRef.current?.email,
+        driven_seconds: driven,
+        start_time:     sessionStartRef.current,
+        end_time:       new Date().toISOString(),
+      };
+      saveTachoSession(payload).then(s => {
+        if (s && isMountedRef.current) setTachoSummary(s);
+      });
+      sessionStartRef.current = null;
+    }
   }, []);
 
   // ── Clear route & stop navigation entirely (✕ close button) ───────────────
@@ -2599,7 +2631,8 @@ export default function MapScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.tachCard}>
-            <Text style={styles.tachRow}>🚛 Изкарани: {tachographResult.drivenHours.toFixed(1)} ч</Text>
+            {/* Continuous session */}
+            <Text style={styles.tachRow}>🚛 Непрекъснато: {tachographResult.drivenHours.toFixed(1)} ч</Text>
             <Text style={[styles.tachRow, tachographResult.breakNeeded && styles.tachWarn]}>
               {tachographResult.breakNeeded
                 ? '🛑 СТОП — задължителна 45 мин почивка!'
@@ -2607,6 +2640,26 @@ export default function MapScreen() {
                 ? `⚠️ Само ${Math.round(tachographResult.remainingHours * 60)} мин до почивка!`
                 : `✅ Остават ${tachographResult.remainingHours.toFixed(1)} ч`}
             </Text>
+            {/* Daily / Weekly from persistent DB */}
+            {tachoSummary && (
+              <>
+                <View style={styles.tachDivider} />
+                <Text style={styles.tachRow}>
+                  📅 Днес: {tachoSummary.daily_driven_h.toFixed(1)} / {tachoSummary.daily_limit_h} ч
+                  {'  '}
+                  <Text style={tachoSummary.daily_remaining_h < 1 ? styles.tachWarn : styles.tachOk}>
+                    (остават {tachoSummary.daily_remaining_h.toFixed(1)} ч)
+                  </Text>
+                </Text>
+                <Text style={styles.tachRow}>
+                  📆 Седмично: {tachoSummary.weekly_driven_h.toFixed(1)} / {tachoSummary.weekly_limit_h} ч
+                  {'  '}
+                  <Text style={tachoSummary.weekly_remaining_h < 4 ? styles.tachWarn : styles.tachOk}>
+                    (остават {tachoSummary.weekly_remaining_h.toFixed(1)} ч)
+                  </Text>
+                </Text>
+              </>
+            )}
             {tachographResult.suggestedStop && (
               <TouchableOpacity
                 style={styles.tachStopBtn}
@@ -4414,6 +4467,15 @@ const styles = StyleSheet.create({
   tachWarn: {
     color: '#ff3b3b',
     fontWeight: '800',
+  },
+  tachOk: {
+    color: '#4cff91',
+    fontWeight: '700',
+  },
+  tachDivider: {
+    height: 1,
+    backgroundColor: 'rgba(0,191,255,0.2)',
+    marginVertical: 6,
   },
   tachStopBtn: {
     marginTop: spacing.xs,

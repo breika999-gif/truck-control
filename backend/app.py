@@ -57,14 +57,17 @@ _GEMINI_SYSTEM = (
     "ПРАВИЛА:\n"
     "1. Говори САМО на БЪЛГАРСКИ. Бъди МНОГО КРАТЪК (1-2 изречения).\n"
     "2. Помагаш с общи въпроси, метео, музика, отваряне на приложения.\n"
-    "3. За навигация потребителят има отделен GPT-4o навигационен асистент.\n\n"
+    "3. За навигация потребителят има отделен GPT-4o навигационен асистент.\n"
+    "4. ТАХОГРАФ — в контекста получаваш [ТАХОГРАФ: днес Xч/9ч, остават Yч; "
+    "седмично Xч/56ч, остават Yч]. Отговаряй директно на въпроси за тахографа "
+    "от тези данни (EU Regulation 561/2006).\n\n"
     "📱 ПРИЛОЖЕНИЯ — добавяй в КРАЯ при нужда:\n"
     "[APP:{\"app\":\"<app_name>\",\"query\":\"<опционална заявка>\"}]\n"
     "app_name: youtube, spotify, whatsapp, telegram, viber, maps, "
     "settings, phone, camera, calculator, chrome, facebook, instagram\n\n"
     "ПРИМЕРИ:\n"
     "- 'отвори YouTube' → [APP:{\"app\":\"youtube\"}]\n"
-    "- 'пусни Spotify' → [APP:{\"app\":\"spotify\"}]\n"
+    "- 'колко часа имам днес?' → прочети от [ТАХОГРАФ:...] и отговори\n"
     "- 'какво е времето?' → отговори директно\n"
 )
 
@@ -467,6 +470,18 @@ def init_db() -> None:
                 role       TEXT NOT NULL,
                 message    TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tacho_sessions (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email     TEXT    NOT NULL DEFAULT '',
+                date           TEXT    NOT NULL,
+                start_time     TEXT    NOT NULL,
+                end_time       TEXT,
+                driven_seconds INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -997,17 +1012,63 @@ out 15;
         return {"cameras": [], "nearest_m": -1, "error": str(exc)}
 
 
-def _tool_calculate_hos_reach(driven_seconds: int, speed_kmh: float) -> dict:
-    HOS_LIMIT = 16200
-    remaining_s = max(0, HOS_LIMIT - driven_seconds)
+def _tacho_summary(user_email: str = "") -> dict:
+    """Daily + weekly driven seconds from persistent tacho_sessions table (EU 561/2006)."""
+    from datetime import date, timedelta
+    today = date.today().isoformat()
+    today_dt = date.today()
+    week_start = (today_dt - timedelta(days=today_dt.weekday())).isoformat()
+
+    DAILY_LIMIT  = 32400   # 9 h standard (10 h × 2/week not tracked yet)
+    WEEKLY_LIMIT = 201600  # 56 h
+
+    with get_db() as db:
+        row = db.execute(
+            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions WHERE date=? AND user_email=?",
+            (today, user_email),
+        ).fetchone()
+        daily_s = int(row["t"]) if row else 0
+
+        row = db.execute(
+            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions WHERE date>=? AND user_email=?",
+            (week_start, user_email),
+        ).fetchone()
+        weekly_s = int(row["t"]) if row else 0
+
+    return {
+        "daily_driven_s":    daily_s,
+        "daily_remaining_s": max(0, DAILY_LIMIT  - daily_s),
+        "daily_driven_h":    round(daily_s  / 3600, 2),
+        "daily_remaining_h": round(max(0, DAILY_LIMIT  - daily_s)  / 3600, 2),
+        "weekly_driven_s":    weekly_s,
+        "weekly_remaining_s": max(0, WEEKLY_LIMIT - weekly_s),
+        "weekly_driven_h":    round(weekly_s / 3600, 2),
+        "weekly_remaining_h": round(max(0, WEEKLY_LIMIT - weekly_s) / 3600, 2),
+        "daily_limit_h":  9,
+        "weekly_limit_h": 56,
+        "date":       today,
+        "week_start": week_start,
+    }
+
+
+def _tool_calculate_hos_reach(driven_seconds: int, speed_kmh: float, user_email: str = "") -> dict:
+    """Calculates remaining range using the MORE RESTRICTIVE of continuous (4.5 h) or daily (9 h) limit."""
+    CONTINUOUS_LIMIT = 16200  # 4.5 h — mandatory 45-min break
+    remaining_continuous = max(0, CONTINUOUS_LIMIT - driven_seconds)
+
+    summary = _tacho_summary(user_email)
+    remaining_s = min(remaining_continuous, summary["daily_remaining_s"])
+
     remaining_km = (remaining_s / 3600) * speed_kmh
     h, rest = divmod(int(remaining_s), 3600)
     m = rest // 60
     return {
-        "remaining_h":   h,
-        "remaining_min": m,
-        "remaining_km":  round(remaining_km),
-        "break_needed":  remaining_s <= 0,
+        "remaining_h":        h,
+        "remaining_min":      m,
+        "remaining_km":       round(remaining_km),
+        "break_needed":       remaining_s <= 0,
+        "daily_remaining_h":  summary["daily_remaining_h"],
+        "weekly_remaining_h": summary["weekly_remaining_h"],
     }
 
 
@@ -1765,7 +1826,16 @@ def gemini_chat():
         contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
     ctx_note = ""
     if context.get("lat"):
-        ctx_note = f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+        ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+    # Inject live tachograph state so Gemini can answer HOS questions
+    user_email = (body.get("user_email") or "").strip()
+    tacho = _tacho_summary(user_email)
+    ctx_note += (
+        f" [ТАХОГРАФ: днес {tacho['daily_driven_h']}ч/{tacho['daily_limit_h']}ч,"
+        f" остават {tacho['daily_remaining_h']}ч;"
+        f" седмично {tacho['weekly_driven_h']}ч/{tacho['weekly_limit_h']}ч,"
+        f" остават {tacho['weekly_remaining_h']}ч]"
+    )
     contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
     try:
@@ -1936,6 +2006,49 @@ def gemini_validate():
         else:
             msg = f"Gemini грешка: {err[:120]}"
         return jsonify({"ok": False, "error": msg}), 400
+
+
+# ── TachoEngine v2 — EU HOS 561/2006 ──────────────────────────────────────────
+
+@app.post("/api/tacho/session")
+def tacho_save_session():
+    """Save a completed driving session.
+
+    Body: { user_email, driven_seconds, date (YYYY-MM-DD), start_time, end_time }
+    Returns summary for the day + week.
+    """
+    body = request.get_json(silent=True) or {}
+    user_email     = (body.get("user_email") or "").strip()
+    driven_seconds = int(body.get("driven_seconds") or 0)
+    if driven_seconds <= 0:
+        return jsonify({"ok": False, "error": "driven_seconds must be > 0"}), 400
+
+    from datetime import date
+    today      = date.today().isoformat()
+    date_str   = (body.get("date") or today).strip()
+    start_time = (body.get("start_time") or now_iso()).strip()
+    end_time   = (body.get("end_time")   or now_iso()).strip()
+
+    with get_db() as db:
+        db.execute(
+            "INSERT INTO tacho_sessions (user_email, date, start_time, end_time, driven_seconds)"
+            " VALUES (?,?,?,?,?)",
+            (user_email, date_str, start_time, end_time, driven_seconds),
+        )
+        db.commit()
+
+    summary = _tacho_summary(user_email)
+    return jsonify({"ok": True, **summary})
+
+
+@app.get("/api/tacho/summary")
+def tacho_get_summary():
+    """Return daily + weekly summary for a user.
+
+    Query param: user_email (optional)
+    """
+    user_email = (request.args.get("user_email") or "").strip()
+    return jsonify({"ok": True, **_tacho_summary(user_email)})
 
 
 # ── Google Sync (placeholder) ──────────────────────────────────────────────────

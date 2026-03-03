@@ -144,6 +144,31 @@ export interface BackendHealth {
   timestamp: string;
 }
 
+/** EU HOS 561/2006 daily + weekly summary */
+export interface TachoSummary {
+  ok: boolean;
+  daily_driven_s: number;
+  daily_remaining_s: number;
+  daily_driven_h: number;
+  daily_remaining_h: number;
+  weekly_driven_s: number;
+  weekly_remaining_s: number;
+  weekly_driven_h: number;
+  weekly_remaining_h: number;
+  daily_limit_h: number;
+  weekly_limit_h: number;
+  date: string;
+  week_start: string;
+}
+
+export interface TachoSessionPayload {
+  user_email?: string;
+  driven_seconds: number;
+  date?: string;       // YYYY-MM-DD, defaults to today on backend
+  start_time?: string; // ISO string
+  end_time?: string;   // ISO string
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 20_000; // GPT-4o + tool calls can take up to ~15s
@@ -339,4 +364,30 @@ export async function starPlace(
 /** List all starred places, optionally filtered by Google account email. */
 export async function listStarred(userEmail?: string): Promise<SavedPOI[]> {
   return listPOIs('starred', userEmail);
+}
+
+// ── TachoEngine v2 — EU HOS 561/2006 ─────────────────────────────────────────
+
+/** Save a completed driving session and get updated daily/weekly summary. */
+export async function saveTachoSession(session: TachoSessionPayload): Promise<TachoSummary | null> {
+  try {
+    const res = await apiRequest<TachoSummary>('/api/tacho/session', {
+      method: 'POST',
+      body: JSON.stringify(session),
+    });
+    return res.ok ? res : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch daily + weekly HOS summary for a user. */
+export async function fetchTachoSummary(userEmail?: string): Promise<TachoSummary | null> {
+  try {
+    const params = userEmail ? `?user_email=${encodeURIComponent(userEmail)}` : '';
+    const res = await apiRequest<TachoSummary>(`/api/tacho/summary${params}`);
+    return res.ok ? res : null;
+  } catch {
+    return null;
+  }
 }
