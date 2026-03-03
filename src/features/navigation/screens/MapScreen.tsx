@@ -424,7 +424,6 @@ export default function MapScreen() {
   const [showRestrictions, setShowRestrictions] = useState(false);
   const [showContours, setShowContours]         = useState(false);
   const [showIncidents, setShowIncidents]       = useState(false);
-  const [incidentFeatures, setIncidentFeatures] = useState<GeoJSON.FeatureCollection | null>(null);
 
   // Auto-switch every minute; resets mapIsLoaded so the new style URL loads (vector only).
   // Skip reset during active navigation — interrupting followUserLocation causes camera jump.
@@ -449,31 +448,8 @@ export default function MapScreen() {
     return () => clearInterval(timer);
   }, [showTraffic, mapMode]);
 
-  // Incidents fetch — Mapbox Incidents API, refresh every 5 min when enabled
-  useEffect(() => {
-    if (!showIncidents) { setIncidentFeatures(null); return; }
-
-    const load = async () => {
-      const coords = userCoordsRef.current;
-      const [lng, lat] = coords ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
-      const d = 0.35; // ~35 km bbox
-      const bbox = `${lng - d},${lat - d},${lng + d},${lat + d}`;
-      try {
-        const res = await fetch(
-          `https://api.mapbox.com/traffic/v1/incidents/${bbox}?access_token=${MAPBOX_PUBLIC_TOKEN}&language=bg`,
-        );
-        const json = (await res.json()) as GeoJSON.FeatureCollection;
-        if (json.type === 'FeatureCollection' && isMountedRef.current) {
-          setIncidentFeatures(json);
-        }
-      } catch { /* network error — keep stale data */ }
-    };
-
-    load();
-    const timer = setInterval(load, 5 * 60_000);
-    return () => clearInterval(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showIncidents]);
+  // Incidents are rendered via mapbox-traffic-v1 tileset (sourceLayerID="incidents")
+  // No fetch needed — Mapbox streams incident tiles directly when the VectorSource is mounted.
 
   // Auto-enable tunnel/restriction overlay when truck height > 3.5 m (typical bridge clearance)
   useEffect(() => {
@@ -1528,6 +1504,7 @@ export default function MapScreen() {
           showTransitLabels: true,
           showPlaceLabels: true,
           showRoadLabels: true,
+          showTrafficIncidents: showIncidents,
         },
       }],
     });
@@ -1756,64 +1733,49 @@ export default function MapScreen() {
           </Mapbox.VectorSource>
         )}
 
-        {/* ── Incidents overlay (Mapbox Incidents API — points + lines) ──
-            Renders on top of traffic. CircleLayer for point incidents,
-            LineLayer for road-closure incidents. */}
-        {mapIsLoaded && showIncidents && incidentFeatures && (
-          <Mapbox.ShapeSource
-            id="incidents-src"
-            shape={incidentFeatures}
+        {/* ── Incidents overlay (mapbox-traffic-v1 tileset, "incidents" layer) ──
+            Uses the same VectorSource as traffic but targets the "incidents"
+            sourceLayer. Mapbox streams incident tiles automatically.
+            Works in all map modes except pure satellite. */}
+        {mapIsLoaded && showIncidents && mapMode !== 'satellite' && (
+          <Mapbox.VectorSource
+            id="incidents-v1"
+            url="mapbox://mapbox.mapbox-traffic-v1"
           >
-            {/* Point incidents — accidents, construction, etc. */}
+            {/* Incident points — accidents, construction, closures */}
             <Mapbox.CircleLayer
-              id="incidents-point"
+              id="incident-points"
+              sourceLayerID="incidents"
               filter={['==', ['geometry-type'], 'Point'] as unknown as [string, ...unknown[]]}
+              minZoomLevel={9}
               style={{
                 circleRadius: 9,
                 circleColor: [
-                  'match', ['get', 'severity'],
-                  'major',    '#e74c3c',
-                  'moderate', '#f39c12',
-                  'minor',    '#f1c40f',
-                  /* default */ '#95a5a6',
+                  'match', ['get', 'class'],
+                  'accident',     '#e74c3c',
+                  'construction', '#f39c12',
+                  'restriction',  '#9b59b6',
+                  '#e74c3c',
                 ] as unknown as string,
                 circleOpacity: 0.92,
                 circleStrokeWidth: 2,
                 circleStrokeColor: '#ffffff',
               }}
             />
-            {/* Text label on top of each incident circle */}
-            <Mapbox.SymbolLayer
-              id="incidents-label"
-              filter={['==', ['geometry-type'], 'Point'] as unknown as [string, ...unknown[]]}
-              minZoomLevel={10}
-              style={{
-                textField: ['case',
-                  ['==', ['get', 'icon_category'], 'accident'],      '💥',
-                  ['==', ['get', 'icon_category'], 'construction'],   '🚧',
-                  ['==', ['get', 'icon_category'], 'lane_restriction'],'⚠️',
-                  ['==', ['get', 'icon_category'], 'closure'],        '🚫',
-                  ['==', ['get', 'icon_category'], 'congestion'],     '🚗',
-                  '⚠️',
-                ] as unknown as string,
-                textSize: 12,
-                textAnchor: 'center',
-                textAllowOverlap: true,
-              }}
-            />
-            {/* Line incidents — road closures */}
+            {/* Incident lines — road closures / construction zones */}
             <Mapbox.LineLayer
-              id="incidents-line"
+              id="incident-lines"
+              sourceLayerID="incidents"
               filter={['==', ['geometry-type'], 'LineString'] as unknown as [string, ...unknown[]]}
               style={{
                 lineColor: '#e74c3c',
-                lineWidth: 5,
-                lineOpacity: 0.88,
+                lineWidth: 4,
+                lineOpacity: 0.85,
                 lineCap: 'round',
                 lineDasharray: [2, 2],
               }}
             />
-          </Mapbox.ShapeSource>
+          </Mapbox.VectorSource>
         )}
 
         {/* ── Streets-v8: Truck restrictions + lane visualization ──
