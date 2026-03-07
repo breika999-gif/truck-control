@@ -16,6 +16,7 @@
  */
 
 import { BACKEND_URL } from '../constants/config';
+import type { VehicleProfile } from '../types/vehicle';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,16 @@ export interface POICard {
   needs_confirm?: boolean;
 }
 
+/** One traffic alert bubble on the route map */
+export interface TrafficAlert {
+  lat: number;
+  lng: number;
+  delay_min: number;
+  severity: 'moderate' | 'heavy' | 'severe';
+  label?: string;    // pre-formatted Bulgarian label, e.g. "🛑 +12 мин"
+  length_km?: number; // estimated congestion zone length in km
+}
+
 /** One route option inside show_routes action */
 export interface RouteOption {
   label: string;
@@ -68,6 +79,10 @@ export interface RouteOption {
   traffic?: 'low' | 'moderate' | 'heavy';
   geometry: { type: 'LineString'; coordinates: [number, number][] };
   dest_coords: [number, number];
+  /** Per-segment FeatureCollection tagged with congestion level for line coloring */
+  congestion_geojson?: { type: 'FeatureCollection'; features: unknown[] };
+  /** Clusters of heavy/severe congestion with delay estimates */
+  traffic_alerts?: TrafficAlert[];
 }
 
 /** Result from /api/check-truck-restrictions */
@@ -104,6 +119,7 @@ export interface ChatContext {
   lng?: number;
   driven_seconds?: number;
   speed_kmh?: number;
+  profile?: VehicleProfile;
 }
 
 /** Backward-compat alias — parking cards now use POICard */
@@ -155,10 +171,38 @@ export interface TachoSummary {
   weekly_remaining_s: number;
   weekly_driven_h: number;
   weekly_remaining_h: number;
+  /** Continuous driving since last 45-min break (EU 4.5 h rule) */
+  continuous_driven_s: number;
+  continuous_remaining_s: number;
+  continuous_driven_h: number;
+  continuous_remaining_h: number;
+  /** true when continuous_driven_s >= 16200 (4.5 h) */
+  break_needed: boolean;
+  /** Weekly daily-rest counts (EU 561/2006: max 3 reduced rests per week) */
+  weekly_regular_rests: number;    // gaps >= 11 h
+  weekly_reduced_rests: number;    // gaps >= 9 h but < 11 h
+  reduced_rests_remaining: number; // how many 9h rests are still allowed (3 - used)
+  /** Bi-weekly totals (EU 561/2006: max 90 h in any two consecutive weeks) */
+  biweekly_driven_h: number;
+  biweekly_remaining_h: number;
+  biweekly_limit_h: number;
   daily_limit_h: number;
   weekly_limit_h: number;
   date: string;
   week_start: string;
+}
+
+export interface ProximityAlerts {
+  ok: boolean;
+  cameras: POICard[];
+  overtaking: Array<{
+    lat: number;
+    lng: number;
+    type: 'overtaking_no';
+    hgv_only: boolean;
+    distance_m: number;
+  }>;
+  nearest_camera_m: number;
 }
 
 export interface TachoSessionPayload {
@@ -167,11 +211,12 @@ export interface TachoSessionPayload {
   date?: string;       // YYYY-MM-DD, defaults to today on backend
   start_time?: string; // ISO string
   end_time?: string;   // ISO string
+  type?: 'driving' | 'break' | 'rest'; // defaults to 'driving' on backend
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const TIMEOUT_MS = 20_000; // GPT-4o + tool calls can take up to ~15s
+const TIMEOUT_MS = 45_000; // Gemini 2.5-flash + optional GPT-4o nav forward can take 20-35s
 
 async function apiRequest<T>(
   path: string,
@@ -272,11 +317,18 @@ export async function sendGeminiMessage(
   history: ChatMessage[] = [],
   context?: ChatContext,
   userApiKey?: string,
+  userEmail?: string,
 ): Promise<ChatResponse> {
   try {
     return await apiRequest<ChatResponse>('/api/gemini/chat', {
       method: 'POST',
-      body: JSON.stringify({ message, history, context, user_api_key: userApiKey }),
+      body: JSON.stringify({
+        message,
+        history,
+        context,
+        user_api_key: userApiKey,
+        user_email: userEmail,
+      }),
     });
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -285,6 +337,39 @@ export async function sendGeminiMessage(
 
 // ── Whisper transcription ─────────────────────────────────────────────────────
 
+/** Transcribe audio via Gemini 2.0 Flash multimodal (preferred — no Whisper quota needed). */
+export async function transcribeGemini(
+  audioPath: string,
+  userApiKey?: string,
+  userEmail?: string,
+): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const form = new FormData();
+    form.append('audio', {
+      uri:  audioPath.startsWith('file://') ? audioPath : `file://${audioPath}`,
+      type: 'audio/m4a',
+      name: 'recording.m4a',
+    } as unknown as Blob);
+    if (userApiKey) form.append('user_api_key', userApiKey);
+    if (userEmail)  form.append('user_email',  userEmail);
+
+    const res = await fetch(`${BACKEND_URL}/api/gemini/transcribe`, {
+      method: 'POST',
+      body:   form,
+      signal: controller.signal,
+    });
+    const data = (await res.json()) as { ok: boolean; text?: string; error?: string };
+    return data.ok && data.text ? data.text : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Transcribe audio via OpenAI Whisper (fallback). */
 export async function transcribeAudio(audioPath: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
@@ -389,5 +474,46 @@ export async function fetchTachoSummary(userEmail?: string): Promise<TachoSummar
     return res.ok ? res : null;
   } catch {
     return null;
+  }
+}
+
+/** Fetch speed cameras and overtaking restrictions within a radius (default 10km). */
+export async function fetchProximityAlerts(
+  lat: number,
+  lng: number,
+  radius_m: number = 10000,
+): Promise<ProximityAlerts | null> {
+  try {
+    const res = await apiRequest<ProximityAlerts>(
+      `/api/proximity-alerts?lat=${lat}&lng=${lng}&radius_m=${radius_m}`,
+    );
+    return res.ok ? res : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch per-user cloud settings (e.g. synced Gemini key). */
+export async function fetchUserSettings(userEmail: string): Promise<{ gemini_api_key?: string } | null> {
+  try {
+    const res = await apiRequest<{ ok: boolean; gemini_api_key?: string }>(
+      `/api/user/settings?user_email=${encodeURIComponent(userEmail)}`,
+    );
+    return res.ok ? res : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Save per-user cloud settings. */
+export async function saveUserSettings(userEmail: string, geminiKey: string): Promise<boolean> {
+  try {
+    const res = await apiRequest<{ ok: boolean }>('/api/user/settings', {
+      method: 'POST',
+      body: JSON.stringify({ user_email: userEmail, gemini_api_key: geminiKey }),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }

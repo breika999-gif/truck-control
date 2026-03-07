@@ -37,6 +37,8 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading]       = useState(false);
   const [retrieving, setRetrieving] = useState(false);
+  // Show origin row only when user is actively searching or has custom origin
+  const [destFocused, setDestFocused] = useState(false);
 
   // Origin search state
   const [originQuery, setOriginQuery]       = useState('');
@@ -60,6 +62,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     setQuery('');
     setSuggestions([]);
     setLoading(false);
+    setDestFocused(false);
     Keyboard.dismiss();
     onClear?.();
   }, [onClear]);
@@ -156,8 +159,8 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     // This lets the map remain interactive when the dropdown is NOT showing.
     <View pointerEvents="box-none">
 
-      {/* ── Origin row ── */}
-      {onOriginChange && (
+      {/* ── Origin row — shown only when searching or custom origin set ── */}
+      {onOriginChange && (destFocused || query.length > 0 || originLabel !== null) && (
         <View pointerEvents="auto">
           <View style={styles.originRow}>
             <Text style={styles.originIcon}>📍</Text>
@@ -219,6 +222,8 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
           placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={handleChange}
+          onFocus={() => setDestFocused(true)}
+          onBlur={() => setDestFocused(false)}
           returnKeyType="search"
           autoCorrect={false}
         />

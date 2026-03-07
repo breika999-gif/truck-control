@@ -1,4 +1,4 @@
-import { MAPBOX_PUBLIC_TOKEN } from '../../../shared/constants/config';
+import { TOMTOM_API_KEY, MAP_CENTER } from '../../../shared/constants/config';
 
 export interface GeoPlace {
   id: string;
@@ -7,115 +7,101 @@ export interface GeoPlace {
   text: string;
 }
 
-/** Suggestion returned by Search Box API v1 /suggest (no coordinates yet). */
 export interface SearchSuggestion {
   name: string;
-  mapbox_id: string;
+  mapbox_id: string;          // reused as opaque ID — stores TomTom result id
   place_formatted?: string;
   full_address?: string;
   feature_type?: string;
 }
 
-// ── Session token ─────────────────────────────────────────────────────────────
-// Search Box API requires a stable UUID per user session for billing.
-// Rotates after each successful /retrieve call (billing boundary reset).
+// ── In-memory cache: TomTom result id → coordinates + display text ───────────
+// Populated during suggestPlaces so retrievePlace can resolve without extra call.
+const _ttCache = new Map<string, { lat: number; lon: number; name: string; address: string }>();
 
-function uuid4(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
-
-let _session = uuid4();
-
-// ── Search Box API v1 ─────────────────────────────────────────────────────────
+// ── TomTom Fuzzy Search ───────────────────────────────────────────────────────
 
 /**
- * Step 1 — suggest.
- * Returns suggestions WITHOUT coordinates (fast, low-latency).
- * Pass an AbortSignal to cancel on timeout or new keystrokes.
+ * Step 1 — suggest via TomTom Fuzzy Search.
+ * Returns suggestions with coordinates already cached in _ttCache.
+ * Biased toward Bulgaria by default; uses user position when available.
  */
 export async function suggestPlaces(
   query: string,
   signal?: AbortSignal,
+  proximity?: [number, number],  // [lng, lat]
 ): Promise<SearchSuggestion[]> {
   if (query.trim().length < 2) return [];
+
+  const encoded = encodeURIComponent(query.trim());
   const params = new URLSearchParams({
-    q: query.trim(),
-    access_token: MAPBOX_PUBLIC_TOKEN,
-    session_token: _session,
-    language: 'bg,en',
-    limit: '6',
-    types: 'place,address,poi,street,locality',
+    key:       TOMTOM_API_KEY,
+    language:  'bg-BG',
+    limit:     '6',
+    typeahead: 'true',
   });
+
+  // Bias toward current position or Bulgaria center
+  const [biasLng, biasLat] = proximity ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
+  params.set('lat', String(biasLat));
+  params.set('lon', String(biasLng));
+  params.set('radius', '500000');   // 500 km — covers Bulgaria + neighbors
+
   try {
     const res = await fetch(
-      `https://api.mapbox.com/search/searchbox/v1/suggest?${params}`,
+      `https://api.tomtom.com/search/2/search/${encoded}.json?${params}`,
       { signal },
     );
     if (!res.ok) return [];
-    const data = await res.json() as { suggestions?: SearchSuggestion[] };
-    return data.suggestions ?? [];
+    const data = await res.json();
+
+    return (data.results ?? []).map((r: any) => {
+      const id      = r.id ?? String(Math.random());
+      const name    = (r.poi?.name ?? r.address?.freeformAddress ?? '').trim();
+      const address = r.address?.freeformAddress ?? '';
+      // Cache coordinates for retrievePlace
+      if (r.position?.lat != null) {
+        _ttCache.set(id, { lat: r.position.lat, lon: r.position.lon, name, address });
+      }
+      return {
+        name,
+        mapbox_id:       id,
+        place_formatted: address,
+        full_address:    address,
+        feature_type:    r.type,
+      } as SearchSuggestion;
+    });
   } catch {
     return [];
   }
 }
 
 /**
- * Step 2 — retrieve.
- * Returns a GeoPlace with exact coordinates for the selected suggestion.
- * Rotates the session token after a successful call.
+ * Step 2 — retrieve exact coordinates for a suggestion.
+ * Resolves from _ttCache (populated in suggestPlaces) — no extra network call.
  */
 export async function retrievePlace(mapbox_id: string): Promise<GeoPlace | null> {
-  const params = new URLSearchParams({
-    access_token: MAPBOX_PUBLIC_TOKEN,
-    session_token: _session,
-  });
-  try {
-    const res = await fetch(
-      `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(mapbox_id)}?${params}`,
-    );
-    if (!res.ok) return null;
-    const data = await res.json() as {
-      features?: {
-        geometry: { coordinates: number[] };
-        properties: { name?: string; full_address?: string; place_formatted?: string };
-      }[];
-    };
-    const f = data.features?.[0];
-    if (!f) return null;
-    _session = uuid4(); // rotate after billing boundary
+  const cached = _ttCache.get(mapbox_id);
+  if (cached) {
     return {
-      id: mapbox_id,
-      text: f.properties.name ?? '',
-      place_name: f.properties.full_address ?? f.properties.place_formatted ?? '',
-      center: [f.geometry.coordinates[0], f.geometry.coordinates[1]],
+      id:         mapbox_id,
+      text:       cached.name,
+      place_name: cached.address,
+      center:     [cached.lon, cached.lat],
     };
-  } catch {
-    return null;
   }
+
+  // No cache hit and TomTom has no retrieve-by-id endpoint — cannot recover.
+  return null;
 }
 
-// ── Legacy v5 export (kept for type compatibility) ───────────────────────────
-// searchPlaces is no longer used by SearchBar but kept so any import doesn't break.
-
+// ── Legacy export (kept for type compatibility) ───────────────────────────────
 export async function searchPlaces(query: string): Promise<GeoPlace[]> {
-  if (query.trim().length < 2) return [];
-  const q = encodeURIComponent(query.trim());
-  const params = new URLSearchParams({
-    access_token: MAPBOX_PUBLIC_TOKEN,
-    autocomplete: 'true',
-    language: 'bg,en',
-    limit: '5',
-    types: 'address,place,poi,locality,region',
-  });
-  try {
-    const res = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${q}.json?${params}`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.features as GeoPlace[]) ?? [];
-  } catch {
-    return [];
+  const suggestions = await suggestPlaces(query);
+  const places: GeoPlace[] = [];
+  for (const s of suggestions) {
+    const p = await retrievePlace(s.mapbox_id);
+    if (p) places.push(p);
   }
+  return places;
 }

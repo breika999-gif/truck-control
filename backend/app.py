@@ -43,6 +43,9 @@ _gpt4o_ready = bool(os.getenv("OPENAI_API_KEY"))
 _GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY")
 _places_ready = bool(_GOOGLE_PLACES_KEY)
 
+_TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
+_tomtom_ready = bool(_TOMTOM_KEY)
+
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 try:
     from google import genai as _google_genai
@@ -53,22 +56,36 @@ except ImportError:
     _gemini_ready = False
 
 _GEMINI_SYSTEM = (
-    "Ти си Gemini — свободният AI асистент на TruckAI Pro.\n"
+    "Ти си Gemini — AI асистент на TruckAI Pro за КАМИОНИ.\n"
+    "Говориш с КАМИОНЕН ШОФЬОР по време на шофиране.\n\n"
     "ПРАВИЛА:\n"
-    "1. Говори САМО на БЪЛГАРСКИ. Бъди МНОГО КРАТЪК (1-2 изречения).\n"
-    "2. Помагаш с общи въпроси, метео, музика, отваряне на приложения.\n"
+    "1. Говори САМО на БЪЛГАРСКИ. Бъди КРАТЪК (1-2 изречения). Адресирай шофьора като 'Колега'.\n"
+    "2. Помагаш с: общи въпроси, метео, музика (YouTube/Spotify), почивки, товари, регулации, отваряне на приложения.\n"
     "3. За навигация потребителят има отделен GPT-4o навигационен асистент.\n"
-    "4. ТАХОГРАФ — в контекста получаваш [ТАХОГРАФ: днес Xч/9ч, остават Yч; "
-    "седмично Xч/56ч, остават Yч]. Отговаряй директно на въпроси за тахографа "
-    "от тези данни (EU Regulation 561/2006).\n\n"
+    "4. ТАХОГРАФ (EU 561/2006) — в контекста получаваш:\n"
+    "   [ТАХОГРАФ: непрекъснато Xч/4.5ч; днес Xч/9ч;\n"
+    "    седмично Xч/56ч; двуседмично Xч/90ч]\n"
+    "   ПРАВИЛА:\n"
+    "   - MAX 4.5ч непрекъснато → задължителна 45-мин почивка (или 15+30)\n"
+    "   - MAX 9ч дневно (10ч два пъти седмично)\n"
+    "   - MAX 56ч седмично; MAX 90ч общо за 2 седмици\n"
+    "   - Ако остават < 30 мин до някой лимит → предупреди проактивно\n"
+    "5. КАМИОННА СПЕЦИФИКА — когато е релевантно споменавай:\n"
+    "   - Ограничения за тегло/височина/ширина при мостове, тунели, центрове\n"
+    "   - Места за почивка и паркинг за тежкотоварни (не обичайни паркинги)\n"
+    "   - Времеви ограничения за камиони (почивни дни, нощни забрани)\n"
+    "   - Безопасно разстояние и скорост за товарен автомобил\n"
+    "   - Зареждане с AdBlue + дизел при ниски запаси\n"
+    "6. Предупреждавай проактивно: 'Колега, след 4ч ти трябва 45-мин почивка.'\n\n"
     "📱 ПРИЛОЖЕНИЯ — добавяй в КРАЯ при нужда:\n"
     "[APP:{\"app\":\"<app_name>\",\"query\":\"<опционална заявка>\"}]\n"
     "app_name: youtube, spotify, whatsapp, telegram, viber, maps, "
     "settings, phone, camera, calculator, chrome, facebook, instagram\n\n"
     "ПРИМЕРИ:\n"
-    "- 'отвори YouTube' → [APP:{\"app\":\"youtube\"}]\n"
+    "- 'пусни сръбско в YouTube' → [APP:{\"app\":\"youtube\",\"query\":\"сръбско\"}]\n"
     "- 'колко часа имам днес?' → прочети от [ТАХОГРАФ:...] и отговори\n"
-    "- 'какво е времето?' → отговори директно\n"
+    "- 'ще има ли проблем с тунела?' → 'Колега, стандартните тунели позволяват до 4.2м. "
+    "Ако твоят камион е над 4м, провери ограниченията предварително.'\n"
 )
 
 _NAV_RE = re.compile(r'\[NAV:\s*(\{.*?\})\s*\]', re.DOTALL)
@@ -111,68 +128,20 @@ _MAPBOX_TOKEN = (
 
 # ── System prompt — GPT-4o responds ONLY with JSON map actions ─────────────────
 _SYSTEM_PROMPT = (
-    "You are an expert truck GPS assistant for Bulgarian drivers. "
-    "ALWAYS respond in JSON only. Never plain text.\n\n"
+    "Ти си TruckAI — експертен GPS асистент за камиони в България.\n"
+    "ГОВОРИШ С КАМИОНЕН ШОФЬОР. Бъди КРАТЪК (1-2 изречения). Адресирай го като 'Колега'.\n"
+    "Ти си приятел и помощник на шофьора, но същевременно си високотехнологичен навигационен мозък.\n\n"
     "CRITICAL RULES:\n"
-    "1. ALWAYS respond with ONLY a single valid JSON object. NEVER plain text before or after.\n"
-    "2. NEVER ask clarifying questions — act immediately with best guess.\n"
-    "3. Always use Bulgarian in all message fields.\n"
-    "4. ALWAYS avoid Serbia when routing from Bulgaria to Romania or any Western/Central European destination.\n"
-    "5. For routes from Bulgaria to Western Europe (Germany, France, Spain, Italy, Austria, Netherlands, Belgium): "
-    "ALWAYS add intermediate waypoints: Bucharest → Cluj → Budapest.\n"
-    "6. Tachograph rules (EU Regulation 561/2006): max 4.5h continuous driving, then 45min mandatory break. "
-    "Call calculate_hos_reach tool. Suggest parking stop 30min before the limit.\n"
-    "7. DYNAMIC AVOIDANCE: When user says 'избягвай X', 'не минавай X', 'заобиколи X', 'avoid X': "
-    "add avoid=['x'] to navigate_to or suggest_routes. "
-    "Supported values: 'serbia', 'romania', 'greece', 'turkey', 'sofia_center', 'motorway', 'toll', 'ferry'. "
-    "Example: 'маршрут до Виена, избягвай Румъния' → navigate_to(destination='Vienna', avoid=['romania']).\n"
-    "8. SEARCH ANYTHING: For ANY location search — company names, warehouses, factories, "
-    "repair shops, customs offices, stores, hotels, industrial zones, exact addresses, "
-    "landmarks — use search_business. Examples: 'Panzani Marseille', 'DHL склад Пловдив', "
-    "'Индустриална зона Илияне', 'митница Капитан Андреево'. "
-    "Results appear as 🏢 pins on the map. User taps to navigate.\n"
-    "9. FULL ADDRESS: navigate_to accepts any string — full address, company name, POI. "
-    "Use search_business when user wants to SEE multiple options; "
-    "use navigate_to when user clearly wants to GO to one specific destination.\n\n"
-    "10. WAYPOINT ADDITION: When user says 'добави X към маршрута', 'спри при X', "
-    "'мини през X', 'добави спирка X', 'add X to route': use add_waypoint tool. "
-    "Translate the place name to English before calling. "
-    "This inserts a stop between current position and final destination.\n\n"
-    "Available tools:\n"
-    '  navigate_to          → {"action":"route", ...}  (accepts avoid=["serbia","toll",...])\n'
-    '  suggest_routes       → {"action":"show_routes", "options":[...], ...}  (accepts avoid=[...])\n'
-    '  add_waypoint         → {"action":"add_waypoint", "name":"...", "coords":[lng,lat]}\n'
-    '  search_business      → {"action":"show_pois","category":"business",...}  (ANYTHING: company/address/place)\n'
-    '  find_truck_parking      → {"action":"show_pois", "category":"truck_stop", ...}\n'
-    '  find_fuel_stations      → {"action":"show_pois", "category":"fuel", ...}\n'
-    '  find_speed_cameras      → {"action":"show_pois", "category":"speed_camera", ...}\n'
-    '  calculate_hos_reach     → {"action":"tachograph", ...}\n'
-    '  check_traffic_route     → {"action":"show_routes", ...}\n'
-    '  calculate_travel_matrix → {"action":"message", "text":"<оптимален ред + времена>"}\n'
-    '    Use for: multiple stops/deliveries, finding fastest order, comparing travel times.\n'
-    '    After getting result explain optimal order in Bulgarian with durations.\n'
-    '  get_reachable_zone      → {"action":"message", "text":"<зона + препоръка>"}\n'
-    '    Use for: HOS limit approaching, driver asks where to reach in X min.\n'
-    '    After getting result: immediately call find_truck_parking with radius=approx_radius_km*1000.\n'
-    '    Then return show_pois with parking + explain in Bulgarian which are reachable.\n'
-    '  No tool (info/chat)     → {"action":"message", "text":"<Bulgarian>"}\n\n'
-    "Known city coords: Sofia≈42.70,23.32; Plovdiv≈42.15,24.75; "
-    "Varna≈43.20,27.91; Burgas≈42.50,27.47; Stara Zagora≈42.42,25.64; "
-    "Ruse≈43.85,25.95; Blagoevgrad≈42.02,23.10; Vidin≈43.99,22.88; "
-    "Berlin≈52.52,13.40; Hamburg≈53.55,10.00; Frankfurt≈50.11,8.68; "
-    "Munich≈48.14,11.58; Dusseldorf≈51.22,6.77; Stuttgart≈48.78,9.18; "
-    "Paris≈48.85,2.35; Lyon≈45.75,4.85; Marseille≈43.30,5.37; "
-    "Vienna≈48.21,16.37; Graz≈47.07,15.44; Salzburg≈47.80,13.04; "
-    "Bucharest≈44.43,26.10; Cluj≈46.77,23.59; Timisoara≈45.75,21.23; "
-    "Budapest≈47.50,19.04; Debrecen≈47.53,21.63; "
-    "Warsaw≈52.23,21.01; Prague≈50.08,14.44; Bratislava≈48.15,17.11; "
-    "Barcelona≈41.39,2.15; Madrid≈40.42,-3.70; Valencia≈39.47,-0.37; "
-    "Rome≈41.90,12.50; Milan≈45.46,9.19; Turin≈45.07,7.69; Bologna≈44.50,11.34; "
-    "Amsterdam≈52.37,4.90; Rotterdam≈51.92,4.48; Antwerp≈51.22,4.40; "
-    "Brussels≈50.85,4.35; Liege≈50.64,5.57; "
-    "Istanbul≈41.01,28.95; Ankara≈39.93,32.86; "
-    "Belgrade≈44.82,20.46; Zagreb≈45.81,15.98; Ljubljana≈46.05,14.51; "
-    "Athens≈37.98,23.73; Thessaloniki≈40.64,22.94."
+    "1. ALWAYS respond with ONLY a single valid JSON object or a conversational Bulgarian reply wrapped in a message action.\n"
+    "2. ALWAYS use Bulgarian in all message fields.\n"
+    "3. ALWAYS address the driver as 'Колега'. Be polite but concise.\n"
+    "4. APP CONTROL: When the driver wants to open an app (YouTube, Google, Spotify, Chrome, etc.), use the launch_app tool immediately.\n"
+    "5. ROUTING: For routes BG -> W. Europe, always avoid Serbia unless requested; go via Romania (Bucharest -> Cluj -> Budapest).\n"
+    "6. TRUCK SAFETY: Always use truck dimensions for routing. Don't go under low bridges or through weight-restricted zones.\n"
+    "7. DYNAMIC AVOIDANCE: Support 'avoid' for Serbia, Romania, Tolls, Sofia Center, etc.\n"
+    "8. SEARCH: Use search_business for ANY company, warehouse, factory, repair shop, or address.\n"
+    "9. TACHOGRAPH: Help with HOS limits (4.5h rule, 9h rule). Suggest stops 30 min before the limit.\n\n"
+    "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
 
 # ── GPT-4o tool definitions ────────────────────────────────────────────────────
@@ -203,6 +172,18 @@ _TOOLS = [
                             "'motorway', 'toll', 'ferry'"
                         ),
                     },
+                    "truck_profile": {
+                        "type": "object",
+                        "properties": {
+                            "height_m": {"type": "number"},
+                            "weight_t": {"type": "number"},
+                            "width_m": {"type": "number"},
+                            "length_m": {"type": "number"},
+                            "axle_count": {"type": "integer"},
+                            "hazmat_class": {"type": "string"}
+                        },
+                        "description": "Vehicle dimensions/load for truck-specific routing"
+                    }
                 },
                 "required": ["destination"],
             },
@@ -232,6 +213,18 @@ _TOOLS = [
                             "'motorway', 'toll', 'ferry'"
                         ),
                     },
+                    "truck_profile": {
+                        "type": "object",
+                        "properties": {
+                            "height_m": {"type": "number"},
+                            "weight_t": {"type": "number"},
+                            "width_m": {"type": "number"},
+                            "length_m": {"type": "number"},
+                            "axle_count": {"type": "integer"},
+                            "hazmat_class": {"type": "string"}
+                        },
+                        "description": "Vehicle dimensions/load for truck-specific routing"
+                    }
                 },
                 "required": ["destination", "origin_lat", "origin_lng"],
             },
@@ -404,32 +397,24 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_reachable_zone",
-            "description": (
-                "Get the geographic area reachable within a given drive time from current position. "
-                "Use when driver has limited time (HOS break approaching) and asks 'where can I reach "
-                "in 20 min', or 'find parking within 30 min drive'. "
-                "Returns approximate radius and bounding box to filter parking search."
-            ),
+            "name": "launch_app",
+            "description": "Open a mobile app like YouTube, Spotify, Google, etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "lat":     {"type": "number", "description": "Driver current latitude"},
-                    "lng":     {"type": "number", "description": "Driver current longitude"},
-                    "minutes": {
-                        "type": "integer",
-                        "description": "Drive time limit in minutes (5–60)",
-                        "default": 30,
-                    },
-                    "profile": {
+                    "app_name": {
                         "type": "string",
-                        "enum": ["driving-traffic", "driving"],
-                        "default": "driving-traffic",
+                        "enum": ["youtube", "spotify", "google", "whatsapp", "viber", "facebook", "chrome", "settings"],
+                        "description": "Name of the app to launch"
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional search query for the app (e.g. song name, video title)"
+                    }
                 },
-                "required": ["lat", "lng"],
-            },
-        },
+                "required": ["app_name"]
+            }
+        }
     },
 ]
 
@@ -485,14 +470,29 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_email     TEXT PRIMARY KEY,
+                gemini_api_key TEXT,
+                updated_at     TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
-    # Migration: add user_email column if it does not exist yet
+    # Migration: add user_email and type columns if they do not exist yet
     try:
         with get_db() as db:
             db.execute("ALTER TABLE pois ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
             db.commit()
     except Exception:
-        pass  # column already exists
+        pass
+    try:
+        with get_db() as db:
+            db.execute("ALTER TABLE tacho_sessions ADD COLUMN type TEXT NOT NULL DEFAULT 'driving'")
+            db.commit()
+    except Exception:
+        pass
 
 
 init_db()
@@ -554,6 +554,248 @@ _ZAGREB_WP    = [15.9799, 45.8150]   # Zagreb, Croatia
 _SOFIA_BYPASS = [[23.2600, 42.7400], [23.4300, 42.7100]]
 
 
+# ── TomTom helpers ─────────────────────────────────────────────────────────────
+
+def _adr_to_tunnel_code(hazmat_class: str) -> str | None:
+    """Map ADR hazmat class to TomTom ADR tunnel restriction code (B/C/D/E)."""
+    mapping = {
+        "1": "B",  # Explosives
+        "2": "C",  # Gases (flammable)
+        "3": "D",  # Flammable liquids
+        "4": "D",  # Flammable solids
+        "5": "D",  # Oxidizers/peroxides
+        "6": "D",  # Toxic substances
+        "7": "B",  # Radioactive
+        "8": "E",  # Corrosive
+        "9": "E",  # Miscellaneous
+    }
+    return mapping.get(str(hazmat_class))
+
+
+def _tomtom_route_to_geojson(route: dict) -> dict:
+    """Convert TomTom route legs[].points[] to GeoJSON LineString."""
+    coords = []
+    for leg in route.get("legs", []):
+        for pt in leg.get("points", []):
+            coords.append([pt["longitude"], pt["latitude"]])
+    return {"type": "LineString", "coordinates": coords}
+
+
+def _tomtom_speed_limits(route: dict) -> list:
+    """Build per-coordinate MaxspeedEntry array from TomTom speedLimit sections.
+
+    TomTom sections use startPointIndex/endPointIndex referencing the flat
+    legs[].points[] array (same order as _tomtom_route_to_geojson output).
+    """
+    total_pts = sum(len(leg.get("points", [])) for leg in route.get("legs", []))
+    if total_pts == 0:
+        return []
+
+    speeds: list = [None] * total_pts
+
+    for sec in route.get("sections", []):
+        if sec.get("sectionType") != "SPEED_LIMIT":
+            continue
+        sl    = sec.get("speedLimit", {})
+        value = sl.get("value")
+        unit  = sl.get("unit", "KMPH")
+        if value is None:
+            continue
+        speed_kmh = round(value * 1.609) if unit in ("MPH", "mph") else int(value)
+        start = sec.get("startPointIndex", 0)
+        end   = sec.get("endPointIndex", total_pts - 1)
+        for i in range(start, min(end + 1, total_pts)):
+            speeds[i] = speed_kmh
+
+    return [
+        {"speed": s, "unit": "km/h"} if s is not None else {"unknown": True}
+        for s in speeds
+    ]
+
+
+# TomTom maneuver code → Mapbox-compatible direction string
+_TT_MANEUVER_DIR = {
+    "TURN_LEFT":        "left",
+    "TURN_RIGHT":       "right",
+    "KEEP_LEFT":        "slight left",
+    "KEEP_RIGHT":       "slight right",
+    "SHARP_LEFT":       "sharp left",
+    "SHARP_RIGHT":      "sharp right",
+    "STRAIGHT":         "straight",
+    "ROUNDABOUT_CROSS": "straight",
+    "U_TURN":           "uturn",
+    "ARRIVE":           "straight",
+    "DEPART":           "straight",
+}
+
+
+def _tomtom_lane_banner(instr: dict) -> dict | None:
+    """Convert TomTom laneGuidance to BannerInstruction sub.components format.
+
+    Returns None when no lane data is available for this instruction.
+    The returned object matches the BannerInstruction interface expected by
+    the MapScreen lane-guidance UI.
+    """
+    lg = instr.get("laneGuidance")
+    msg = instr.get("message", "")
+    
+    # Extract signpost text and road numbers from tagged message
+    # e.g. "Take <roadNumber>A1</roadNumber> towards <signpostText>Sofia</signpostText>"
+    signposts = re.findall(r"<signpostText>(.*?)</signpostText>", msg)
+    road_nums = re.findall(r"<roadNumber>(.*?)</roadNumber>", msg)
+    exit_nums = re.findall(r"<exitNumber>(.*?)</exitNumber>", msg)
+    
+    primary_text = " / ".join(signposts) if signposts else re.sub(r"<.*?>", "", msg)
+    
+    components = []
+    if exit_nums:
+        components.append({"type": "exit-number", "text": exit_nums[0]})
+    for rn in road_nums:
+        components.append({"type": "text", "text": rn})
+    for sp in signposts:
+        components.append({"type": "text", "text": sp})
+
+    if not lg:
+        # Even without lanes, we might want the signpost info
+        return {
+            "distanceAlongGeometry": instr.get("routeOffsetInMeters", 0),
+            "primary": {
+                "text": primary_text,
+                "type": instr.get("maneuver", "straight").lower().replace("_", " "),
+                "components": components if components else [{"type": "text", "text": primary_text}]
+            },
+            "sub": None
+        }
+
+    lanes = lg.get("lanes", [])
+    maneuver   = instr.get("maneuver", "STRAIGHT")
+    active_dir = _TT_MANEUVER_DIR.get(maneuver, "straight")
+
+    lane_components = [
+        {
+            "type":       "lane",
+            "text":       "",
+            "active":     bool(lane.get("drivable", False)),
+            "directions": [active_dir] if lane.get("drivable") else ["none"],
+        }
+        for lane in lanes
+    ]
+
+    return {
+        "distanceAlongGeometry": instr.get("routeOffsetInMeters", 0),
+        "primary": {
+            "text": primary_text,
+            "type": maneuver.lower().replace("_", " "),
+            "components": components if components else [{"type": "text", "text": primary_text}]
+        },
+        "sub": {"components": lane_components},
+    }
+
+
+def _tomtom_congestion_geojson(route: dict, geometry: dict) -> dict:
+    """Build per-segment congestion FeatureCollection from TomTom traffic sections."""
+    coords = geometry.get("coordinates", [])
+    sections = [s for s in route.get("sections", []) if s.get("sectionType") == "TRAFFIC"]
+
+    if not sections or len(coords) < 2:
+        return {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"congestion": "unknown"}, "geometry": geometry}
+        ]}
+
+    _level = {"JAM": "heavy", "ROAD_WORK": "moderate", "ROAD_CLOSURE": "severe"}
+    features = []
+    for sec in sections:
+        start = sec.get("startPointIndex", 0)
+        end   = min(sec.get("endPointIndex", start + 1) + 1, len(coords))
+        level = _level.get(sec.get("simpleCategory", ""), "low")
+        seg   = coords[start:end]
+        if len(seg) >= 2:
+            features.append({
+                "type": "Feature",
+                "properties": {"congestion": level},
+                "geometry": {"type": "LineString", "coordinates": seg},
+            })
+
+    if not features:
+        features = [{"type": "Feature", "properties": {"congestion": "low"}, "geometry": geometry}]
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _tomtom_traffic_alerts(route: dict, geometry: dict) -> list:
+    """Build traffic alert bubbles from TomTom traffic sections."""
+    coords  = geometry.get("coordinates", [])
+    alerts  = []
+    for sec in route.get("sections", []):
+        if sec.get("sectionType") != "TRAFFIC":
+            continue
+        category = sec.get("simpleCategory", "")
+        if category not in ("JAM", "ROAD_WORK", "ROAD_CLOSURE"):
+            continue
+        travel    = sec.get("travelTimeInSeconds", 0)
+        no_traffic = sec.get("noTrafficTravelTimeInSeconds", travel)
+        delay_min = max(0, round((travel - no_traffic) / 60))
+        if delay_min < 2 and category != "ROAD_CLOSURE":
+            continue
+        mid = (sec.get("startPointIndex", 0) + sec.get("endPointIndex", 0)) // 2
+        if mid >= len(coords):
+            continue
+        c   = coords[mid]
+        sev = "severe" if category == "ROAD_CLOSURE" else "heavy" if delay_min >= 20 else "moderate"
+        if category == "ROAD_CLOSURE":
+            label = "🚫 Затворен път"
+        elif category == "ROAD_WORK":
+            label = f"🚧 Ремонт{f' +{delay_min} мин' if delay_min > 0 else ''}"
+        elif delay_min >= 60:
+            label = f"🛑 +{delay_min // 60}ч {delay_min % 60}мин"
+        else:
+            label = f"🛑 +{delay_min} мин"
+        alerts.append({
+            "lat": round(c[1], 5), "lng": round(c[0], 5),
+            "delay_min": delay_min, "severity": sev, "label": label,
+        })
+    return alerts[:8]
+
+
+def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
+    """TomTom Fuzzy Search — used for business/POI search and as Google fallback."""
+    if not _tomtom_ready:
+        return []
+    try:
+        url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
+        params: dict = {
+            "key":      _TOMTOM_KEY,
+            "language": "bg-BG",
+            "limit":    limit,
+            "typeahead": "true",
+        }
+        if lat and lng:
+            params["lat"]    = lat
+            params["lon"]    = lng
+            params["radius"] = 50000
+        r = requests.get(url, params=params, timeout=8)
+        r.raise_for_status()
+        results = []
+        for item in r.json().get("results", []):
+            pos      = item.get("position", {})
+            item_lat = pos.get("lat")
+            item_lng = pos.get("lon")
+            if item_lat is None:
+                continue
+            name    = (item.get("poi") or {}).get("name") or item.get("address", {}).get("freeformAddress", "")
+            address = item.get("address", {}).get("freeformAddress", "")
+            dist    = round(_haversine_m(lat, lng, item_lat, item_lng)) if lat else 0
+            results.append({
+                "name":       name,
+                "address":    address,
+                "lat":        item_lat,
+                "lng":        item_lng,
+                "distance_m": dist,
+            })
+        return results
+    except Exception:
+        return []
+
+
 def _get_avoidance_waypoints(
     origin_lat, origin_lng, dest_lng: float, avoid: list = None
 ) -> list:
@@ -590,46 +832,43 @@ def _get_avoidance_waypoints(
 # ── Tool implementations ───────────────────────────────────────────────────────
 
 def _tool_navigate_to(destination: str) -> dict:
-    """Geocode destination via Mapbox Search Box v1."""
+    """Geocode destination via TomTom Fuzzy Search."""
     try:
-        suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
+        url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(destination)}.json"
         params = {
-            "q": destination,
-            "access_token": _MAPBOX_TOKEN,
-            "language": "bg,en",
-            "limit": 1,
-            "session_token": "truckai-nav-session",
+            "key":       _TOMTOM_KEY,
+            "language":  "bg-BG",
+            "limit":     1,
+            "typeahead": "true",
         }
-        r = requests.get(suggest_url, params=params, timeout=8)
+        r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
-        suggestions = r.json().get("suggestions", [])
-        if not suggestions:
+        results = r.json().get("results", [])
+        if not results:
             return {"error": f"Не намерих '{destination}'"}
 
-        mapbox_id = suggestions[0].get("mapbox_id")
-        name = suggestions[0].get("name", destination)
+        res  = results[0]
+        pos  = res.get("position", {})
+        lat, lng = pos.get("lat"), pos.get("lon")
+        
+        # Check for entry points (gates)
+        entry_points = res.get("entryPoints", [])
+        if entry_points:
+            # Use the first entry point as it's usually the main gate
+            ep = entry_points[0]
+            lat, lng = ep.get("position", {}).get("lat", lat), ep.get("position", {}).get("lon", lng)
 
-        retrieve_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
-        r2 = requests.get(
-            retrieve_url,
-            params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-nav-session"},
-            timeout=8,
-        )
-        r2.raise_for_status()
-        features = r2.json().get("features", [])
-        if not features:
-            return {"error": "Не намерих координати"}
-
-        coords = features[0]["geometry"]["coordinates"]  # [lng, lat]
-        return {"destination": name, "coords": coords}
+        name = (res.get("poi") or {}).get("name") or res.get("address", {}).get("freeformAddress", destination)
+        return {"destination": name, "coords": [lng, lat]}
     except Exception as exc:
         return {"error": str(exc)}
 
 
 def _tool_suggest_routes(
-    destination: str, origin_lat: float, origin_lng: float, avoid: list = None
+    destination: str, origin_lat: float, origin_lng: float,
+    avoid: list = None, truck_profile: dict = None
 ) -> dict:
-    """Fetch 2-3 route alternatives via Mapbox Directions."""
+    """Fetch 2-3 route alternatives via TomTom Routing API (travelMode=truck)."""
     try:
         nav = _tool_navigate_to(destination)
         if "error" in nav:
@@ -637,64 +876,164 @@ def _tool_suggest_routes(
 
         dest_lng, dest_lat = nav["coords"]
 
-        # Build waypoints string if avoidance requires a corridor detour
-        wps = _get_avoidance_waypoints(origin_lat, origin_lng, dest_lng, avoid)
-        all_points = (
-            [[origin_lng, origin_lat]] + wps + [[dest_lng, dest_lat]]
-        )
-        coords_str = ";".join(f"{p[0]},{p[1]}" for p in all_points)
+        # Avoidance corridor waypoints (Serbia bypass etc.)
+        wps        = _get_avoidance_waypoints(origin_lat, origin_lng, dest_lng, avoid)
+        all_points = [[origin_lng, origin_lat]] + wps + [[dest_lng, dest_lat]]
+        # TomTom location format: lat,lng:lat,lng:...
+        locations  = ":".join(f"{p[1]},{p[0]}" for p in all_points)
 
-        url = (
-            f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic"
-            f"/{coords_str}"
-        )
-        params = {
-            "access_token": _MAPBOX_TOKEN,
-            "alternatives": "true",
-            "geometries": "geojson",
-            "overview": "simplified",
-            "steps": "false",
+        url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+        params: dict = {
+            "key":                  _TOMTOM_KEY,
+            "travelMode":           "truck",
+            "traffic":              "true",
+            "computeTravelTimeFor": "all",
+            "routeType":            "fastest",
+            "maxAlternatives":      2,
+            "sectionType":          "traffic",
         }
-        # Road-type excludes (motorway / toll / ferry) — supported by Mapbox
-        road_excludes = [
-            a for a in (avoid or [])
-            if a in ("motorway", "toll", "ferry", "unpaved")
-        ]
-        if road_excludes:
-            params["exclude"] = ",".join(road_excludes)
+
+        # Truck dimensions
+        if truck_profile:
+            if truck_profile.get("height_m"):
+                params["vehicleHeight"] = truck_profile["height_m"]
+            if truck_profile.get("width_m"):
+                params["vehicleWidth"] = truck_profile["width_m"]
+            if truck_profile.get("length_m"):
+                params["vehicleLength"] = truck_profile["length_m"]
+            if truck_profile.get("weight_t"):
+                params["vehicleWeight"] = int(truck_profile["weight_t"] * 1000)  # kg
+            if truck_profile.get("axle_count"):
+                params["vehicleNumberOfAxles"] = truck_profile["axle_count"]
+            hazmat = truck_profile.get("hazmat_class", "none")
+            code   = _adr_to_tunnel_code(hazmat)
+            if code:
+                params["vehicleAdrTunnelRestrictionCode"] = code
+
+        # Road-type avoidance
+        avoid_set = {a for a in (avoid or [])}
+        if "motorway" in avoid_set:
+            params["avoid"] = "motorways"
+        elif "toll" in avoid_set:
+            params["avoid"] = "tollRoads"
+        elif "ferry" in avoid_set:
+            params["avoid"] = "ferries"
 
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         routes_data = r.json().get("routes", [])
 
-        colors = ["#00bfff", "#00ff88", "#ffcc00"]
-        labels = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]
+        primary_duration = routes_data[0].get("summary", {}).get("travelTimeInSeconds", 0)
+        
+        colors  = ["#00bfff", "#00ff88", "#ffcc00"]
+        labels  = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]
         options = []
         for i, rt in enumerate(routes_data[:3]):
-            dist_km = round(rt["distance"] / 1000)
-            dur_h = int(rt["duration"] / 3600)
-            dur_m = int((rt["duration"] % 3600) / 60)
-            dur_str = f"{dur_h}ч {dur_m}мин" if dur_h else f"{dur_m}мин"
-            # Traffic estimation: avg speed heuristic
-            avg_kmh = (rt["distance"] / rt["duration"]) * 3.6 if rt["duration"] > 0 else 80
-            traffic = "low" if avg_kmh > 70 else "moderate" if avg_kmh > 40 else "heavy"
+            summary   = rt.get("summary", {})
+            duration  = summary.get("travelTimeInSeconds", 0)
+            distance  = summary.get("lengthInMeters", 0)
+            delay_min = round(summary.get("trafficDelayInSeconds", 0) / 60)
+            dist_km   = round(distance / 1000)
+            
+            # Calculate diff vs primary
+            diff_s = duration - primary_duration
+            diff_min = round(diff_s / 60)
+            diff_str = ""
+            if i > 0:
+                if diff_min > 0: diff_str = f" (+{diff_min} мин)"
+                elif diff_min < 0: diff_str = f" ({diff_min} мин)"
+                else: diff_str = " (същото време)"
+
+            dur_h     = int(duration / 3600)
+            dur_m     = int((duration % 3600) / 60)
+            dur_str   = f"{dur_h}ч {dur_m}мин" if dur_h else f"{dur_m}мин"
+            
+            traffic   = "low" if delay_min < 5 else "moderate" if delay_min < 20 else "heavy"
+            geometry  = _tomtom_route_to_geojson(rt)
             options.append({
-                "label": f"{labels[i]} — {dist_km}км, {dur_str}",
-                "color": colors[i],
-                "duration": round(rt["duration"]),
-                "distance": round(rt["distance"]),
-                "traffic": traffic,
-                "geometry": rt["geometry"],
-                "dest_coords": [dest_lng, dest_lat],
+                "label":              f"{labels[i]} — {dist_km}км, {dur_str}{diff_str}",
+                "color":              colors[i],
+                "duration":           duration,
+                "distance":           distance,
+                "diff_min":           diff_min,
+                "traffic":            traffic,
+                "traffic_delay_min":  delay_min,
+                "geometry":           geometry,
+                "dest_coords":        [dest_lng, dest_lat],
+                "congestion_geojson": _tomtom_congestion_geojson(rt, geometry),
+                "traffic_alerts":     _tomtom_traffic_alerts(rt, geometry),
             })
 
         return {
             "destination": nav["destination"],
             "dest_coords": [dest_lng, dest_lat],
-            "options": options,
+            "options":     options,
         }
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def _congestion_geojson(geometry: dict, legs: list) -> dict:
+    """Split route geometry into per-segment FeatureCollection tagged with congestion level.
+    Used by the frontend to color the route line: low=neon, moderate=yellow, heavy/severe=red.
+    Samples every 2nd segment on long routes to avoid large payloads (>500 segments).
+    """
+    coords = geometry.get("coordinates", [])
+    features = []
+    for leg in legs:
+        congs = leg.get("annotation", {}).get("congestion", [])
+        step = max(1, len(congs) // 500)  # downsample for long routes
+        for i in range(0, len(congs), step):
+            if i + 1 < len(coords):
+                features.append({
+                    "type": "Feature",
+                    "properties": {"congestion": congs[i] or "unknown"},
+                    "geometry": {"type": "LineString", "coordinates": [coords[i], coords[i + 1]]},
+                })
+    if not features:
+        return {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"congestion": "unknown"}, "geometry": geometry}
+        ]}
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _traffic_alerts(geometry: dict, legs: list) -> list:
+    """Find clusters of heavy/severe congestion and return midpoint alert objects.
+    Each alert: { lat, lng, delay_min, severity } — shown as '+X мин' bubbles on the map.
+    """
+    coords = geometry.get("coordinates", [])
+    alerts: list = []
+    for leg in legs:
+        ann  = leg.get("annotation", {})
+        cong = ann.get("congestion", [])
+        durs = ann.get("duration",   [])
+        i = 0
+        while i < len(cong):
+            if cong[i] in ("heavy", "severe"):
+                j, cluster_s = i, 0.0
+                while j < len(cong) and cong[j] in ("heavy", "severe"):
+                    cluster_s += durs[j] if j < len(durs) else 30
+                    j += 1
+                # ~50 % of cluster time is wasted in heavy traffic
+                delay_min = round(cluster_s * 0.5 / 60)
+                mid = (i + j) // 2
+                if delay_min >= 2 and mid < len(coords):
+                    c = coords[mid]
+                    sev = cong[mid]
+                    length_km = round((j - i) * 0.05, 1)  # ~50m per segment estimate
+                    if delay_min >= 60:
+                        label = f"🛑 +{delay_min // 60}ч {delay_min % 60}мин"
+                    else:
+                        label = f"🛑 +{delay_min} мин"
+                    alerts.append({
+                        "lat": round(c[1], 5), "lng": round(c[0], 5),
+                        "delay_min": delay_min, "severity": sev,
+                        "length_km": length_km, "label": label,
+                    })
+                i = j
+            else:
+                i += 1
+    return alerts[:8]  # max 8 bubbles to avoid clutter
 
 
 def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> list:
@@ -1012,42 +1351,183 @@ out 15;
         return {"cameras": [], "nearest_m": -1, "error": str(exc)}
 
 
+def _tool_find_overtaking_restrictions(lat: float, lng: float, radius_m: int = 5000) -> dict:
+    """Fetch overtaking restrictions from Overpass API."""
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+[out:json][timeout:15];
+(
+  way["overtaking"="no"](around:{radius_m},{lat},{lng});
+  way["overtaking:hgv"="no"](around:{radius_m},{lat},{lng});
+);
+out tags center;
+"""
+    try:
+        r = requests.post(overpass_url, data={"data": query}, timeout=15)
+        r.raise_for_status()
+        elements = r.json().get("elements", [])
+        restrictions = []
+        for el in elements:
+            tags = el.get("tags", {})
+            center = el.get("center", {})
+            el_lat = center.get("lat")
+            el_lng = center.get("lon")
+            if not el_lat: continue
+            dist = round(_haversine_m(lat, lng, el_lat, el_lng))
+            restrictions.append({
+                "lat":        el_lat,
+                "lng":        el_lng,
+                "type":       "overtaking_no",
+                "hgv_only":   tags.get("overtaking:hgv") == "no",
+                "distance_m": dist,
+            })
+        restrictions.sort(key=lambda x: x["distance_m"])
+        return {"restrictions": restrictions}
+    except Exception:
+        return {"restrictions": []}
+
+
 def _tacho_summary(user_email: str = "") -> dict:
-    """Daily + weekly driven seconds from persistent tacho_sessions table (EU 561/2006)."""
-    from datetime import date, timedelta
+    """
+    TachoEngine v2 (EU Regulation 561/2006).
+    Calculates continuous (4.5h), daily (9h/10h), weekly (56h), and bi-weekly (90h) limits.
+    Supports split breaks (15min + 30min).
+    """
+    from datetime import date, timedelta, datetime as dt
+
     today = date.today().isoformat()
     today_dt = date.today()
-    week_start = (today_dt - timedelta(days=today_dt.weekday())).isoformat()
+    week_start_dt = today_dt - timedelta(days=today_dt.weekday())
+    prev_week_start_dt = week_start_dt - timedelta(days=7)
+    
+    week_start = week_start_dt.isoformat()
+    prev_week_start = prev_week_start_dt.isoformat()
 
-    DAILY_LIMIT  = 32400   # 9 h standard (10 h × 2/week not tracked yet)
-    WEEKLY_LIMIT = 201600  # 56 h
+    DAILY_LIMIT      = 32400   # 9 h (10h x 2 not tracked yet)
+    WEEKLY_LIMIT     = 201600  # 56 h
+    BIWEEKLY_LIMIT   = 324000  # 90 h
+    CONTINUOUS_LIMIT = 16200   # 4.5 h
 
     with get_db() as db:
+        # Today's driving
         row = db.execute(
-            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions WHERE date=? AND user_email=?",
+            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions "
+            "WHERE date=? AND user_email=? AND type='driving'",
             (today, user_email),
         ).fetchone()
         daily_s = int(row["t"]) if row else 0
 
+        # Current week driving
         row = db.execute(
-            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions WHERE date>=? AND user_email=?",
+            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions "
+            "WHERE date>=? AND user_email=? AND type='driving'",
             (week_start, user_email),
         ).fetchone()
         weekly_s = int(row["t"]) if row else 0
+        
+        # Previous week driving (for 90h check)
+        row = db.execute(
+            "SELECT COALESCE(SUM(driven_seconds),0) AS t FROM tacho_sessions "
+            "WHERE date>=? AND date<? AND user_email=? AND type='driving'",
+            (prev_week_start, week_start, user_email),
+        ).fetchone()
+        prev_weekly_s = int(row["t"]) if row else 0
+        
+        # Sessions for today (ordered)
+        sessions = db.execute(
+            "SELECT type, start_time, end_time, driven_seconds FROM tacho_sessions "
+            "WHERE date=? AND user_email=? ORDER BY start_time ASC",
+            (today, user_email),
+        ).fetchall()
+
+    # Calculate continuous driving and breaks (supporting 15 + 30 split)
+    continuous_s = 0
+    first_split_done = False
+    
+    for sess in sessions:
+        if sess["type"] == 'driving':
+            continuous_s += int(sess["driven_seconds"])
+        elif sess["type"] in ('break', 'rest'):
+            dur = int(sess["driven_seconds"])
+            if dur >= 2700: # 45 min
+                continuous_s = 0
+                first_split_done = False
+            elif dur >= 1800 and first_split_done: # 30 min second part
+                continuous_s = 0
+                first_split_done = False
+            elif dur >= 900: # 15 min first part
+                first_split_done = True
+
+    biweekly_s = weekly_s + prev_weekly_s
+    rests = _analyze_weekly_rests(user_email, week_start)
 
     return {
-        "daily_driven_s":    daily_s,
-        "daily_remaining_s": max(0, DAILY_LIMIT  - daily_s),
-        "daily_driven_h":    round(daily_s  / 3600, 2),
-        "daily_remaining_h": round(max(0, DAILY_LIMIT  - daily_s)  / 3600, 2),
-        "weekly_driven_s":    weekly_s,
-        "weekly_remaining_s": max(0, WEEKLY_LIMIT - weekly_s),
-        "weekly_driven_h":    round(weekly_s / 3600, 2),
-        "weekly_remaining_h": round(max(0, WEEKLY_LIMIT - weekly_s) / 3600, 2),
-        "daily_limit_h":  9,
-        "weekly_limit_h": 56,
-        "date":       today,
-        "week_start": week_start,
+        "daily_driven_s":          daily_s,
+        "daily_remaining_s":       max(0, DAILY_LIMIT  - daily_s),
+        "daily_driven_h":          round(daily_s  / 3600, 2),
+        "daily_remaining_h":       round(max(0, DAILY_LIMIT  - daily_s)  / 3600, 2),
+        "weekly_driven_s":         weekly_s,
+        "weekly_remaining_s":      max(0, WEEKLY_LIMIT - weekly_s),
+        "weekly_driven_h":         round(weekly_s / 3600, 2),
+        "weekly_remaining_h":      round(max(0, WEEKLY_LIMIT - weekly_s) / 3600, 2),
+        "continuous_driven_s":     continuous_s,
+        "continuous_remaining_s":  max(0, CONTINUOUS_LIMIT - continuous_s),
+        "continuous_driven_h":     round(continuous_s / 3600, 2),
+        "continuous_remaining_h":  round(max(0, CONTINUOUS_LIMIT - continuous_s) / 3600, 2),
+        "break_needed":            continuous_s >= CONTINUOUS_LIMIT,
+        "biweekly_driven_h":       round(biweekly_s / 3600, 2),
+        "biweekly_remaining_h":    round(max(0, BIWEEKLY_LIMIT - biweekly_s) / 3600, 2),
+        "biweekly_limit_h":        90,
+        "weekly_regular_rests":    rests["weekly_regular_rests"],
+        "weekly_reduced_rests":    rests["weekly_reduced_rests"],
+        "reduced_rests_remaining": rests["reduced_rests_remaining"],
+        "daily_limit_h":           9,
+        "weekly_limit_h":          56,
+        "date":                    today,
+        "week_start":              week_start,
+    }
+
+
+def _analyze_weekly_rests(user_email: str, week_start: str) -> dict:
+    """Detect daily rest periods this week from gaps between tacho_sessions.
+
+    EU 561/2006 daily rest categories:
+      Regular  — >= 11 h (39 600 s) consecutive
+      Reduced  — >= 9 h  (32 400 s) but < 11 h  — allowed max 3x per week
+    Scans ALL session pairs this week so overnight rests are captured correctly.
+    """
+    from datetime import datetime as dt
+
+    REGULAR_S        = 39_600   # 11 h
+    REDUCED_S        = 32_400   # 9 h
+    MAX_REDUCED      = 3
+
+    with get_db() as db:
+        sessions = db.execute(
+            "SELECT start_time, end_time FROM tacho_sessions "
+            "WHERE date >= ? AND user_email = ? AND end_time IS NOT NULL "
+            "ORDER BY start_time ASC",
+            (week_start, user_email),
+        ).fetchall()
+
+    regular = 0
+    reduced = 0
+    for i in range(len(sessions) - 1):
+        try:
+            end_t        = dt.fromisoformat(sessions[i]["end_time"])
+            next_start_t = dt.fromisoformat(sessions[i + 1]["start_time"])
+            gap_s        = (next_start_t - end_t).total_seconds()
+            if gap_s >= REGULAR_S:
+                regular += 1
+            elif gap_s >= REDUCED_S:
+                reduced += 1
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "weekly_regular_rests":    regular,
+        "weekly_reduced_rests":    reduced,
+        "reduced_rests_remaining": max(0, MAX_REDUCED - reduced),
     }
 
 
@@ -1072,178 +1552,26 @@ def _tool_calculate_hos_reach(driven_seconds: int, speed_kmh: float, user_email:
     }
 
 
+def _google_places_fallback(query: str, lat: float, lng: float) -> list:
+    """Replaced by TomTom Search — kept for backward compatibility."""
+    return _tomtom_search(query, lat, lng)
+
+
 def _tool_search_business(query: str, city: str, lat: float, lng: float) -> list:
-    """Search for any business/address/POI using Mapbox SearchBox v1.
-
-    Uses SearchBox suggest (best POI discovery) + parallel retrieves so all
-    coordinates are fetched in ~1-2 s total instead of N × timeout sequentially.
-    """
-
-    def _retrieve_coords(mapbox_id: str) -> tuple:
-        """Fetch coordinates for one suggestion. Returns (lat, lng) or (None, None)."""
-        try:
-            ret_url = (
-                f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
-            )
-            r2 = requests.get(
-                ret_url,
-                params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-biz-session"},
-                timeout=5,
-            )
-            r2.raise_for_status()
-            feats = r2.json().get("features", [])
-            if feats:
-                c = feats[0]["geometry"]["coordinates"]
-                return c[1], c[0]  # (lat, lng)
-        except Exception:
-            pass
-        return None, None
-
-    try:
-        suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
-        q = f"{query} {city}".strip()
-        params: dict = {
-            "q":             q,
-            "access_token":  _MAPBOX_TOKEN,
-            "language":      "bg,en",
-            "types":         "poi,address",
-            "limit":         5,
-            "session_token": "truckai-biz-session",
-        }
-        if lat and lng:
-            params["proximity"] = f"{lng},{lat}"
-        r = requests.get(suggest_url, params=params, timeout=8)
-        r.raise_for_status()
-        suggestions = r.json().get("suggestions", [])[:5]
-        if not suggestions:
-            return []
-
-        # ── Parallel retrieve — all coords in ~1-2 s total ────────────────
-        ids = [s.get("mapbox_id") for s in suggestions]
-        coords_by_idx: dict = {}
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            fut_map = {ex.submit(_retrieve_coords, mid): i for i, mid in enumerate(ids) if mid}
-            try:
-                for fut in as_completed(fut_map, timeout=6):
-                    coords_by_idx[fut_map[fut]] = fut.result()
-            except Exception:
-                pass  # Use whatever coords arrived before timeout
-
-        results = []
-        for i, s in enumerate(suggestions):
-            biz_lat, biz_lng = coords_by_idx.get(i, (None, None))
-            if biz_lat is None:
-                continue
-            dist = round(_haversine_m(lat, lng, biz_lat, biz_lng)) if lat else 0
-            results.append({
-                "name":       s.get("name", ""),
-                "address":    s.get("full_address") or s.get("place_formatted", ""),
-                "category":   s.get("poi_category", []),
-                "lat":        biz_lat,
-                "lng":        biz_lng,
-                "distance_m": dist,
-            })
-        return results
-    except Exception as exc:
-        return [{"error": str(exc)}]
+    """Search for any business/address/POI using TomTom Fuzzy Search."""
+    q = f"{query} {city}".strip()
+    results = _tomtom_search(q, lat, lng, limit=6)
+    if not results:
+        return [{"error": f"Не намерих '{q}'"}]
+    return results
 
 
 def _enrich_business_with_places(biz: dict) -> dict:
-    """Enrich a business dict with Google Places photo, reviews, and open status."""
-    if not _places_ready:
-        return biz
-    try:
-        # 1 — Find Place from Text → place_id + business_status
-        query_name = f"{biz.get('name', '')} {biz.get('address', '')}"
-        find_resp = requests.get(
-            "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
-            params={
-                "input":        query_name,
-                "inputtype":    "textquery",
-                "fields":       "place_id,business_status",
-                "locationbias": f"point:{biz['lat']},{biz['lng']}",
-                "key":          _GOOGLE_PLACES_KEY,
-            },
-            timeout=4,
-        )
-        candidates = find_resp.json().get("candidates", [])
-        if not candidates:
-            return biz
-        place_id        = candidates[0].get("place_id")
-        business_status = candidates[0].get("business_status", "OPERATIONAL")
-
-        # 2 — Place Details → photos, reviews, opening_hours
-        details_resp = requests.get(
-            "https://maps.googleapis.com/maps/api/place/details/json",
-            params={
-                "place_id": place_id,
-                "fields":   "photos,reviews,opening_hours",
-                "language": "bg",
-                "key":      _GOOGLE_PLACES_KEY,
-            },
-            timeout=5,
-        )
-        detail = details_resp.json().get("result", {})
-
-        # 3 — Build photo URL (no extra HTTP request)
-        photo_url = None
-        photos = detail.get("photos", [])
-        if photos:
-            ref = photos[0].get("photo_reference")
-            if ref:
-                photo_url = (
-                    f"https://maps.googleapis.com/maps/api/place/photo"
-                    f"?maxwidth=400&photo_reference={ref}&key={_GOOGLE_PLACES_KEY}"
-                )
-
-        # 4 — GPT-4o review summary (Bulgarian, truck-driver focused)
-        review_summary = None
-        reviews = detail.get("reviews", [])
-        if reviews and _gpt4o_ready:
-            snippets = " | ".join(
-                r.get("text", "")[:300] for r in reviews[:5] if r.get("text")
-            )
-            if snippets:
-                try:
-                    resp = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Ти си асистент за камионджии. "
-                                    "Напиши 2-3 изречения резюме на отзивите, "
-                                    "фокусирано върху полезността за шофьори на камиони. "
-                                    "Отговаряй само на български."
-                                ),
-                            },
-                            {"role": "user", "content": f"Отзиви: {snippets}"},
-                        ],
-                        max_tokens=200,
-                        temperature=0.3,
-                    )
-                    review_summary = resp.choices[0].message.content.strip()
-                except Exception:
-                    pass  # non-fatal
-
-        # 5 — Determine open_now and needs_confirm
-        oh       = detail.get("opening_hours", {})
-        open_now = oh.get("open_now")  # bool or None
-        needs_confirm = (
-            business_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY")
-            or open_now is False
-        )
-
-        return {
-            **biz,
-            "photo_url":       photo_url,
-            "review_summary":  review_summary,
-            "business_status": business_status,
-            "open_now":        open_now,
-            "needs_confirm":   needs_confirm,
-        }
-    except Exception:
-        return biz  # non-fatal — return original on any error
+    """
+    Enrichment disabled to save Google Cloud credits.
+    Returns the business object as-is from Mapbox/OSM data.
+    """
+    return biz
 
 
 def _tool_check_traffic(
@@ -1392,6 +1720,29 @@ def health():
     })
 
 
+# ── GPT-4o in-memory response cache (text-only, 10-min TTL) ──────────────────
+import time as _cache_time
+
+_gpt_cache: dict[str, tuple[dict, float]] = {}   # key → (result, expires_at)
+_GPT_CACHE_TTL = 600  # 10 minutes
+
+
+def _gpt_cache_get(key: str) -> dict | None:
+    entry = _gpt_cache.get(key)
+    if entry and _cache_time.time() < entry[1]:
+        return entry[0]
+    _gpt_cache.pop(key, None)
+    return None
+
+
+def _gpt_cache_set(key: str, result: dict) -> None:
+    # Limit cache size to 50 entries — evict oldest
+    if len(_gpt_cache) >= 50:
+        oldest = min(_gpt_cache, key=lambda k: _gpt_cache[k][1])
+        _gpt_cache.pop(oldest, None)
+    _gpt_cache[key] = (result, _cache_time.time() + _GPT_CACHE_TTL)
+
+
 # ── GPT-4o map engine (shared internal helper) ────────────────────────────────
 
 def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
@@ -1402,13 +1753,26 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             "error": "GPT-4o не е конфигуриран. Добави OPENAI_API_KEY в backend/.env",
         }
 
+    # Cache check — only for first-turn text queries (no GPS, no history)
+    _cache_key = None
+    if not history and not context.get("lat"):
+        _cache_key = user_msg.strip().lower()
+        cached = _gpt_cache_get(_cache_key)
+        if cached:
+            return cached
+
     system_txt = _SYSTEM_PROMPT
     if context:
         driven_h = context.get("driven_seconds", 0) / 3600
+        prof = context.get("profile", {})
         system_txt += (
             f"\n\nDriver GPS: lat={context.get('lat', '?')}, "
             f"lng={context.get('lng', '?')}, "
-            f"driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h"
+            f"driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h. "
+            f"Truck Profile: {prof.get('height_m', 4.0)}m height, "
+            f"{prof.get('weight_t', 18)}t weight, {prof.get('width_m', 2.55)}m width, "
+            f"{prof.get('length_m', 12)}m length, {prof.get('axle_count', 3)} axles, "
+            f"hazmat={prof.get('hazmat_class', 'none')}."
         )
 
     messages = [{"role": "system", "content": system_txt}]
@@ -1429,7 +1793,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     try:
         for turn in range(4):
             resp = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=messages,
                 tools=_TOOLS,
                 tool_choice=(
@@ -1478,11 +1842,15 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                 if "origin_lat" not in args and context.get("lat"):
                     args["origin_lat"] = context["lat"]
                     args["origin_lng"] = context["lng"]
+                
+                # Pass truck profile from context or AI arguments
+                truck_prof = args.get("truck_profile") or context.get("profile")
                 result = _tool_suggest_routes(
                     args["destination"],
                     args.get("origin_lat", 42.70),
                     args.get("origin_lng", 23.32),
                     args.get("avoid"),
+                    truck_profile=truck_prof
                 )
                 if "options" in result:
                     dest_lng_r = result["dest_coords"][0]
@@ -1496,6 +1864,18 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                         "dest_coords": result["dest_coords"],
                         "options":     result["options"],
                         "waypoints":   forced_wps,
+                    }
+                    # Strip heavy fields before feeding back to GPT-4o —
+                    # geometry + congestion_geojson can exceed the 30k TPM limit.
+                    # The full data is already captured in `action` for the frontend.
+                    result = {
+                        "destination": result["destination"],
+                        "dest_coords": result["dest_coords"],
+                        "options": [
+                            {k: v for k, v in opt.items()
+                             if k not in ("congestion_geojson", "traffic_alerts", "geometry")}
+                            for opt in action["options"]
+                        ],
                     }
 
             elif fn == "find_truck_parking":
@@ -1651,14 +2031,15 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                 # GPT-4o gets the full matrix and will compose a Bulgarian explanation.
                 # We pass the structured result; the AI formats the final message.
 
-            elif fn == "get_reachable_zone":
-                result = _tool_get_reachable_zone(
-                    args["lat"], args["lng"],
-                    args.get("minutes", 30),
-                    args.get("profile", "driving-traffic"),
-                )
-                # GPT-4o uses approx_radius_km to then call find_truck_parking.
-                # The action is set after the AI composes the follow-up message.
+            elif fn == "launch_app":
+                action = {
+                    "action": "app",
+                    "data": {
+                        "app": args["app_name"],
+                        "query": args.get("query", "")
+                    }
+                }
+                result = {"status": "success", "app": args["app_name"]}
 
             else:
                 result = {"error": "unknown tool"}
@@ -1759,7 +2140,13 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     else:
         final_action = {**action, "message": display_text}
 
-    return {"ok": True, "action": final_action, "reply": display_text}
+    result = {"ok": True, "action": final_action, "reply": display_text}
+
+    # Store text-only responses in cache (skip map actions — location-dependent)
+    if _cache_key and action is None:
+        _gpt_cache_set(_cache_key, result)
+
+    return result
 
 
 # ── GPT-4o REST endpoint (thin wrapper) ───────────────────────────────────────
@@ -1784,73 +2171,110 @@ def chat():
 
 @app.post("/api/gemini/chat")
 def gemini_chat():
-    """
-    Gemini as primary voice assistant — auto-forwards navigation intents to GPT-4o map engine.
+    """Gemini 2.0 Flash voice assistant for trucks."""
+    if not _gemini_ready:
+        # Fallback to GPT-4o-mini if server Gemini key is missing
+        if _gpt4o_ready:
+            body = request.get_json(silent=True) or {}
+            result = _run_gpt4o_internal(
+                (body.get("message") or "").strip(),
+                body.get("history") or [],
+                body.get("context") or {}
+            )
+            return jsonify({
+                "ok": True,
+                "reply": result.get("reply", "Разбрах, колега."),
+                "action": result.get("action")
+            })
+        return jsonify({"ok": False, "error": "Gemini не е конфигуриран."}), 503
 
-    Flow:
-      1. Gemini processes message conversationally (Bulgarian, short reply)
-      2. If Gemini detects navigation intent → appends [NAV:{...}] to its reply
-      3. Backend extracts NAV command → calls _run_gpt4o_internal()
-      4. Returns combined: Gemini reply text + GPT-4o MapAction
-
-    Body: {"message": "...", "history": [...], "context": {...}}
-    Response: {"ok": true, "reply": "...", "action": <MapAction | null>}
-    """
     body = request.get_json(silent=True) or {}
     user_msg = (body.get("message") or "").strip()
     if not user_msg:
         return jsonify({"ok": False, "error": "message is required"}), 400
 
-    # Use personal user API key if provided, else fall back to server key
-    user_api_key = (body.get("user_api_key") or "").strip()
-    if user_api_key:
+    personal_key = (body.get("user_api_key") or "").strip()
+    is_personal = bool(personal_key)
+    
+    # Use personal key if provided, else server key
+    if is_personal:
         try:
-            gemini_client_to_use = _google_genai.Client(api_key=user_api_key)
+            gemini_client_to_use = _google_genai.Client(api_key=personal_key)
         except Exception:
             gemini_client_to_use = _gemini_client
-    elif _gemini_ready:
-        gemini_client_to_use = _gemini_client
+            is_personal = False
     else:
-        return jsonify({
-            "ok":    False,
-            "error": "GEMINI_API_KEY не е конфигуриран в backend/.env",
-        }), 503
+        gemini_client_to_use = _gemini_client
 
     history = body.get("history") or []
     context = body.get("context") or {}
 
     # Build conversation for Gemini
     contents = []
-    for h in history[-6:]:
+    # Limit history to prevent token bloat
+    for h in history[-4:]:
         role = "user" if h.get("role") == "user" else "model"
         contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
+    
     ctx_note = ""
     if context.get("lat"):
         ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+    
     # Inject live tachograph state so Gemini can answer HOS questions
     user_email = (body.get("user_email") or "").strip()
     tacho = _tacho_summary(user_email)
     ctx_note += (
-        f" [ТАХОГРАФ: днес {tacho['daily_driven_h']}ч/{tacho['daily_limit_h']}ч,"
-        f" остават {tacho['daily_remaining_h']}ч;"
-        f" седмично {tacho['weekly_driven_h']}ч/{tacho['weekly_limit_h']}ч,"
-        f" остават {tacho['weekly_remaining_h']}ч]"
+        f" [ТАХОГРАФ: непрекъснато {tacho['continuous_driven_h']}ч/4.5ч; "
+        f"днес {tacho['daily_driven_h']}ч/9ч; "
+        f"седмично {tacho['weekly_driven_h']}ч/56ч; "
+        f"двуседмично {tacho['biweekly_driven_h']}ч/90ч]"
     )
+    
     contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
+    def _call_gemini(client_to_use):
+        """Call Gemini API with retry logic for 429 errors."""
+        import time as _time
+        for attempt in range(2):
+            try:
+                return client_to_use.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=contents,
+                    config={
+                        "system_instruction": _GEMINI_SYSTEM,
+                        "temperature":        0.65,
+                        "max_output_tokens":  300,
+                    },
+                )
+            except Exception as e:
+                # If rate limited, wait 2s and retry once
+                if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and attempt == 0:
+                    _time.sleep(2)
+                    continue
+                raise e
+
+    def _fmt_err(raw, personal=False):
+        r = raw.lower()
+        if ("quota" in r and ("exceeded" in r or "billing" in r or "plan" in r)) \
+                or "perday" in r or ("per_day" in r and "quota" in r):
+            source = "Личният ти" if personal else "Сървърният"
+            return (f"{source} Gemini ключ е изчерпал квотата си. "
+                    "Опитай пак след 60 секунди или провери настройките (⚙️).")
+        if "resource_exhausted" in r or "429" in raw:
+            return "Gemini е претоварен (15 съобщения/мин). Изчакай 30 сек."
+        if "timeout" in r or "deadline" in r:
+            return "Gemini не отговори навреме. Опитай пак."
+        if "api_key" in r or "401" in raw or "403" in raw:
+            return "Невалиден Gemini API ключ. Провери в настройките (⚙️ → Gemini ключ)."
+        return f"Gemini грешка: {raw[:120]}"
+
     try:
-        resp = gemini_client_to_use.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config={
-                "system_instruction": _GEMINI_SYSTEM,
-                "temperature":        0.65,
-                "max_output_tokens":  300,
-            },
-        )
+        resp = _call_gemini(gemini_client_to_use)
         gemini_text = (resp.text or "").strip()
     except Exception as exc:
-        return jsonify({"ok": False, "error": f"Gemini грешка: {str(exc)}"}), 500
+        err_raw = str(exc)
+        print(f"[Gemini] Error: {err_raw[:300]}", flush=True)
+        return jsonify({"ok": False, "error": _fmt_err(err_raw, is_personal)}), 500
 
     # Extract navigation intent → forward to GPT-4o map engine
     nav_command, clean_reply = _extract_nav_intent(gemini_text)
@@ -1924,16 +2348,125 @@ def delete_poi(poi_id: int):
     return jsonify({"ok": True})
 
 
+# ── TomTom Route Calculator (called directly from mobile directions.ts) ───────
+
+@app.route("/api/routes/calculate", methods=["POST"])
+def calculate_route():
+    """
+    Calculate a truck-safe route via TomTom Routing API.
+    Called by mobile directions.ts instead of Mapbox Directions directly.
+
+    Body: {
+      origin:      [lng, lat],
+      destination: [lng, lat],
+      waypoints:   [[lng, lat], ...],   // optional
+      truck: {
+        max_height, max_width, max_weight, max_length,
+        axle_count, hazmat_class
+      },
+      depart_at:  "ISO 8601"            // optional
+    }
+    """
+    data        = request.json or {}
+    origin      = data.get("origin")
+    destination = data.get("destination")
+    waypoints   = data.get("waypoints", [])
+    truck       = data.get("truck", {})
+    depart_at   = data.get("depart_at")
+
+    if not origin or not destination:
+        return jsonify({"error": "origin and destination required"}), 400
+    if not _tomtom_ready:
+        return jsonify({"error": "TomTom API key not configured"}), 503
+
+    all_points = [origin] + waypoints + [destination]
+    locations  = ":".join(f"{p[1]},{p[0]}" for p in all_points)
+    url        = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+
+    params: dict = {
+        "key":                  _TOMTOM_KEY,
+        "travelMode":           "truck",
+        "traffic":              "true",
+        "computeTravelTimeFor": "all",
+        "routeType":            "fastest",
+        "instructionsType":     "tagged",
+        "language":             "bg-BG",
+        "sectionType":          "traffic,lanes",
+    }
+
+
+    if truck.get("max_height"):  params["vehicleHeight"]       = truck["max_height"]
+    if truck.get("max_width"):   params["vehicleWidth"]        = truck["max_width"]
+    if truck.get("max_weight"):  params["vehicleWeight"]       = int(truck["max_weight"] * 1000)
+    if truck.get("max_length"):  params["vehicleLength"]       = truck["max_length"]
+    if truck.get("axle_count"):  params["vehicleNumberOfAxles"] = truck["axle_count"]
+    code = _adr_to_tunnel_code(truck.get("hazmat_class", "none") or "none")
+    if code:
+        params["vehicleAdrTunnelRestrictionCode"] = code
+    if depart_at:
+        params["departAt"] = depart_at
+
+    try:
+        r = requests.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        routes_data = r.json().get("routes", [])
+        if not routes_data:
+            return jsonify({"error": "Няма намерен маршрут"}), 404
+
+        rt       = routes_data[0]
+        summary  = rt.get("summary", {})
+        geometry = _tomtom_route_to_geojson(rt)
+
+        # Build steps from TomTom guidance instructions (at route level, not inside legs)
+        instructions = rt.get("guidance", {}).get("instructions", [])
+        total_meters = summary.get("lengthInMeters", 0)
+        steps = []
+        for i, instr in enumerate(instructions):
+            current_offset = instr.get("routeOffsetInMeters", 0)
+            next_offset = instructions[i + 1].get("routeOffsetInMeters", 0) if i + 1 < len(instructions) else total_meters
+            step_distance = max(0, next_offset - current_offset)
+            banner = _tomtom_lane_banner(instr)
+            steps.append({
+                "maneuver": {
+                    "instruction": instr.get("message", ""),
+                    "type":        instr.get("maneuver", ""),
+                    "modifier":    None,
+                },
+                "distance":          step_distance,
+                "duration":          instr.get("travelTimeInSeconds", 0),
+                "name":              instr.get("street", ""),
+                "intersections":     [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}]
+                    if instr.get("point") else [],
+                "bannerInstructions": [banner] if banner else [],
+            })
+
+        return jsonify({
+            "geometry":          geometry,
+            "distance":          summary.get("lengthInMeters", 0),
+            "duration":          summary.get("travelTimeInSeconds", 0),
+            "traffic_delay":     summary.get("trafficDelayInSeconds", 0),
+            "steps":             steps,
+            "maxspeeds":         _tomtom_speed_limits(rt),
+            "congestionGeoJSON": _tomtom_congestion_geojson(rt, geometry),
+            "traffic_alerts":    _tomtom_traffic_alerts(rt, geometry),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 # ── Truck Restriction Checker ─────────────────────────────────────────────────
 
 @app.route("/api/check-truck-restrictions", methods=["POST"])
 def check_truck_restrictions():
     """
     Check if route is compatible with the truck profile.
+    Phase 1: static dimension rules (fast, always runs).
+    Phase 2: real TomTom truck routing feasibility check (when coords provided).
     Returns a list of human-readable warnings (Bulgarian).
     """
     data    = request.json or {}
     profile = data.get("profile", {})
+    coords  = data.get("coords", [])   # [[lng, lat], ...] — origin + destination
 
     warnings: list = []
 
@@ -1945,6 +2478,7 @@ def check_truck_restrictions():
     except (ValueError, TypeError):
         return jsonify({"ok": True, "safe": True, "warnings": []})
 
+    # ── Phase 1: Static dimension rules ──────────────────────────────────────
     if weight_t > 60:
         warnings.append(f"🚫 Теглото {weight_t}т надвишава максималния лимит 60т — пътят може да е забранен")
     elif weight_t > 44:
@@ -1962,6 +2496,42 @@ def check_truck_restrictions():
             warnings.append(f"ℹ️ ADR клас {hazmat}: маршрутът автоматично избягва тунели")
         elif cls == 7:
             warnings.append(f"ℹ️ ADR клас 7 (радиоактивно): маршрутът избягва тунели и магистрали")
+
+    # ── Phase 2: TomTom route feasibility check ───────────────────────────────
+    # Requires at least origin + destination coordinates and a valid API key.
+    if _tomtom_ready and len(coords) >= 2:
+        try:
+            origin = coords[0]   # [lng, lat]
+            dest   = coords[-1]
+            locations = f"{origin[1]},{origin[0]}:{dest[1]},{dest[0]}"
+            tt_params: dict = {
+                "key":        _TOMTOM_KEY,
+                "travelMode": "truck",
+                "routeType":  "fastest",
+                "traffic":    "false",
+            }
+            if height_m: tt_params["vehicleHeight"]  = height_m
+            if width_m:  tt_params["vehicleWidth"]   = width_m
+            if weight_t: tt_params["vehicleWeight"]  = int(weight_t * 1000)
+            code = _adr_to_tunnel_code(hazmat)
+            if code: tt_params["vehicleAdrTunnelRestrictionCode"] = code
+
+            tt_url = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
+            tr = requests.get(tt_url, params=tt_params, timeout=10)
+
+            if tr.status_code == 200:
+                tt_routes = tr.json().get("routes", [])
+                if not tt_routes:
+                    warnings.append("🚫 TomTom: Няма възможен маршрут за камион с тези параметри")
+                # No additional warning when route exists — truck is compatible
+            elif tr.status_code == 400:
+                detail = tr.json().get("detailedError", {}).get("message", "")
+                if detail:
+                    warnings.append(f"⚠️ TomTom: {detail}")
+                else:
+                    warnings.append("⚠️ TomTom: Маршрутът не е съвместим с тези размери")
+        except Exception:
+            pass  # TomTom unavailable — static rules are sufficient
 
     critical = any("🚫" in w for w in warnings)
 
@@ -1981,7 +2551,7 @@ def gemini_validate():
     Sends a minimal ping to Gemini and returns ok/error.
 
     Body: {"api_key": "AIza..."}
-    Response: {"ok": true, "model": "gemini-2.5-flash"} | {"ok": false, "error": "..."}
+    Response: {"ok": true, "model": "gemini-2.0-flash"} | {"ok": false, "error": "..."}
     """
     body = request.get_json(silent=True) or {}
     api_key = (body.get("api_key") or "").strip()
@@ -1991,12 +2561,12 @@ def gemini_validate():
     try:
         test_client = _google_genai.Client(api_key=api_key)
         resp = test_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=[{"role": "user", "parts": [{"text": "ping"}]}],
             config={"max_output_tokens": 5},
         )
         _ = resp.text  # trigger any auth errors
-        return jsonify({"ok": True, "model": "gemini-2.5-flash"})
+        return jsonify({"ok": True, "model": "gemini-2.0-flash"})
     except Exception as exc:
         err = str(exc)
         if "API_KEY_INVALID" in err or "INVALID_ARGUMENT" in err:
@@ -2012,14 +2582,16 @@ def gemini_validate():
 
 @app.post("/api/tacho/session")
 def tacho_save_session():
-    """Save a completed driving session.
+    """Save a completed session (driving, break, or rest).
 
-    Body: { user_email, driven_seconds, date (YYYY-MM-DD), start_time, end_time }
+    Body: { user_email, driven_seconds, date (YYYY-MM-DD), start_time, end_time, type }
     Returns summary for the day + week.
     """
     body = request.get_json(silent=True) or {}
     user_email     = (body.get("user_email") or "").strip()
     driven_seconds = int(body.get("driven_seconds") or 0)
+    sess_type      = (body.get("type") or "driving").strip()
+
     if driven_seconds <= 0:
         return jsonify({"ok": False, "error": "driven_seconds must be > 0"}), 400
 
@@ -2031,9 +2603,9 @@ def tacho_save_session():
 
     with get_db() as db:
         db.execute(
-            "INSERT INTO tacho_sessions (user_email, date, start_time, end_time, driven_seconds)"
-            " VALUES (?,?,?,?,?)",
-            (user_email, date_str, start_time, end_time, driven_seconds),
+            "INSERT INTO tacho_sessions (user_email, date, start_time, end_time, driven_seconds, type)"
+            " VALUES (?,?,?,?,?,?)",
+            (user_email, date_str, start_time, end_time, driven_seconds, sess_type),
         )
         db.commit()
 
@@ -2051,26 +2623,172 @@ def tacho_get_summary():
     return jsonify({"ok": True, **_tacho_summary(user_email)})
 
 
-# ── Google Sync (placeholder) ──────────────────────────────────────────────────
+@app.get("/api/user/settings")
+def get_user_settings():
+    """Retrieve per-user settings like Gemini API key from the cloud."""
+    user_email = (request.args.get("user_email") or "").strip()
+    if not user_email:
+        return jsonify({"ok": False, "error": "user_email is required"}), 400
+    with get_db() as db:
+        row = db.execute("SELECT * FROM user_settings WHERE user_email=?", (user_email,)).fetchone()
+        if row:
+            return jsonify({"ok": True, "gemini_api_key": row["gemini_api_key"]})
+    return jsonify({"ok": True, "gemini_api_key": None})
+
+
+@app.post("/api/user/settings")
+def save_user_settings():
+    """Save/update per-user settings in the cloud database."""
+    body = request.get_json(silent=True) or {}
+    user_email = (body.get("user_email") or "").strip()
+    key = (body.get("gemini_api_key") or "").strip()
+    if not user_email:
+        return jsonify({"ok": False, "error": "user_email is required"}), 400
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO user_settings (user_email, gemini_api_key, updated_at) "
+            "VALUES (?, ?, ?)",
+            (user_email, key, now_iso()),
+        )
+        db.commit()
+    return jsonify({"ok": True})
+
+
+# ── Google Sync (Real implementation) ──────────────────────────────────────────
 
 @app.route("/api/google-sync", methods=["GET", "POST"])
 def google_sync():
     """
-    Placeholder endpoint for Google Maps / Google Drive POI sync.
-
-    Planned features:
-      GET  /api/google-sync        → list synced Google Places / starred locations
-      POST /api/google-sync        → import Google Maps saved places into truckai.db
-      POST /api/google-sync/export → push local POIs back to Google My Maps
-
-    Auth flow (upcoming): OAuth2 PKCE → google.com/maps → access_token stored per user.
+    Import/Export POIs for Google Account integration.
+    GET: List current synced POIs for the user.
+    POST: Bulk import POIs from a Google-exported JSON or external list.
     """
+    user_email = (request.args.get("user_email") or "").strip()
+    if not user_email:
+        return jsonify({"ok": False, "error": "user_email is required"}), 400
+
+    if request.method == "GET":
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pois WHERE user_email = ? AND category = 'google_synced' ORDER BY created_at DESC",
+                (user_email,)
+            ).fetchall()
+        return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
+
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        pois = body.get("pois", [])
+        if not pois:
+            return jsonify({"ok": False, "error": "No POIs provided for sync"}), 400
+        
+        imported_count = 0
+        with get_db() as conn:
+            for p in pois:
+                name = (p.get("name") or "").strip()
+                lat  = p.get("lat")
+                lng  = p.get("lng")
+                if name and lat is not None and lng is not None:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO pois (name, address, category, lat, lng, notes, user_email, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (name, p.get("address", ""), "google_synced",
+                         float(lat), float(lng), p.get("notes", ""), user_email, now_iso()),
+                    )
+                    imported_count += 1
+            conn.commit()
+        return jsonify({"ok": True, "imported": imported_count})
+
+
+@app.get("/api/proximity-alerts")
+def proximity_alerts():
+    """Get speed cameras and overtaking restrictions within a radius (default 10km)."""
+    lat = request.args.get("lat", type=float)
+    lng = request.args.get("lng", type=float)
+    radius_m = request.args.get("radius_m", default=10000, type=int)
+
+    if lat is None or lng is None:
+        return jsonify({"ok": False, "error": "lat and lng required"}), 400
+
+    cameras = _tool_find_speed_cameras(lat, lng, radius_m)
+    overtaking = _tool_find_overtaking_restrictions(lat, lng, radius_m)
+
     return jsonify({
-        "ok":      True,
-        "status":  "not_implemented",
-        "message": "Google Sync endpoint — integration coming soon.",
-        "planned": ["import_saved_places", "export_pois", "sync_starred"],
+        "ok": True,
+        "cameras": cameras.get("cameras", []),
+        "overtaking": overtaking.get("restrictions", []),
+        "nearest_camera_m": cameras.get("nearest_m", -1)
     })
+
+
+# ── Gemini multimodal audio transcription ────────────────────────────────────
+
+@app.post("/api/gemini/transcribe")
+def gemini_transcribe():
+    """Gemini multimodal audio transcription (M4A)."""
+    if not _gemini_ready:
+        return transcribe() # fallback to Whisper
+
+    audio_file = request.files.get("audio")
+    if not audio_file:
+        return jsonify({"ok": False, "error": "No audio file provided."}), 400
+
+    personal_key = (request.form.get("user_api_key") or "").strip()
+    is_personal = bool(personal_key)
+    
+    if is_personal:
+        try:
+            gemini_client_to_use = _google_genai.Client(api_key=personal_key)
+        except Exception:
+            gemini_client_to_use = _gemini_client
+    else:
+        gemini_client_to_use = _gemini_client
+
+    try:
+        audio_data = audio_file.read()
+        resp = gemini_client_to_use.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                {"role": "user", "parts": [
+                    {"inline_data": {"data": audio_data, "mime_type": audio_file.mimetype or "audio/m4a"}},
+                    {"text": "Transcribe the following Bulgarian speech to text exactly. Return ONLY the text."}
+                ]}
+            ],
+            config={"temperature": 0.0}
+        )
+        text = (resp.text or "").strip()
+        return jsonify({"ok": bool(text), "text": text})
+    except Exception as exc:
+        print(f"[Gemini Transcribe] Error: {str(exc)}", flush=True)
+        return transcribe() # fallback on error
+
+
+# ── Whisper transcription (OpenAI fallback) ───────────────────────────────────
+
+@app.post("/api/transcribe")
+def whisper_transcribe():
+    """Transcribe audio using OpenAI Whisper (fallback when Gemini unavailable).
+
+    Accepts multipart/form-data with field 'audio'.
+    Returns: { ok, text } or { ok: false, error }
+    """
+    if not _gpt4o_ready:
+        return jsonify({"ok": False, "error": "OpenAI не е конфигуриран."}), 503
+
+    audio_file = request.files.get("audio")
+    if not audio_file:
+        return jsonify({"ok": False, "error": "No audio file provided."}), 400
+
+    try:
+        audio_file.stream.seek(0)
+        resp = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio_file.filename or "recording.m4a", audio_file.stream, audio_file.mimetype or "audio/m4a"),
+            language="bg",
+        )
+        text = (resp.text or "").strip()
+        return jsonify({"ok": bool(text), "text": text})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Whisper error: {str(exc)[:120]}"}), 500
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

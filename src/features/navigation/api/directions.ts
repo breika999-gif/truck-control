@@ -1,4 +1,5 @@
-import { MAPBOX_PUBLIC_TOKEN } from '../../../shared/constants/config';
+import type GeoJSON from 'geojson';
+import { BACKEND_URL } from '../../../shared/constants/config';
 
 export interface MaxspeedEntry {
   speed?: number;
@@ -13,7 +14,7 @@ export interface VoiceInstruction {
 }
 
 export interface BannerComponent {
-  type: 'text' | 'lane' | 'icon' | 'exit-number' | 'exit';
+  type: 'text' | 'lane' | 'icon' | 'exit-number' | 'exit' | 'delimiter';
   text: string;
   active?: boolean;
   directions?: string[];
@@ -22,7 +23,18 @@ export interface BannerComponent {
 /** Structured lane-guidance and turn instruction from Mapbox banner_instructions. */
 export interface BannerInstruction {
   distanceAlongGeometry: number;
-  primary: { text: string; type: string; modifier?: string };
+  primary: {
+    text: string;
+    type: string;
+    modifier?: string;
+    /** Components array — contains exit-number, text (destinations), icon, delimiter parts */
+    components?: BannerComponent[];
+  };
+  /** Secondary sign — additional road names / route numbers (e.g. "A1 / E80") */
+  secondary?: {
+    text: string;
+    components?: BannerComponent[];
+  };
   /** sub contains lane components — use sub.components.filter(c => c.type === 'lane') */
   sub?: { components: BannerComponent[] };
 }
@@ -52,6 +64,38 @@ export interface RouteResult {
   /** Per-coordinate congestion level: 'low' | 'moderate' | 'heavy' | 'severe' | 'unknown' */
   congestion: string[];
   steps: RouteStep[];
+  /** Pre-built FeatureCollection for congestion-colored line rendering — never null */
+  congestionGeoJSON: GeoJSON.FeatureCollection;
+}
+
+/**
+ * Build a congestion-colored FeatureCollection from route coordinates + Mapbox annotation array.
+ * Each feature is a 2-point LineString tagged with its congestion level.
+ * Used by MapScreen LineLayer to color the route: low=neon, moderate=yellow, heavy/severe=red.
+ */
+export function buildCongestionGeoJSON(
+  coords: [number, number][],
+  congestion: string[],
+): GeoJSON.FeatureCollection {
+  if (congestion.length === 0 || coords.length < 2) {
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: { congestion: 'unknown' },
+        geometry: { type: 'LineString', coordinates: coords },
+      }],
+    };
+  }
+  const features: GeoJSON.Feature[] = [];
+  for (let i = 0; i < congestion.length && i + 1 < coords.length; i++) {
+    features.push({
+      type: 'Feature',
+      properties: { congestion: congestion[i] || 'unknown' },
+      geometry: { type: 'LineString', coordinates: [coords[i], coords[i + 1]] },
+    });
+  }
+  return { type: 'FeatureCollection', features };
 }
 
 export interface TruckDimensions {
@@ -74,85 +118,59 @@ export function adrToExclude(hazmat: string): string | undefined {
 }
 
 /**
- * Fetch a truck-aware route with turn-by-turn steps and speed limits.
- * Mapbox Directions API v5 — driving-traffic profile.
- * Docs: https://docs.mapbox.com/api/navigation/directions/
- *
- * Truck dimension params filter roads with physical restrictions:
- *   max_height, max_width, max_weight
- *
- * NOTE: No dedicated truck profile exists — driving-traffic is used.
- * NOTE: Overtaking restriction data is not available via Mapbox API.
+ * Fetch a truck-safe route via the Flask backend → TomTom Routing API.
+ * travelMode=truck with full HGV params: height, width, weight, length,
+ * axle count, ADR tunnel restriction code.
+ * Real-time traffic is included by default in every TomTom response.
  */
 export async function fetchRoute(
   origin: [number, number],
   destination: [number, number],
   truck?: TruckDimensions,
-  departAt?: string,            // ISO 8601 — enables traffic prediction for future departure
-  waypoints?: [number, number][], // intermediate forced waypoints [lng, lat]
+  departAt?: string,
+  waypoints?: [number, number][],
 ): Promise<RouteResult | null> {
-  const allPoints = [origin, ...(waypoints ?? []), destination];
-  const coords = allPoints.map(p => `${p[0]},${p[1]}`).join(';');
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/routes/calculate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        origin,
+        destination,
+        waypoints: waypoints ?? [],
+        truck: truck ?? {},
+        depart_at: departAt ?? null,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.error) return null;
 
-  const params = new URLSearchParams({
-    access_token: MAPBOX_PUBLIC_TOKEN,
-    geometries: 'geojson',
-    overview: 'full',
-    steps: 'true',
-    annotations: 'maxspeed,congestion',
-    banner_instructions: 'true',
-    voice_instructions: 'true',
-    language: 'bg',
-  });
+    const routeCoords: [number, number][] = data.geometry?.coordinates ?? [];
 
-  if (truck?.max_height != null) params.set('max_height', String(truck.max_height));
-  if (truck?.max_width != null)  params.set('max_width',  String(truck.max_width));
-  if (truck?.max_weight != null) params.set('max_weight', String(truck.max_weight));
-  if (truck?.max_length != null) params.set('max_length', String(truck.max_length));
-  if (truck?.exclude)            params.set('exclude', truck.exclude);
-  if (departAt)                  params.set('depart_at', departAt);
+    // Map TomTom steps to RouteStep format
+    const steps: RouteStep[] = (data.steps ?? []).map((s: any) => ({
+      maneuver:           s.maneuver ?? { instruction: '', type: '', modifier: undefined },
+      distance:           s.distance ?? 0,
+      duration:           s.duration ?? 0,
+      name:               s.name ?? '',
+      intersections:      s.intersections ?? [],
+      voiceInstructions:  [],
+      bannerInstructions: s.bannerInstructions ?? [],
+    }));
 
-  const url =
-    `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coords}?${params}`;
-
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json();
-
-  const r = data.routes?.[0];
-  if (!r) return null;
-
-  // Flatten steps from all legs, mapping voice_instructions snake_case → camelCase
-  const steps: RouteStep[] = (r.legs ?? []).flatMap(
-    (leg: { steps?: any[] }) =>
-      (leg.steps ?? []).map((s: any) => ({
-        maneuver: s.maneuver,
-        distance: s.distance,
-        duration: s.duration,
-        name: s.name,
-        intersections: s.intersections ?? [],
-        voiceInstructions: (s.voice_instructions ?? []).map(
-          (vi: { distance_along_geometry: number; announcement: string }) => ({
-            distanceAlongGeometry: vi.distance_along_geometry,
-            announcement: vi.announcement,
-          }),
-        ),
-        bannerInstructions: (s.banner_instructions ?? []).map((bi: any) => ({
-          distanceAlongGeometry: bi.distance_along_geometry,
-          primary: bi.primary,
-          sub: bi.sub ? { components: bi.sub.components ?? [] } : undefined,
-        })),
-      })),
-  );
-
-  return {
-    geometry: r.geometry,
-    distance: r.distance,
-    duration: r.duration,
-    maxspeeds: r.legs?.[0]?.annotation?.maxspeed ?? [],
-    congestion: r.legs?.[0]?.annotation?.congestion ?? [],
-    steps,
-  };
+    return {
+      geometry:          data.geometry,
+      distance:          data.distance,
+      duration:          data.duration,
+      maxspeeds:         data.maxspeeds ?? [],
+      congestion:        [],
+      congestionGeoJSON: data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
+      steps,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Current road speed limit at user's position (km/h), or null if unknown. */
@@ -287,6 +305,20 @@ export function optimizeWaypointOrder(
     remaining.splice(minIdx, 1);
   }
   return ordered;
+}
+
+/** Format distance in human-readable Bulgarian. */
+export function fmtDistance(meters: number): string {
+  if (meters < 1000) return `${Math.round(meters)} м`;
+  return `${(meters / 1000).toFixed(1)} км`;
+}
+
+/** Format duration in human-readable Bulgarian. */
+export function fmtDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  if (h === 0) return `${m} мин`;
+  return `${h} ч ${m} мин`;
 }
 
 /** Emoji for maneuver type + modifier. */

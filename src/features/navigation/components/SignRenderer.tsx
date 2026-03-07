@@ -6,13 +6,13 @@
  * - Green sign → primary / secondary road
  *
  * Layout:
- *   No lanes  → full-width sign with arrow + road name + distance badge
+ *   No lanes  → full-width sign with arrow + exit number + destinations + distance
  *   Has lanes → split: sign (left, 60 %) + lane diagram (right, 40 %)
  *               — Garmin dēzl style —
  */
 import React, { useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
-import type { RouteStep, BannerComponent } from '../api/directions';
+import type { RouteStep, BannerInstruction, BannerComponent } from '../api/directions';
 
 // ── Public trigger constant (re-exported so MapScreen can use it) ────────────
 export const SIGN_TRIGGER_M = 800;
@@ -20,8 +20,9 @@ export const SIGN_TRIGGER_M = 800;
 interface Props {
   step: RouteStep;
   nextStep?: RouteStep;
-  distToTurn: number;   // metres to turn
+  distToTurn: number;        // metres to turn
   lanes: BannerComponent[];
+  banner?: BannerInstruction; // full Mapbox banner — for exit number + destinations
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -72,9 +73,31 @@ function fmtDist(m: number): string {
   return `${Math.round(m / 10) * 10} м`;
 }
 
+/**
+ * Extract exit number from banner primary components.
+ * Mapbox returns components like: [{type:'exit',text:'Exit'}, {type:'exit-number',text:'42'}, ...]
+ */
+function extractExitNumber(banner?: BannerInstruction): string | null {
+  const comps = banner?.primary?.components ?? [];
+  const exitNum = comps.find(c => c.type === 'exit-number');
+  return exitNum?.text ?? null;
+}
+
+/**
+ * Extract destination names from banner primary components (type === 'text').
+ * Returns up to 2 destination strings (e.g. ['Sofia', 'Plovdiv']).
+ */
+function extractDestinations(banner?: BannerInstruction): string[] {
+  const comps = banner?.primary?.components ?? [];
+  return comps
+    .filter(c => c.type === 'text' && c.text.trim().length > 0)
+    .map(c => c.text.trim())
+    .slice(0, 2);
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function SignRenderer({ step, nextStep, distToTurn, lanes }: Props) {
+export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner }: Props) {
   // ── Pulsing glow for active lane boxes ─────────────────────────────────────
   const laneGlowAnim = useRef(new Animated.Value(0)).current;
   const laneGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -110,10 +133,16 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes }: Prop
 
   if (distToTurn > SIGN_TRIGGER_M) return null;
 
-  const color    = signColor(step);
-  const arrow    = signArrow(step.maneuver.modifier);
-  const label    = step.name || step.maneuver.instruction;
-  const hasSplit = lanes.length > 0;
+  const color        = signColor(step);
+  const arrow        = signArrow(step.maneuver.modifier);
+  const hasSplit     = lanes.length > 0;
+  const exitNumber   = extractExitNumber(banner);
+  const destinations = extractDestinations(banner);
+  // Fallback to step.name if no destinations from banner components
+  const primaryLabel = destinations.length > 0 ? destinations[0] : (step.name || step.maneuver.instruction);
+  const secondaryLabel = destinations.length > 1
+    ? destinations[1]
+    : (banner?.secondary?.text ?? null);
 
   const signBg  = color === 'blue' ? '#1a5fb4' : '#1e6b1e';
   const signBdr = color === 'blue' ? '#5a9fd4' : '#5abf5a';
@@ -127,18 +156,28 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes }: Prop
         styles.signPanel,
         { backgroundColor: signBg, flex: hasSplit ? 6 : 10 },
       ]}>
-        {/* Top stripe — EU sign style */}
+        {/* Top stripe — distance + road type + exit number */}
         <View style={[styles.topStripe, { backgroundColor: accent }]}>
           <Text style={styles.stripeDist}>{fmtDist(distToTurn)}</Text>
           <Text style={styles.stripeLabel} numberOfLines={1}>
             {color === 'blue' ? 'МАГИСТРАЛА' : 'ПЪТ'}
           </Text>
+          {exitNumber != null && (
+            <View style={styles.exitBadge}>
+              <Text style={styles.exitBadgeText}>⬡ {exitNumber}</Text>
+            </View>
+          )}
         </View>
 
-        {/* Main direction row */}
+        {/* Main direction row — arrow + primary destination */}
         <View style={styles.mainRow}>
           <Text style={styles.bigArrow}>{arrow}</Text>
-          <Text style={styles.roadLabel} numberOfLines={2}>{label}</Text>
+          <View style={styles.destColumn}>
+            <Text style={styles.roadLabel} numberOfLines={1}>{primaryLabel}</Text>
+            {secondaryLabel != null && (
+              <Text style={styles.roadLabelSub} numberOfLines={1}>{secondaryLabel}</Text>
+            )}
+          </View>
         </View>
 
         {/* Next step hint */}
@@ -215,6 +254,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 3,
+    gap: 6,
   },
   stripeDist: {
     color: '#ffffff',
@@ -227,7 +267,24 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '700',
     letterSpacing: 1.2,
+    flex: 1,
+    textAlign: 'center',
   },
+  // Google Maps-style exit number badge — yellow hexagon shape
+  exitBadge: {
+    backgroundColor: '#f5c518',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  exitBadgeText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+
+  // Main direction row
   mainRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -240,12 +297,22 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     lineHeight: 44,
   },
-  roadLabel: {
+  destColumn: {
     flex: 1,
+    gap: 2,
+  },
+  roadLabel: {
     fontSize: 17,
     fontWeight: '800',
     color: '#ffffff',
     lineHeight: 22,
+  },
+  // Secondary destination (e.g. "A1 / E80" under main name)
+  roadLabelSub: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.80)',
+    lineHeight: 17,
   },
   nextHint: {
     paddingHorizontal: 10,

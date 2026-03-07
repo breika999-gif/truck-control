@@ -86,3 +86,19 @@ backend/__pycache__/
 backend/*.pyc
 backend/flask_test.log
 backend/truckai.db
+
+# Logs (auto-generated — never commit)
+*.log
+backend/*.log
+android/*.log
+
+# UI Automation Dumps (temporary debugging artifacts)
+*.xml
+android/*.xml
+ui_bounds.txt
+
+# Debug Screenshots (root + android — app assets in src/ are kept)
+*.png
+android/*.png
+!src/**/*.png
+!src/shared/assets/*.png
