@@ -2391,7 +2391,7 @@ def calculate_route():
         "routeType":            "fastest",
         "instructionsType":     "tagged",
         "language":             "bg-BG",
-        "sectionType":          "traffic,lanes",
+        "sectionType":          "traffic",
     }
 
 
@@ -2794,7 +2794,7 @@ def whisper_transcribe():
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    port  = int(os.getenv("FLASK_PORT", 5050))
+    port  = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))
     debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
     print(f"TruckAI Pro backend @ http://0.0.0.0:{port}")
     print(f"GPT-4o ready: {_gpt4o_ready}")
