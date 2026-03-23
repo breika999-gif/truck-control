@@ -5,3 +5,7 @@ node_modules/
 android/
 ios/
 .gradle/
+Gemfile
+Gemfile.lock
+package.json
+package-lock.json
