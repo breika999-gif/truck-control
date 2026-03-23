@@ -2807,4 +2807,5 @@ if __name__ == "__main__":
     debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
     print(f"TruckAI Pro backend @ http://0.0.0.0:{port}")
     print(f"GPT-4o ready: {_gpt4o_ready}")
+    print(f"Gemini model: {_GEMINI_MODEL}")
     app.run(host="0.0.0.0", port=port, debug=debug)
