@@ -105,7 +105,38 @@ export async function fetchNearbyParking(
   }
 }
 
-// ── 3. Nearby road restrictions (tunnels) ────────────────────────────────────
+// ── 3. Speed limit at point ───────────────────────────────────────────────────
+
+/**
+ * Fetch the speed limit (km/h) of the nearest road segment at a given point.
+ * Uses mapbox-streets-v8 road layer — returns null if unavailable.
+ */
+export async function fetchSpeedLimitAtPoint(
+  lng: number,
+  lat: number,
+): Promise<number | null> {
+  try {
+    const url =
+      `${BASE}/mapbox.mapbox-streets-v8/tilequery/${lng},${lat}.json` +
+      `?layers=road&radius=25&limit=5&geometry=linestring&access_token=${MAPBOX_PUBLIC_TOKEN}`;
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    for (const f of data.features ?? []) {
+      const raw = f.properties?.maxspeed;
+      if (typeof raw === 'number' && raw > 0) {
+        return f.properties?.maxspeed_unit === 'mph'
+          ? Math.round(raw * 1.609)
+          : raw;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ── 4. Nearby road restrictions (tunnels) ────────────────────────────────────
 
 export interface RestrictionResult {
   hasTunnel: boolean;

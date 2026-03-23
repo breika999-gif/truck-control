@@ -16,7 +16,6 @@ interface ChatProps {
   setGptHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   geminiHistory: ChatMessage[];
   setGeminiHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  geminiPersonalKey: string;
   googleUser: GoogleAccount | null;
   voiceMutedRef: React.MutableRefObject<boolean>;
   navigateTo: (dest: [number, number], name: string, waypoints?: [number, number][], autoStart?: boolean) => void;
@@ -42,7 +41,6 @@ export function useChat({
   setGptHistory,
   geminiHistory,
   setGeminiHistory,
-  geminiPersonalKey,
   googleUser,
   voiceMutedRef,
   navigateTo,
@@ -175,7 +173,6 @@ export function useChat({
       text,
       geminiHistory.slice(-4),
       context,
-      geminiPersonalKey || undefined,
       googleUser?.email || undefined
     );
     if (!isMountedRef.current) return;
@@ -195,7 +192,7 @@ export function useChat({
     if (response.app_intent) { handleAppIntent(response.app_intent); }
 
     setGeminiLoading(false);
-  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, geminiPersonalKey, googleUser, handleAppIntent]);
+  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, googleUser, handleAppIntent]);
 
   return {
     gptLoading,

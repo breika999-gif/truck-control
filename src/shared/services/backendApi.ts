@@ -316,7 +316,6 @@ export async function sendGeminiMessage(
   message: string,
   history: ChatMessage[] = [],
   context?: ChatContext,
-  userApiKey?: string,
   userEmail?: string,
 ): Promise<ChatResponse> {
   try {
@@ -326,7 +325,6 @@ export async function sendGeminiMessage(
         message,
         history,
         context,
-        user_api_key: userApiKey,
         user_email: userEmail,
       }),
     });
@@ -340,7 +338,6 @@ export async function sendGeminiMessage(
 /** Transcribe audio via Gemini 2.0 Flash multimodal (preferred — no Whisper quota needed). */
 export async function transcribeGemini(
   audioPath: string,
-  userApiKey?: string,
   userEmail?: string,
 ): Promise<string | null> {
   const controller = new AbortController();
@@ -352,7 +349,6 @@ export async function transcribeGemini(
       type: 'audio/m4a',
       name: 'recording.m4a',
     } as unknown as Blob);
-    if (userApiKey) form.append('user_api_key', userApiKey);
     if (userEmail)  form.append('user_email',  userEmail);
 
     const res = await fetch(`${BACKEND_URL}/api/gemini/transcribe`, {

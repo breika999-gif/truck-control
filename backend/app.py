@@ -47,7 +47,7 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = "gemini-1.5-flash"
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 try:
     from google import genai as _google_genai
@@ -2560,7 +2560,7 @@ def gemini_validate():
     Sends a minimal ping to Gemini and returns ok/error.
 
     Body: {"api_key": "AIza..."}
-    Response: {"ok": true, "model": "gemini-2.5-flash"} | {"ok": false, "error": "..."}
+    Response: {"ok": true, "model": "gemini-1.5-flash"} | {"ok": false, "error": "..."}
     """
     body = request.get_json(silent=True) or {}
     api_key = (body.get("api_key") or "").strip()

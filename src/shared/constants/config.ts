@@ -6,10 +6,8 @@ export const MAPBOX_PUBLIC_TOKEN =
 // Routing calls go through backend/.env TOMTOM_API_KEY
 export const TOMTOM_API_KEY = 'ZHxLBBp74UwTtWXXEhAx7RZNBgeLxv8K';
 
-// Flask backend — ADB reverse tunnel (adb reverse tcp:5050 tcp:5050)
-// When running on a physical Android device, Metro is already tunnelled on
-// 8081. We do the same for Flask: run once → adb reverse tcp:5050 tcp:5050
-export const BACKEND_URL = 'http://127.0.0.1:5050';
+// Flask backend — Railway cloud deploy
+export const BACKEND_URL = 'https://web-production-86ee4.up.railway.app';
 
 // Default map center — Bulgaria
 export const MAP_CENTER = {

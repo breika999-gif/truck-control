@@ -10,6 +10,7 @@ import { colors } from './src/shared/constants/theme';
 import type { RootStackParamList } from './src/shared/types/navigation';
 import MapScreen from './src/features/navigation/screens/MapScreen';
 import VehicleProfileScreen from './src/features/vehicle/screens/VehicleProfileScreen';
+import POIListScreen from './src/features/navigation/screens/POIListScreen';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 
@@ -44,6 +45,14 @@ export default function App() {
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },
+          }}
+        />
+        <Stack.Screen
+          name="POIList"
+          component={POIListScreen}
+          options={{
+            headerShown: false,
+            presentation: 'card',
           }}
         />
       </Stack.Navigator>

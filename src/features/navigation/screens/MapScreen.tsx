@@ -1321,6 +1321,12 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
+        onPress={() => {
+          if (gptChatOpen) setGptChatOpen(false);
+          if (geminiChatOpen) setGeminiChatOpen(false);
+          if (longPressCoord) setLongPressCoord(null);
+          if (selectedParking) setSelectedParking(null);
+        }}
       >
         {/* nav-arrow + road sign images pre-loaded into the Mapbox atlas.
             Must be inside MapView. onImageMissing fires if a layer references
