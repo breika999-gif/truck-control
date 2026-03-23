@@ -2238,7 +2238,7 @@ def gemini_chat():
         for attempt in range(2):
             try:
                 return client_to_use.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-2.5-flash",
                     contents=contents,
                     config={
                         "system_instruction": _GEMINI_SYSTEM,
@@ -2551,7 +2551,7 @@ def gemini_validate():
     Sends a minimal ping to Gemini and returns ok/error.
 
     Body: {"api_key": "AIza..."}
-    Response: {"ok": true, "model": "gemini-2.0-flash"} | {"ok": false, "error": "..."}
+    Response: {"ok": true, "model": "gemini-2.5-flash"} | {"ok": false, "error": "..."}
     """
     body = request.get_json(silent=True) or {}
     api_key = (body.get("api_key") or "").strip()
@@ -2561,12 +2561,12 @@ def gemini_validate():
     try:
         test_client = _google_genai.Client(api_key=api_key)
         resp = test_client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[{"role": "user", "parts": [{"text": "ping"}]}],
             config={"max_output_tokens": 5},
         )
         _ = resp.text  # trigger any auth errors
-        return jsonify({"ok": True, "model": "gemini-2.0-flash"})
+        return jsonify({"ok": True, "model": "gemini-2.5-flash"})
     except Exception as exc:
         err = str(exc)
         if "API_KEY_INVALID" in err or "INVALID_ARGUMENT" in err:
@@ -2746,7 +2746,7 @@ def gemini_transcribe():
     try:
         audio_data = audio_file.read()
         resp = gemini_client_to_use.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[
                 {"role": "user", "parts": [
                     {"inline_data": {"data": audio_data, "mime_type": audio_file.mimetype or "audio/m4a"}},
