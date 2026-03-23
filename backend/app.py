@@ -25,7 +25,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from openai import OpenAI
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=False)
 
 
 def _strip_md_fence(s: str) -> str:
@@ -2544,6 +2544,12 @@ def check_truck_restrictions():
         "warnings": warnings,
     })
 
+
+@app.get("/api/debug/env")
+def debug_env():
+    k = os.getenv("GEMINI_API_KEY", "NOT_SET")
+    m = os.getenv("GEMINI_MODEL", "NOT_SET")
+    return jsonify({"key_prefix": k[:12], "key_len": len(k), "model": m})
 
 # ── Gemini key validation ──────────────────────────────────────────────────────
 
