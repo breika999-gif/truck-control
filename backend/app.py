@@ -47,6 +47,8 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
 try:
     from google import genai as _google_genai
     _gemini_client = _google_genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
@@ -2238,7 +2240,7 @@ def gemini_chat():
         for attempt in range(2):
             try:
                 return client_to_use.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model=_GEMINI_MODEL,
                     contents=contents,
                     config={
                         "system_instruction": _GEMINI_SYSTEM,
@@ -2561,7 +2563,7 @@ def gemini_validate():
     try:
         test_client = _google_genai.Client(api_key=api_key)
         resp = test_client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=_GEMINI_MODEL,
             contents=[{"role": "user", "parts": [{"text": "ping"}]}],
             config={"max_output_tokens": 5},
         )
@@ -2746,7 +2748,7 @@ def gemini_transcribe():
     try:
         audio_data = audio_file.read()
         resp = gemini_client_to_use.models.generate_content(
-            model="gemini-2.5-flash",
+            model=_GEMINI_MODEL,
             contents=[
                 {"role": "user", "parts": [
                     {"inline_data": {"data": audio_data, "mime_type": audio_file.mimetype or "audio/m4a"}},
