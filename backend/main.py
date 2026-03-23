@@ -1355,7 +1355,7 @@ async def gemini_chat(req: ChatRequest):
         for attempt in range(2):
             try:
                 return client_to_use.models.generate_content(
-                    model="gemini-2.0-flash", contents=history_contents,
+                    model="gemini-2.5-flash", contents=history_contents,
                     config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300})
             except Exception as e:
                 if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and attempt == 0:
@@ -1410,7 +1410,7 @@ async def gemini_transcribe(audio: UploadFile = File(...), user_api_key: str = F
     try:
         audio_data = await audio.read()
         resp = gemini_client_to_use.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[{"role": "user", "parts": [
                 {"inline_data": {"data": audio_data, "mime_type": audio.content_type or "audio/m4a"}},
                 {"text": "Transcribe the following Bulgarian speech to text exactly. Return ONLY the text."}
@@ -1429,11 +1429,11 @@ async def gemini_validate(body: dict):
     try:
         test_client = _google_genai.Client(api_key=api_key)
         resp = test_client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[{"role": "user", "parts": [{"text": "ping"}]}],
             config={"max_output_tokens": 5})
         _ = resp.text
-        return {"ok": True, "model": "gemini-2.0-flash"}
+        return {"ok": True, "model": "gemini-2.5-flash"}
     except Exception as exc:
         err = str(exc)
         if "API_KEY_INVALID" in err or "INVALID_ARGUMENT" in err:
