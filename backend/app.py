@@ -2195,18 +2195,10 @@ def gemini_chat():
     if not user_msg:
         return jsonify({"ok": False, "error": "message is required"}), 400
 
-    personal_key = (body.get("user_api_key") or "").strip()
-    is_personal = bool(personal_key)
-    
-    # Use personal key if provided, else server key
-    if is_personal:
-        try:
-            gemini_client_to_use = _google_genai.Client(api_key=personal_key)
-        except Exception:
-            gemini_client_to_use = _gemini_client
-            is_personal = False
-    else:
-        gemini_client_to_use = _gemini_client
+    is_personal = False
+    # Always create a fresh client from the current env key to avoid stale init
+    server_key = os.getenv("GEMINI_API_KEY", "")
+    gemini_client_to_use = _google_genai.Client(api_key=server_key) if server_key else _gemini_client
 
     history = body.get("history") or []
     context = body.get("context") or {}
