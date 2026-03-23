@@ -47,7 +47,7 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+_GEMINI_MODEL = "gemini-1.5-flash"
 
 try:
     from google import genai as _google_genai
@@ -2575,7 +2575,7 @@ def gemini_validate():
             config={"max_output_tokens": 5},
         )
         _ = resp.text  # trigger any auth errors
-        return jsonify({"ok": True, "model": "gemini-2.5-flash"})
+        return jsonify({"ok": True, "model": _GEMINI_MODEL})
     except Exception as exc:
         err = str(exc)
         if "API_KEY_INVALID" in err or "INVALID_ARGUMENT" in err:
