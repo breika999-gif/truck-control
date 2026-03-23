@@ -2226,22 +2226,31 @@ def gemini_chat():
     
     contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
-    def _call_gemini(client_to_use):
-        """Call Gemini API with retry logic for 429 errors."""
+    def _call_gemini(_unused_client):
+        """Call Gemini REST API directly (bypasses SDK key issues)."""
         import time as _time
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
+        payload = {
+            "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
+        }
         for attempt in range(2):
             try:
-                return client_to_use.models.generate_content(
-                    model=_GEMINI_MODEL,
-                    contents=contents,
-                    config={
-                        "system_instruction": _GEMINI_SYSTEM,
-                        "temperature":        0.65,
-                        "max_output_tokens":  300,
-                    },
-                )
+                r = requests.post(url, json=payload, timeout=20)
+                data = r.json()
+                if "error" in data:
+                    err = data["error"]
+                    raise Exception(f"{err.get('code','')} {err.get('status','')}. {data}")
+                # Return a simple object with .text
+                class _R:
+                    text = (data.get("candidates", [{}])[0]
+                            .get("content", {})
+                            .get("parts", [{}])[0]
+                            .get("text", ""))
+                return _R()
             except Exception as e:
-                # If rate limited, wait 2s and retry once
                 if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and attempt == 0:
                     _time.sleep(2)
                     continue
@@ -2260,7 +2269,7 @@ def gemini_chat():
             return "Gemini не отговори навреме. Опитай пак."
         if "api_key_invalid" in r or "invalid_api_key" in r or "401" in raw or "403" in raw:
             return "Невалиден Gemini API ключ. Провери в настройките (⚙️ → Gemini ключ)."
-        return f"Gemini грешка: {raw[:200]}"
+        return f"Gemini грешка: {raw[:150]}"
 
     try:
         resp = _call_gemini(gemini_client_to_use)
