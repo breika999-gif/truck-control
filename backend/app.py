@@ -47,7 +47,7 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 try:
     from google import genai as _google_genai
