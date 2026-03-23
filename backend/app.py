@@ -2266,9 +2266,9 @@ def gemini_chat():
             return "Gemini е претоварен (15 съобщения/мин). Изчакай 30 сек."
         if "timeout" in r or "deadline" in r:
             return "Gemini не отговори навреме. Опитай пак."
-        if "api_key" in r or "401" in raw or "403" in raw:
+        if "api_key_invalid" in r or "invalid_api_key" in r or "401" in raw or "403" in raw:
             return "Невалиден Gemini API ключ. Провери в настройките (⚙️ → Gemini ключ)."
-        return f"Gemini грешка: {raw[:120]}"
+        return f"Gemini грешка: {raw[:200]}"
 
     try:
         resp = _call_gemini(gemini_client_to_use)
