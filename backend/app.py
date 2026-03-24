@@ -1789,6 +1789,7 @@ def transcribe():
 def health():
     return jsonify({
         "status":        "ok",
+        "version":       "2.1",
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
         "db":            DB_PATH,
