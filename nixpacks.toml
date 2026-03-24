@@ -1,10 +1,5 @@
-providers = ["python"]
-
-[phases.setup]
-nixPkgs = ["python311"]
-
 [phases.install]
-cmds = ["pip install -r backend/requirements.txt"]
+cmds = ["python -m pip install -r backend/requirements.txt"]
 
 [start]
 cmd = "cd backend && python app.py"
