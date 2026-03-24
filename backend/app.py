@@ -1885,21 +1885,33 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             fn   = call.function.name
             args = json.loads(call.function.arguments)
 
-            # Inject driver GPS ONLY when model omits lat/lng.
-            # Safety net: if user mentioned a location, geocode it instead of using driver GPS.
-            if "lat" not in args and context.get("lat") is not None:
-                user_msg = context.get("last_message", "")
+            # GPS correction: GPT often copies driver GPS even for distant cities.
+            # If the user mentioned a location AND the model's coords are within 50 km
+            # of the driver's GPS, override with geocoded city coords.
+            user_msg   = context.get("last_message", "")
+            driver_lat = context.get("lat")
+            driver_lng = context.get("lng")
+
+            if driver_lat is not None:
                 location = _extract_location_from_message(user_msg)
                 if location:
-                    geo = _tool_navigate_to(location)
-                    if "coords" in geo:
-                        args["lng"], args["lat"] = geo["coords"]
-                    else:
-                        args["lat"] = context["lat"]
-                        args["lng"] = context["lng"]
-                else:
-                    args["lat"] = context["lat"]
-                    args["lng"] = context["lng"]
+                    # Check if GPT gave coords too close to driver GPS (copy-paste error)
+                    gpt_lat = args.get("lat", driver_lat)
+                    gpt_lng = args.get("lng", driver_lng)
+                    dist_km = ((gpt_lat - driver_lat)**2 + (gpt_lng - driver_lng)**2) ** 0.5 * 111
+                    if dist_km < 50:  # GPT used driver coords — override with geocoded city
+                        geo = _tool_navigate_to(location)
+                        if "coords" in geo:
+                            args["lng"], args["lat"] = geo["coords"]
+                        elif "lat" not in args:
+                            args["lat"] = driver_lat
+                            args["lng"] = driver_lng
+                    elif "lat" not in args:
+                        args["lat"] = driver_lat
+                        args["lng"] = driver_lng
+                elif "lat" not in args:
+                    args["lat"] = driver_lat
+                    args["lng"] = driver_lng
             if "dest_lat" not in args and context.get("lat") is not None:
                 args["dest_lat"] = context["lat"]
                 args["dest_lng"] = context["lng"]
