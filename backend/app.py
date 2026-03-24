@@ -2585,9 +2585,87 @@ def calculate_route():
             "maxspeeds":         _tomtom_speed_limits(rt),
             "congestionGeoJSON": _tomtom_congestion_geojson(rt, geometry),
             "traffic_alerts":    _tomtom_traffic_alerts(rt, geometry),
+            "restrictions":      _extract_route_restrictions(geometry),
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+# ── Route restriction signs (Overpass) ───────────────────────────────────────
+
+def _extract_route_restrictions(geometry: dict) -> list:
+    """
+    Query OpenStreetMap (Overpass) for maxheight/maxweight/maxwidth restriction
+    nodes within the route bounding box. Called once per route calculation.
+    Returns list of {lat, lng, type, value, value_num}.
+    """
+    coords = geometry.get("coordinates", [])
+    if len(coords) < 2:
+        return []
+
+    lats = [c[1] for c in coords]
+    lngs = [c[0] for c in coords]
+    # Bounding box with 200m padding (~0.002 deg)
+    south = min(lats) - 0.002
+    north = max(lats) + 0.002
+    west  = min(lngs) - 0.002
+    east  = max(lngs) + 0.002
+    bbox  = f"{south},{west},{north},{east}"
+
+    query = f"""
+[out:json][timeout:10];
+(
+  node["maxheight"]({bbox});
+  node["maxweight"]({bbox});
+  node["maxwidth"]({bbox});
+  way["maxheight"]({bbox});
+  way["maxweight"]({bbox});
+  way["maxwidth"]({bbox});
+);
+out center 60;
+"""
+    try:
+        r = requests.post(
+            "https://overpass-api.de/api/interpreter",
+            data={"data": query}, timeout=12,
+        )
+        r.raise_for_status()
+        elements = r.json().get("elements", [])
+    except Exception:
+        return []
+
+    results = []
+    seen: set = set()
+    for el in elements:
+        tags = el.get("tags", {})
+        lat  = el.get("lat") or (el.get("center") or {}).get("lat")
+        lng  = el.get("lon") or (el.get("center") or {}).get("lon")
+        if lat is None or lng is None:
+            continue
+
+        for tag in ("maxheight", "maxweight", "maxwidth"):
+            raw = tags.get(tag)
+            if not raw:
+                continue
+            # Parse numeric value (e.g. "3.8", "3.8 m", "5 t", "default" → skip)
+            try:
+                val_num = float(raw.replace(",", ".").split()[0])
+            except (ValueError, IndexError):
+                continue
+            # Deduplicate within ~100m
+            key = (tag, round(lat, 3), round(lng, 3))
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({
+                "lat":       lat,
+                "lng":       lng,
+                "type":      tag,
+                "value":     raw,
+                "value_num": val_num,
+            })
+
+    return results
 
 
 # ── Truck Restriction Checker ─────────────────────────────────────────────────

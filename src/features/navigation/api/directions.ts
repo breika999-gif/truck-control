@@ -53,6 +53,14 @@ export interface RouteStep {
   bannerInstructions?: BannerInstruction[];
 }
 
+export interface RestrictionPoint {
+  lat: number;
+  lng: number;
+  type: 'maxheight' | 'maxweight' | 'maxwidth';
+  value: string;       // raw OSM value, e.g. "3.8"
+  value_num: number;   // parsed float
+}
+
 export interface RouteResult {
   geometry: {
     type: 'LineString';
@@ -66,6 +74,8 @@ export interface RouteResult {
   steps: RouteStep[];
   /** Pre-built FeatureCollection for congestion-colored line rendering — never null */
   congestionGeoJSON: GeoJSON.FeatureCollection;
+  /** Road restriction signs along the route (maxheight / maxweight / maxwidth) */
+  restrictions: RestrictionPoint[];
 }
 
 /**
@@ -167,6 +177,7 @@ export async function fetchRoute(
       congestion:        [],
       congestionGeoJSON: data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
       steps,
+      restrictions:      data.restrictions ?? [],
     };
   } catch {
     return null;

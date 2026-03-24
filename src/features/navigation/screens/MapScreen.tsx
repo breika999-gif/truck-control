@@ -41,6 +41,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';
+import RestrictionSign from '../components/RestrictionSign';
+import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
 import GoogleAccountModal from '../components/GoogleAccountModal';
 import { loadSavedAccount, type GoogleAccount } from '../../../shared/services/accountManager';
@@ -1268,6 +1270,22 @@ const MapScreen: React.FC = () => {
   const nextStep   = route?.steps?.[currentStep + 1];
   const stepToShow = navigating ? activeStep : null;
 
+  // ── Nearest upcoming restriction sign (within 600m ahead while navigating) ──
+  const activeRestriction = useMemo<RestrictionPoint | null>(() => {
+    if (!navigating || !userCoords || !route?.restrictions?.length) return null;
+    const ALERT_M = 600;
+    let nearest: RestrictionPoint | null = null;
+    let nearestDist = Infinity;
+    for (const r of route.restrictions) {
+      const d = haversineMeters(userCoords, [r.lng, r.lat]);
+      if (d < ALERT_M && d < nearestDist) {
+        nearestDist = d;
+        nearest = r;
+      }
+    }
+    return nearest;
+  }, [navigating, userCoords, route?.restrictions]);
+
   const routeLineColor = dominantCongestion === 'heavy' ? '#FF3B30'
     : dominantCongestion === 'moderate' ? '#FF9500'
     : '#0A84FF';
@@ -2304,6 +2322,9 @@ const MapScreen: React.FC = () => {
           )}
         </View>
       )}
+
+      {/* ── Road restriction sign popup ── */}
+      <RestrictionSign restriction={activeRestriction} />
 
       {/* ── Bottom-left: HOS badge + speed + limit — anchored just above elevationChip ── */}
       <NavigationHUD
