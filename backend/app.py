@@ -159,7 +159,10 @@ _SYSTEM_PROMPT = (
     "6. TRUCK SAFETY: Always use truck dimensions for routing. Don't go under low bridges or through weight-restricted zones.\n"
     "7. DYNAMIC AVOIDANCE: Support 'avoid' for Serbia, Romania, Tolls, Sofia Center, etc.\n"
     "8. SEARCH: Use search_business for ANY place — restaurants, pizzerias, cafes, fuel stations, warehouses, factories, repair shops, customs offices, or any other business/address.\n"
-    "9. TACHOGRAPH: Help with HOS limits (4.5h rule, 9h rule). Suggest stops 30 min before the limit.\n\n"
+    "9. TACHOGRAPH: Help with HOS limits (4.5h rule, 9h rule). Suggest stops 30 min before the limit.\n"
+    "10. CITY SEARCH: Prepositions 'до', 'в', 'до', 'около', 'край', 'при', 'близо до' ALL mean 'near that city'. "
+    "When the user says 'паркинг до Русе' or 'гориво около Пловдив', extract the city name and use YOUR INTERNAL KNOWLEDGE "
+    "to get its lat/lng coordinates. Pass them to the tool. NEVER use driver GPS when a different city is mentioned.\n\n"
     "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
 
@@ -1074,61 +1077,92 @@ def _traffic_alerts(geometry: dict, legs: list) -> list:
     return alerts[:8]  # max 8 bubbles to avoid clutter
 
 
+_LOCATION_STOP_WORDS = {
+    "до", "в", "на", "от", "при", "около", "край", "близо", "близо до",
+    "намери", "намерете", "търси", "покажи", "покажете", "паркинг", "гориво",
+    "бензиностанция", "ресторант", "хотел", "спирка", "почивка", "мол",
+}
+
+def _extract_location_from_message(msg: str) -> str | None:
+    """Extract a location/city name from a user message by stripping stop words.
+
+    E.g. 'паркинг до Русе' → 'Русе'
+         'гориво около Пловдив' → 'Пловдив'
+    Returns None if no candidate found.
+    """
+    words = msg.strip().split()
+    candidates = [w for w in words if w.lower() not in _LOCATION_STOP_WORDS and len(w) > 2]
+    # Return the last candidate (location usually comes last: "паркинг до Русе")
+    return candidates[-1] if candidates else None
+
+
 def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> list:
-    """Find truck parking via Mapbox Search Box (primary) with Overpass fallback."""
+    """Find truck parking via Mapbox Search Box (parallel) with Overpass fallback."""
+    import concurrent.futures
     results: list = []
     search_r = max(radius_m, 20_000)
-
-    try:
-        suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
-        for query in ("truck stop", "truck parking", "паркинг камион"):
+    
+    def _search_mapbox(query):
+        try:
+            suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
             params = {
                 "q":             query,
                 "access_token":  _MAPBOX_TOKEN,
                 "language":      "en,bg",
                 "types":         "poi",
                 "proximity":     f"{lng},{lat}",
-                "limit":         4,
+                "limit":         5,
                 "session_token": "truckai-park-session",
             }
-            r = requests.get(suggest_url, params=params, timeout=8)
+            r = requests.get(suggest_url, params=params, timeout=5)
             r.raise_for_status()
-            suggestions = r.json().get("suggestions", [])
+            return r.json().get("suggestions", [])
+        except:
+            return []
 
-            for s in suggestions[:4]:
-                mapbox_id = s.get("mapbox_id")
-                if not mapbox_id:
-                    continue
-                ret_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
-                r2 = requests.get(
-                    ret_url,
-                    params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-park-session"},
-                    timeout=6,
-                )
-                r2.raise_for_status()
-                features = r2.json().get("features", [])
-                if not features:
-                    continue
-                feat   = features[0]
-                c      = feat["geometry"]["coordinates"]
+    def _retrieve_mapbox(mapbox_id):
+        try:
+            ret_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
+            r = requests.get(
+                ret_url,
+                params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-park-session"},
+                timeout=4
+            )
+            r.raise_for_status()
+            return r.json().get("features", [])
+        except:
+            return []
+
+    try:
+        queries = ("truck stop", "truck parking", "паркинг камион", "hgv parking")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            all_suggestions = list(executor.map(_search_mapbox, queries))
+            
+            ids_to_fetch = []
+            seen_ids = set()
+            for suggestions in all_suggestions:
+                for s in suggestions:
+                    mid = s.get("mapbox_id")
+                    if mid and mid not in seen_ids:
+                        seen_ids.add(mid)
+                        ids_to_fetch.append(mid)
+            
+            # Fetch details in parallel
+            all_features = list(executor.map(_retrieve_mapbox, ids_to_fetch[:10]))
+            for features in all_features:
+                if not features: continue
+                feat = features[0]
+                c = feat["geometry"]["coordinates"]
                 el_lng, el_lat = c[0], c[1]
-                dist   = round(_haversine_m(lat, lng, el_lat, el_lng))
-                props  = feat.get("properties", {})
-                if dist > max(search_r * 10, 200_000):
-                    continue
+                dist = round(_haversine_m(lat, lng, el_lat, el_lng))
+                props = feat.get("properties", {})
+                if dist > max(search_r * 15, 300_000): continue
                 results.append({
-                    "name":          s.get("name") or props.get("name", "Truck Parking"),
+                    "name":          props.get("name", "Truck Parking"),
                     "lat":           el_lat,
                     "lng":           el_lng,
-                    "paid":          False,
-                    "showers":       False,
-                    "toilets":       False,
-                    "wifi":          False,
-                    "security":      False,
-                    "lighting":      False,
-                    "capacity":      None,
-                    "operator":      None,
-                    "website":       None,
+                    "paid":          False, "showers": False, "toilets": False, "wifi": False,
+                    "security":      False, "lighting": False, "capacity": None,
                     "distance_m":    dist,
                     "opening_hours": props.get("open_hours"),
                     "phone":         props.get("phone"),
@@ -1851,10 +1885,21 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             fn   = call.function.name
             args = json.loads(call.function.arguments)
 
-            # Inject driver GPS when model omits lat/lng
+            # Inject driver GPS ONLY when model omits lat/lng.
+            # Safety net: if user mentioned a location, geocode it instead of using driver GPS.
             if "lat" not in args and context.get("lat") is not None:
-                args["lat"] = context["lat"]
-                args["lng"] = context["lng"]
+                user_msg = context.get("last_message", "")
+                location = _extract_location_from_message(user_msg)
+                if location:
+                    geo = _tool_navigate_to(location)
+                    if "coords" in geo:
+                        args["lng"], args["lat"] = geo["coords"]
+                    else:
+                        args["lat"] = context["lat"]
+                        args["lng"] = context["lng"]
+                else:
+                    args["lat"] = context["lat"]
+                    args["lng"] = context["lng"]
             if "dest_lat" not in args and context.get("lat") is not None:
                 args["dest_lat"] = context["lat"]
                 args["dest_lng"] = context["lng"]
