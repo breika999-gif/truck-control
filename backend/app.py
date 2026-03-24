@@ -1,5 +1,5 @@
 """
-TruckAI Pro — Flask backend
+TruckAI Pro — Flask backend v2.1
 Architecture: GPT-4o is the map brain. Every response is a JSON map action.
 The frontend reads the action and executes it on Mapbox directly.
 
