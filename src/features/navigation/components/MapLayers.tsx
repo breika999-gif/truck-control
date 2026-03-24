@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import Mapbox from '@rnmapbox/maps';
+import type * as GeoJSON from 'geojson';
 import { RouteResult } from '../api/directions';
 import { TruckPOI } from '../api/poi';
 import { RouteOption, POICard } from '../../../shared/services/backendApi';
@@ -34,6 +35,7 @@ interface MapLayersProps {
   cameraGeoJSON: GeoJSON.FeatureCollection;
   overtakingResults: any[]; 
   overtakingGeoJSON: GeoJSON.FeatureCollection;
+  navCongestionVisible: GeoJSON.FeatureCollection | null;
   routeOptions: RouteOption[];
   selectedRouteIdx: number | null;
   navigateTo: (coords: [number, number], name: string) => void;
@@ -75,6 +77,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   cameraGeoJSON,
   overtakingResults,
   overtakingGeoJSON,
+  navCongestionVisible,
   routeOptions,
   selectedRouteIdx,
   navigateTo,
@@ -231,6 +234,28 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
+      {/* ── Congestion overlay: 15 km ahead during navigation ── */}
+      {mapIsLoaded && navigating && navCongestionVisible && navCongestionVisible.features.length > 0 && (
+        <Mapbox.ShapeSource id="nav-congestion-src" shape={navCongestionVisible}>
+          <Mapbox.LineLayer
+            id="nav-congestion-line"
+            slot="middle"
+            style={{
+              lineColor: ['match', ['get', 'congestion'],
+                'low', routeLineColor,
+                'moderate', '#FF9500',
+                'heavy', '#FF3B30',
+                'severe', '#8B0000',
+                routeLineColor,
+              ],
+              lineWidth: 5,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
       {/* ── Route Arrows ── */}
       {mapIsLoaded && route && (
         <Mapbox.ShapeSource id="route-arrows-source" shape={{ type: 'Feature', properties: {}, geometry: route.geometry }}>
@@ -311,9 +336,13 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="parking-symbols" slot="top" minZoomLevel={7}
             style={{
-              iconImage: 'parking-icon',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 7, 0.4, 10, 0.6, 12, 0.8],
-              iconAllowOverlap: true
+              textField: 'P',
+              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 10, 12, 14, 18],
+              textColor: 'rgba(0,0,0,0)',
+              textHaloColor: '#00f7ff',
+              textHaloWidth: 1.8,
+              textHaloBlur: 0.5,
+              textAllowOverlap: true
             }}
           />
         </Mapbox.ShapeSource>
@@ -325,9 +354,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="fuel-symbols"
             style={{
-              iconImage: 'fuel-icon',
-              iconSize: 0.8,
-              iconAllowOverlap: true
+              textField: '⛽',
+              textSize: 22,
+              textHaloColor: '#2ecc71',
+              textHaloWidth: 1.5,
+              textAllowOverlap: true
             }}
           />
         </Mapbox.ShapeSource>
@@ -339,9 +370,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="biz-symbols"
             style={{
-              iconImage: 'biz-icon',
-              iconSize: 0.8,
-              iconAllowOverlap: true
+              textField: '🏢',
+              textSize: 22,
+              textHaloColor: '#f1c40f',
+              textHaloWidth: 1.5,
+              textAllowOverlap: true
             }}
           />
         </Mapbox.ShapeSource>
@@ -353,11 +386,13 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="camera-emoji" slot="top" minZoomLevel={7}
             style={{
-              iconImage: 'camera-icon',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 7, 0.5, 12, 1.0],
-              iconAnchor: 'bottom',
-              iconOffset: [0, 0.5],
-              iconAllowOverlap: true
+              textField: '📷',
+              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 12, 16, 14, 22],
+              textHaloColor: '#ff3b30',
+              textHaloWidth: 1.5,
+              textAnchor: 'bottom',
+              textOffset: [0, 0.5],
+              textAllowOverlap: true
             }}
           />
         </Mapbox.ShapeSource>
@@ -369,10 +404,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="overtaking-sign" slot="top" minZoomLevel={7}
             style={{
-              iconImage: 'no-overtaking',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 7, 0.6, 12, 1.2],
-              iconAnchor: 'bottom',
-              iconAllowOverlap: true
+              textField: '🚫🚛',
+              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 12, 18, 14, 26],
+              textHaloColor: '#ff3b30',
+              textHaloWidth: 1.5,
+              textAnchor: 'bottom',
+              textAllowOverlap: true
             }}
           />
         </Mapbox.ShapeSource>

@@ -1,0 +1,73 @@
+{
+  "description": "Lazy-load tool docs — reference only when topic is mentioned",
+  "tools": [
+    {
+      "triggers": ["тест", "test", "jest", "coverage"],
+      "skill": "tdd-guide",
+      "note": "Write tests first (RED→GREEN→REFACTOR), 80%+ coverage"
+    },
+    {
+      "triggers": ["security", "сигурност", "auth", "token", "secrets", "injection"],
+      "skill": "security-reviewer",
+      "note": "Check OWASP top 10, no hardcoded secrets, validate inputs"
+    },
+    {
+      "triggers": ["build error", "билд грешка", "typescript error", "TS error"],
+      "skill": "build-error-resolver",
+      "note": "Minimal fixes only, get build green fast"
+    },
+    {
+      "triggers": ["рефактор", "refactor", "dead code", "cleanup", "почисти"],
+      "skill": "refactor-cleaner",
+      "note": "Run knip/depcheck, remove unused exports, consolidate duplicates"
+    },
+    {
+      "triggers": ["архитектура", "architecture", "design", "мащаб", "scale"],
+      "skill": "architect",
+      "note": "System design, scalability, trade-offs"
+    },
+    {
+      "triggers": ["план", "plan", "имплементирай", "implement feature"],
+      "skill": "planner",
+      "note": "Break down complex features, identify risks"
+    },
+    {
+      "triggers": ["review", "прегледай кода", "code quality"],
+      "skill": "code-reviewer",
+      "note": "Review for quality, security, maintainability"
+    },
+    {
+      "triggers": ["deploy", "railway", "backend", "flask", "push"],
+      "note": "Backend: cd backend && git add -A && git commit && git push. Railway auto-deploys from main."
+    },
+    {
+      "triggers": ["apk", "билд", "build apk", "install phone"],
+      "note": "cd android && gradlew.bat assembleRelease. Install: adb install -r app-release.apk"
+    },
+    {
+      "triggers": ["mapbox", "tilequery", "layer", "geojson"],
+      "note": "Read GEMINI.md before modifying MapLayers.tsx layer stack order"
+    }
+  ],
+  "compactPreferences": {
+    "preserve": [
+      "modified files list",
+      "current feature status",
+      "APK build result",
+      "Railway deploy status",
+      "open bugs"
+    ],
+    "drop": [
+      "verbose tool output",
+      "already-fixed errors",
+      "exploration notes",
+      "old route options"
+    ]
+  },
+  "contextZones": {
+    "0-50%":  "работи свободно",
+    "50-70%": "избирателен с нови файлове",
+    "70-90%": "пусни /compact сега",
+    "90%+":   "пусни /compact или /clear ВЕДНАГА"
+  }
+}

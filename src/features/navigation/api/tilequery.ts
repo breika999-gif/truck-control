@@ -136,7 +136,47 @@ export async function fetchSpeedLimitAtPoint(
   }
 }
 
-// ── 4. Nearby road restrictions (tunnels) ────────────────────────────────────
+// ── 4. Nearby fuel stations ──────────────────────────────────────────────
+
+export interface FuelSpot {
+  name: string;
+  distance: number;
+  lng: number;
+  lat: number;
+}
+
+export async function fetchNearbyFuel(
+  lng: number,
+  lat: number,
+  radiusM = 2000,
+): Promise<FuelSpot[]> {
+  try {
+    const url =
+      `${BASE}/mapbox.mapbox-streets-v8/tilequery/${lng},${lat}.json` +
+      `?layers=poi_label&radius=${radiusM}&limit=20&access_token=${MAPBOX_PUBLIC_TOKEN}`;
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.features ?? [])
+      .filter((f: any) => {
+        const cat  = String(f.properties?.category_en ?? '').toLowerCase();
+        const maki = String(f.properties?.maki ?? '').toLowerCase();
+        return cat.includes('fuel') || cat.includes('gas') || cat.includes('petrol') || maki === 'fuel';
+      })
+      .map((f: any): FuelSpot => ({
+        name:     f.properties?.name_bg ?? f.properties?.name ?? 'Гориво',
+        distance: Math.round(f.properties?.tilequery?.distance ?? 0),
+        lng:      f.geometry?.coordinates?.[0] ?? lng,
+        lat:      f.geometry?.coordinates?.[1] ?? lat,
+      }))
+      .sort((a: FuelSpot, b: FuelSpot) => a.distance - b.distance)
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
+// ── 5. Nearby road restrictions (tunnels) ────────────────────────────────────
 
 export interface RestrictionResult {
   hasTunnel: boolean;

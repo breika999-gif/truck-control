@@ -16,16 +16,14 @@ export const SIGN_CLOSED  = require('../../../shared/assets/sign_closed.png') as
 export const SIGN_DANGER0 = require('../../../shared/assets/sign_danger_0.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const STAR_ICON    = require('../../../shared/assets/star_icon.png') as number;
-
-// New PNG Icons for Map Layers
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-export const ICON_PARKING = require('../../../shared/assets/icon_parking.png') as number;
+export const ICON_PARKING       = require('../../../shared/assets/icon_parking.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-export const ICON_FUEL    = require('../../../shared/assets/icon_fuel.png') as number;
+export const ICON_FUEL          = require('../../../shared/assets/icon_fuel.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-export const ICON_CAMERA  = require('../../../shared/assets/icon_camera.png') as number;
+export const ICON_CAMERA        = require('../../../shared/assets/icon_camera.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-export const ICON_BIZ     = require('../../../shared/assets/icon_biz.png') as number;
+export const ICON_BIZ           = require('../../../shared/assets/icon_biz.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_NO_OVERTAKING = require('../../../shared/assets/icon_no_overtaking.png') as number;
 

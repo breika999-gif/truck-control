@@ -120,17 +120,11 @@ export interface ChatContext {
   driven_seconds?: number;
   speed_kmh?: number;
   profile?: VehicleProfile;
+  last_message?: string;
 }
 
 /** Backward-compat alias — parking cards now use POICard */
 export type TruckParking = POICard;
-
-export interface SpeedCamera {
-  lat: number;
-  lng: number;
-  maxspeed?: string;
-  distance_m: number;
-}
 
 export interface SavedPOI {
   id: number;
@@ -489,27 +483,3 @@ export async function fetchProximityAlerts(
   }
 }
 
-/** Fetch per-user cloud settings (e.g. synced Gemini key). */
-export async function fetchUserSettings(userEmail: string): Promise<{ gemini_api_key?: string } | null> {
-  try {
-    const res = await apiRequest<{ ok: boolean; gemini_api_key?: string }>(
-      `/api/user/settings?user_email=${encodeURIComponent(userEmail)}`,
-    );
-    return res.ok ? res : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Save per-user cloud settings. */
-export async function saveUserSettings(userEmail: string, geminiKey: string): Promise<boolean> {
-  try {
-    const res = await apiRequest<{ ok: boolean }>('/api/user/settings', {
-      method: 'POST',
-      body: JSON.stringify({ user_email: userEmail, gemini_api_key: geminiKey }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}

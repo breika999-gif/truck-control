@@ -95,13 +95,3 @@ export async function retrievePlace(mapbox_id: string): Promise<GeoPlace | null>
   return null;
 }
 
-// ── Legacy export (kept for type compatibility) ───────────────────────────────
-export async function searchPlaces(query: string): Promise<GeoPlace[]> {
-  const suggestions = await suggestPlaces(query);
-  const places: GeoPlace[] = [];
-  for (const s of suggestions) {
-    const p = await retrievePlace(s.mapbox_id);
-    if (p) places.push(p);
-  }
-  return places;
-}

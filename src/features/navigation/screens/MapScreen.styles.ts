@@ -1433,6 +1433,39 @@ export const styles = StyleSheet.create({
   sidebarCardName: { color: '#fff', fontSize: 11, fontWeight: '700' },
   sidebarCardAddr: { color: colors.textSecondary, fontSize: 8 },
   sidebarCardAdd: { color: NEON, fontSize: 12 },
+
+  // ── Route-ahead POI panel ──────────────────────────────────────────────────
+  routeAheadPanel: {
+    position: 'absolute',
+    right: spacing.sm,
+    top: '35%',
+    flexDirection: 'column',
+    gap: 6,
+    zIndex: 24,
+    elevation: 18,
+  },
+  routeAheadCard: {
+    backgroundColor: 'rgba(0,10,25,0.90)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: NEON,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    alignItems: 'center',
+    minWidth: 52,
+  },
+  routeAheadIcon: {
+    color: NEON,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  routeAheadKm: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+
   optionBtn: {
     width: 44,
     height: 44,

@@ -1,6 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
-  StyleSheet,
   View,
   TouchableOpacity,
   Text,
@@ -19,7 +18,7 @@ import {
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Geolocation from 'react-native-geolocation-service';
-import Mapbox, { locationManager, LocationPuck, type CameraPadding } from '@rnmapbox/maps';
+import Mapbox, { locationManager, LocationPuck } from '@rnmapbox/maps';
 
 import { useVoice } from '../hooks/useVoice';
 import { useTacho } from '../hooks/useTacho';
@@ -33,7 +32,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { colors, radius, spacing, typography } from '../../../shared/constants/theme';
-import { MAPBOX_PUBLIC_TOKEN, MAP_CENTER } from '../../../shared/constants/config';
+import { MAP_CENTER } from '../../../shared/constants/config';
 import { useVehicleStore } from '../../../store/vehicleStore';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
@@ -68,6 +67,7 @@ import {
 import {
   fetchElevationAtPoint,
   fetchNearbyParking,
+  fetchNearbyFuel,
   fetchNearbyRestrictions,
   fetchSpeedLimitAtPoint,
   type ParkingSpot,
@@ -75,9 +75,7 @@ import {
 import {
   sendChatMessage,
   sendGeminiMessage,
-  transcribeGemini,
   transcribeAudio,
-  savePOI,
   starPlace,
   listStarred,
   fetchHealth,
@@ -172,8 +170,6 @@ const MapScreen: React.FC = () => {
   useEffect(() => { navigatingRef.current = navigating; }, [navigating]);
   const routeRef = useRef<RouteResult | null>(null);
   useEffect(() => { routeRef.current = route; }, [route]);
-
-  const [alongRoutePOIs, setAlongRoutePOIs] = useState<import('../api/poi').TruckPOI[]>([]);
 
   const [userCoords, setUserCoords]         = useState<[number, number] | null>(null);
   const userCoordsRef = useRef<[number, number] | null>(null);
@@ -320,6 +316,10 @@ const MapScreen: React.FC = () => {
   }>>([]);
   const [showBorderPanel, setShowBorderPanel] = useState(false);
 
+  // ── Route-ahead POI panel (parking + fuel along route) ───────────────────
+  interface RoutePOI { type: 'parking' | 'fuel'; name: string; distKm: number; lng: number; lat: number; }
+  const [routeAheadPOIs, setRouteAheadPOIs] = useState<RoutePOI[]>([]);
+
   // ── GPS / route / waypoint state ───────────────────────────────────────────
   const [navCongestionGeoJSON, setNavCongestionGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
   const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
@@ -339,7 +339,6 @@ const MapScreen: React.FC = () => {
   const mapIsLoaded = mapLoaded;
 
   // ── Tilequery state ────────────────────────────────────────────────────────
-  const [elevation, setElevation]       = useState<number | null>(null);
   const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
   const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
 
@@ -391,15 +390,7 @@ const MapScreen: React.FC = () => {
           const tqNow = Date.now();
           const [tqLng, tqLat] = coords;
 
-          // 1. Elevation — update every 15 s
-          if (tqNow - lastElevationRef.current >= 15_000) {
-            lastElevationRef.current = tqNow;
-            fetchElevationAtPoint(tqLng, tqLat).then(ele => {
-              if (isMountedRef.current && ele != null) setElevation(ele);
-            });
-          }
-
-          // 2. Stopped detection → auto-search parking once per stop
+          // 1. Stopped detection → auto-search parking once per stop
           //    Triggers after 20 s stationary, 2-minute cooldown between searches
           if (kmh < 2) {
             if (stoppedSinceRef.current === null) stoppedSinceRef.current = tqNow;
@@ -419,9 +410,10 @@ const MapScreen: React.FC = () => {
           const cur   = routeRef.current;
           if (!isNav || !cur) return;
 
-          // 3. Restriction check — tunnels/bridges nearby (every 30 s, tall trucks only)
+          // 3. Restriction check — tunnels/bridges (1 min urban <50 km/h, 1 h highway)
           const profR = profileRef.current;
-          if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= 30_000) {
+          const restrictInterval = kmh < 50 ? 60_000 : 3_600_000;
+          if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
             lastRestrictionRef.current = tqNow;
             fetchNearbyRestrictions(tqLng, tqLat, 400).then(r => {
               if (!isMountedRef.current) return;
@@ -519,20 +511,20 @@ const MapScreen: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // stable — all logic reads via refs
 
-  // ── Flask backend health check — poll every 60 s (optimized for data) ────
+  // ── Flask backend health check — poll every 5 min (was 60s, 60 req/h → 12 req/h) ────
   useEffect(() => {
     const check = () =>
       fetchHealth().then(h => {
         if (isMountedRef.current) setBackendOnline(h?.status === 'ok');
       });
     check();
-    const interval = setInterval(check, 60_000);
+    const interval = setInterval(check, 300_000);
     return () => clearInterval(interval);
   }, []);
 
-  // ── Traffic tile refresh every 60 s ─────────────────────────────────────
+  // ── Traffic tile refresh every 3 min (was 60s, 60 req/h → 20 req/h) ─────
   useEffect(() => {
-    const interval = setInterval(() => setTrafficKey(k => k + 1), 60_000);
+    const interval = setInterval(() => setTrafficKey(k => k + 1), 180_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -587,25 +579,6 @@ const MapScreen: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigating, route]);
 
-  // ── Road Grade logic (Step D) ──────────────────────────────────────────
-  const [roadGrade, setRoadGrade] = useState<number | null>(null);
-  const lastElevRef = useRef<{ val: number; pos: [number, number] | null }>({ val: 0, pos: null });
-
-  useEffect(() => {
-    if (elevation == null || !userCoords) { setRoadGrade(null); return; }
-    
-    if (lastElevRef.current.pos) {
-      const dist = haversineMeters(userCoords, lastElevRef.current.pos);
-      if (dist > 100) { // Calculate every 100m for more stable grade %
-        const dElev = elevation - lastElevRef.current.val;
-        const grade = (dElev / dist) * 100;
-        setRoadGrade(grade);
-        lastElevRef.current = { val: elevation, pos: userCoords };
-      }
-    } else {
-      lastElevRef.current = { val: elevation, pos: userCoords };
-    }
-  }, [elevation, userCoords]);
 
   // ── Speed limit TTS alarm — fires once per 30 s when exceeding the limit ──
   useEffect(() => {
@@ -854,11 +827,54 @@ const MapScreen: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // stable
 
+  // ── Route POI scan: parking + fuel at 5 points along route (one-time) ──────
+  const buildRoutePOIScan = useCallback(async (r: RouteResult) => {
+    const coords = r.geometry.coordinates;
+    if (coords.length < 2) return;
+
+    // Cumulative distances along route (metres)
+    const cumDist: number[] = [0];
+    for (let i = 1; i < coords.length; i++) {
+      cumDist.push(cumDist[i - 1] + haversineMeters(
+        coords[i - 1] as [number, number], coords[i] as [number, number],
+      ));
+    }
+    const totalM = cumDist[cumDist.length - 1];
+
+    // Sample at 20%, 40%, 60%, 80% of route
+    const fractions = [0.2, 0.4, 0.6, 0.8];
+    const sampleIdxs = fractions.map(f => {
+      const target = f * totalM;
+      return cumDist.findIndex(d => d >= target);
+    }).filter(i => i > 0);
+
+    const results: RoutePOI[] = [];
+    await Promise.all(sampleIdxs.map(async idx => {
+      const [lng, lat] = coords[idx] as [number, number];
+      const distFromStartKm = Math.round(cumDist[idx] / 1000);
+      const [parkings, fuels] = await Promise.all([
+        fetchNearbyParking(lng, lat, 3000),
+        fetchNearbyFuel(lng, lat, 3000),
+      ]);
+      for (const p of parkings.slice(0, 1)) {
+        results.push({ type: 'parking', name: p.name, distKm: distFromStartKm, lng: p.lng, lat: p.lat });
+      }
+      for (const f of fuels.slice(0, 1)) {
+        results.push({ type: 'fuel', name: f.name, distKm: distFromStartKm, lng: f.lng, lat: f.lat });
+      }
+    }));
+
+    results.sort((a, b) => a.distKm - b.distKm);
+    if (isMountedRef.current) setRouteAheadPOIs(results.slice(0, 6));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Trigger elevation + weather fetch whenever route changes
   useEffect(() => {
-    if (!route) { setElevProfile([]); setWeatherPoints([]); return; }
+    if (!route) { setElevProfile([]); setWeatherPoints([]); setRouteAheadPOIs([]); return; }
     buildElevProfile(route);
     fetchWeatherForRoute(route);
+    buildRoutePOIScan(route);
   }, [route, buildElevProfile, fetchWeatherForRoute]);
 
   // ── Add intermediate waypoint + re-route ─────────────────────────────────
@@ -1072,6 +1088,32 @@ const MapScreen: React.FC = () => {
     return 1.2;
   }, [navigating, distToTurn]);
 
+  // ── Auto-fit map to POI results (from AI chat) ───────────────────────────
+  useEffect(() => {
+    const results = parkingResults.length > 0 ? parkingResults : businessResults;
+    if (results.length === 0 || !cameraRef.current) return;
+
+    // Build bounding box
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    results.forEach(p => {
+      if (p.lng < minLng) minLng = p.lng;
+      if (p.lng > maxLng) maxLng = p.lng;
+      if (p.lat < minLat) minLat = p.lat;
+      if (p.lat > maxLat) maxLat = p.lat;
+    });
+
+    if (minLng === maxLng && minLat === maxLat) {
+      cameraRef.current.flyTo([minLng, minLat], 14);
+    } else {
+      cameraRef.current.fitBounds(
+        [maxLng, maxLat],
+        [minLng, minLat],
+        [100, 50, 250, 50], // top, right, bottom, left padding
+        1000,
+      );
+    }
+  }, [parkingResults, businessResults]);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   // Dynamic terrain exaggeration: stronger relief when driving fast (rural / highway)
@@ -1200,6 +1242,19 @@ const MapScreen: React.FC = () => {
   const routeShape = route
     ? ({ type: 'Feature', properties: {}, geometry: route.geometry } as const)
     : null;
+
+  // ── Congestion overlay: only show 15 km ahead during navigation ─────────────
+  const navCongestionVisible = useMemo<GeoJSON.FeatureCollection | null>(() => {
+    if (!navigating || !userCoords || !navCongestionGeoJSON) return null;
+    const MAX_M = 15_000;
+    const features = navCongestionGeoJSON.features.filter(f => {
+      const coords = (f.geometry as GeoJSON.LineString).coordinates;
+      if (!coords?.length) return false;
+      const [lng, lat] = coords[0] as [number, number];
+      return haversineMeters(userCoords, [lng, lat]) <= MAX_M;
+    });
+    return { type: 'FeatureCollection', features };
+  }, [navigating, userCoords, navCongestionGeoJSON]);
 
   const dominantCongestion = useMemo(() => {
     const c = route?.congestion;
@@ -1407,6 +1462,7 @@ const MapScreen: React.FC = () => {
           cameraGeoJSON={cameraGeoJSON}
           overtakingResults={overtakingResults}
           overtakingGeoJSON={overtakingGeoJSON}
+          navCongestionVisible={navCongestionVisible}
           routeOptions={routeOptions}
           selectedRouteIdx={selectedRouteIdx}
           navigateTo={navigateTo}
@@ -1676,34 +1732,26 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Along Route Sidebar (Step A) — Vertical list on the right ── */}
-      {alongRoutePOIs.length > 0 && navigating && (
-        <View style={[styles.alongRouteSidebar, { top: searchTop + 60 }]}>
-          <View style={styles.sidebarHeader}>
-            <Text style={styles.sidebarTitle}>🛰️ ПО ПЪТЯ</Text>
-            <TouchableOpacity onPress={() => setAlongRoutePOIs([])} style={styles.sidebarDismiss}>
-              <Text style={styles.sidebarDismissTxt}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sidebarContent}>
-            {alongRoutePOIs.map((poi) => (
+
+      {/* ── Route-ahead POI panel (parking + fuel) ── */}
+      {navigating && routeAheadPOIs.length > 0 && (
+        <View style={styles.routeAheadPanel}>
+          {routeAheadPOIs.map((poi, i) => {
+            const drivingDistKm = userCoords
+              ? Math.round(haversineMeters(userCoords, [poi.lng, poi.lat]) / 1000)
+              : poi.distKm;
+            if (drivingDistKm < 0) return null;
+            return (
               <TouchableOpacity
-                key={poi.id}
-                style={styles.sidebarCard}
-                onPress={() => {
-                  setAlongRoutePOIs([]);
-                  setWaypoint(poi.name, poi.coordinates);
-                }}
+                key={i}
+                style={styles.routeAheadCard}
+                onPress={() => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
               >
-                <Text style={styles.sidebarCardEmoji}>{POI_META[poi.category]?.emoji ?? '🚛'}</Text>
-                <View style={styles.sidebarCardInfo}>
-                  <Text style={styles.sidebarCardName} numberOfLines={1}>{poi.name}</Text>
-                  <Text style={styles.sidebarCardAddr} numberOfLines={1}>{poi.address}</Text>
-                </View>
-                <Text style={styles.sidebarCardAdd}>➕</Text>
+                <Text style={styles.routeAheadIcon}>{poi.type === 'parking' ? 'P' : '⛽'}</Text>
+                <Text style={styles.routeAheadKm}>{drivingDistKm} км</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+            );
+          })}
         </View>
       )}
 
@@ -2292,20 +2340,9 @@ const MapScreen: React.FC = () => {
         HOS_LIMIT_S={HOS_LIMIT_S}
         speedingBg={speedingBg}
         proximityAlerts={proximityAlerts}
-        roadGrade={roadGrade}
         nearestParkingM={nearestParkingM}
       />
 
-      {/* ── Elevation chip — real-time altitude from Tilequery terrain-v2 ── */}
-      {elevation != null && (
-        <View style={[styles.elevationChip, {
-          bottom: navigating
-            ? 190 + insets.bottom   // above speed row
-            : 120 + insets.bottom,  // browse mode
-        }]}>
-          <Text style={styles.elevationText}>▲ {elevation} м н.в.</Text>
-        </View>
-      )}
 
       {/* ── Speed Camera HUD — visible when < 600 m from a camera ── */}
       {navigating && cameraAlert && (

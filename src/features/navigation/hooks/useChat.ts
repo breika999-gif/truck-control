@@ -83,6 +83,7 @@ export function useChat({
       driven_seconds: drivingSeconds,
       speed_kmh:      speed,
       profile:        profile || undefined,
+      last_message:   text,
     };
 
     const response = await sendChatMessage(text, gptHistory.slice(-6), context);
