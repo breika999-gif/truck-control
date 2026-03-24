@@ -160,9 +160,13 @@ _SYSTEM_PROMPT = (
     "7. DYNAMIC AVOIDANCE: Support 'avoid' for Serbia, Romania, Tolls, Sofia Center, etc.\n"
     "8. SEARCH: Use search_business for ANY place — restaurants, pizzerias, cafes, fuel stations, warehouses, factories, repair shops, customs offices, or any other business/address.\n"
     "9. TACHOGRAPH: Help with HOS limits (4.5h rule, 9h rule). Suggest stops 30 min before the limit.\n"
-    "10. CITY SEARCH: Prepositions 'до', 'в', 'до', 'около', 'край', 'при', 'близо до' ALL mean 'near that city'. "
-    "When the user says 'паркинг до Русе' or 'гориво около Пловдив', extract the city name and use YOUR INTERNAL KNOWLEDGE "
-    "to get its lat/lng coordinates. Pass them to the tool. NEVER use driver GPS when a different city is mentioned.\n\n"
+    "10. CITY SEARCH: 'до', 'в', 'около', 'край', 'при', 'близо до' ALL mean 'near that city'. "
+    "When the user mentions a city name (Русе, София, Варна, Пловдив, etc.), you MUST use THAT CITY's coordinates "
+    "as lat/lng in the tool call — NEVER the driver's current GPS from context. "
+    "City coordinates: Русе=lat:43.849,lng:25.955 | София=lat:42.698,lng:23.321 | Варна=lat:43.204,lng:27.910 | "
+    "Пловдив=lat:42.150,lng:24.745 | Бургас=lat:42.504,lng:27.469 | Плевен=lat:43.417,lng:24.607 | "
+    "Стара Загора=lat:42.425,lng:25.634 | Шумен=lat:43.271,lng:26.919 | "
+    "Велико Търново=lat:43.076,lng:25.617 | Видин=lat:43.993,lng:22.870 | Враца=lat:43.200,lng:23.550.\n\n"
     "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
 
