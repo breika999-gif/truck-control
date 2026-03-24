@@ -1088,6 +1088,10 @@ def _extract_location_from_message(msg: str) -> str | None:
 
 def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> list:
     """Find truck parking via Mapbox Search Box (parallel) with Overpass fallback."""
+    _ck = _poi_cache_key("parking", lat, lng, radius_m)
+    _cached = _poi_cache_get(_ck)
+    if _cached is not None:
+        return _cached
     import concurrent.futures
     results: list = []
     search_r = max(radius_m, 20_000)
@@ -1228,6 +1232,7 @@ out center 10;
                 f"https://truckerapps.eu/search?lat={item['lat']}&lng={item['lng']}"
             )
 
+    _poi_cache_set(_ck, deduped[:8])
     return deduped[:8]
 
 
@@ -1622,9 +1627,14 @@ def _google_places_fallback(query: str, lat: float, lng: float) -> list:
 def _tool_search_business(query: str, city: str, lat: float, lng: float) -> list:
     """Search for any business/address/POI using TomTom Fuzzy Search."""
     q = f"{query} {city}".strip()
+    _ck = f"biz:{q.lower()}:{round(lat, 2)}:{round(lng, 2)}"
+    _cached = _poi_cache_get(_ck)
+    if _cached is not None:
+        return _cached
     results = _tomtom_search(q, lat, lng, limit=6)
     if not results:
         return [{"error": f"Не намерих '{q}'"}]
+    _poi_cache_set(_ck, results)
     return results
 
 
@@ -1674,6 +1684,10 @@ def _tool_check_traffic(
 
 
 def _tool_find_fuel(dest_lat: float, dest_lng: float, radius_m: int = 50000) -> list:
+    _ck = _poi_cache_key("fuel", dest_lat, dest_lng, radius_m)
+    _cached = _poi_cache_get(_ck)
+    if _cached is not None:
+        return _cached
     overpass_url = "https://overpass-api.de/api/interpreter"
     query = f"""
 [out:json][timeout:15];
@@ -1707,6 +1721,7 @@ out 10;
                 "phone":         tags.get("phone"),
             })
         results.sort(key=lambda x: x["distance_m"])
+        _poi_cache_set(_ck, results[:10])
         return results[:10]
     except Exception as exc:
         return [{"error": str(exc)}]
@@ -1783,11 +1798,34 @@ def health():
     })
 
 
-# ── GPT-4o in-memory response cache (text-only, 10-min TTL) ──────────────────
+# ── In-memory caches (GPT responses + POI results) ───────────────────────────
 import time as _cache_time
 
 _gpt_cache: dict[str, tuple[dict, float]] = {}   # key → (result, expires_at)
 _GPT_CACHE_TTL = 600  # 10 minutes
+
+_poi_cache: dict[str, tuple[list, float]] = {}   # POI results cache
+_POI_CACHE_TTL = 600  # 10 minutes
+
+
+def _poi_cache_key(fn: str, lat: float, lng: float, radius_m: int = 0) -> str:
+    """Round coords to ~1 km grid so nearby searches share cache entries."""
+    return f"{fn}:{round(lat, 2)}:{round(lng, 2)}:{radius_m}"
+
+
+def _poi_cache_get(key: str) -> list | None:
+    entry = _poi_cache.get(key)
+    if entry and _cache_time.time() < entry[1]:
+        return entry[0]
+    _poi_cache.pop(key, None)
+    return None
+
+
+def _poi_cache_set(key: str, result: list) -> None:
+    if len(_poi_cache) >= 200:
+        oldest = min(_poi_cache, key=lambda k: _poi_cache[k][1])
+        _poi_cache.pop(oldest, None)
+    _poi_cache[key] = (result, _cache_time.time() + _POI_CACHE_TTL)
 
 
 def _gpt_cache_get(key: str) -> dict | None:
