@@ -177,11 +177,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "navigate_to",
-            "description": (
-                "Start turn-by-turn navigation to a destination. "
-                "Accepts full addresses, company names, industrial zones, landmarks. "
-                "Use avoid param when user requests country/area/road-type exclusion."
-            ),
+            "description": "Navigate to destination: city, address, company or landmark. Use avoid param for country/road exclusions.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -208,7 +204,7 @@ _TOOLS = [
                             "axle_count": {"type": "integer"},
                             "hazmat_class": {"type": "string"}
                         },
-                        "description": "Vehicle dimensions/load for truck-specific routing"
+                        "description": "Truck dimensions/load"
                     }
                 },
                 "required": ["destination"],
@@ -219,11 +215,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "suggest_routes",
-            "description": (
-                "Show 2-3 route alternatives to a destination with different paths. "
-                "Use when the user asks for route options, alternative routes, or wants to compare paths. "
-                "Use avoid param when user requests country/area/road-type exclusion."
-            ),
+            "description": "Show 2-3 route alternatives. Use when user wants to compare routes or asks for options.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -249,7 +241,7 @@ _TOOLS = [
                             "axle_count": {"type": "integer"},
                             "hazmat_class": {"type": "string"}
                         },
-                        "description": "Vehicle dimensions/load for truck-specific routing"
+                        "description": "Truck dimensions/load"
                     }
                 },
                 "required": ["destination", "origin_lat", "origin_lng"],
@@ -331,7 +323,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "check_traffic_route",
-            "description": "Check current traffic on route. Suggests alternative if delay > 20 min.",
+            "description": "Check traffic on active route.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -357,9 +349,9 @@ _TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Place name, POI, or address to add as stop (in English)"},
-                    "lat":   {"type": "number", "description": "Search proximity latitude"},
-                    "lng":   {"type": "number", "description": "Search proximity longitude"},
+                    "query": {"type": "string", "description": "Place name or address (in English)"},
+                    "lat":   {"type": "number"},
+                    "lng":   {"type": "number"},
                 },
                 "required": ["query", "lat", "lng"],
             },
@@ -388,19 +380,13 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "calculate_travel_matrix",
-            "description": (
-                "Calculate travel times and distances between multiple points using real traffic. "
-                "Use to find the optimal order for multiple waypoints/stops, or to compare "
-                "how long it takes to reach several destinations. "
-                "Returns optimal stop order + travel time for each pair. "
-                "Example: user has 3 deliveries — call this to find the fastest route order."
-            ),
+            "description": "Find optimal order for multiple stops/deliveries. Returns best route order with travel times.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "points": {
                         "type": "array",
-                        "description": "List of points (max 10). Each has lat, lng and a label.",
+                        "description": "Points to visit (max 10), each with lat, lng, label.",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -436,7 +422,7 @@ _TOOLS = [
                     },
                     "query": {
                         "type": "string",
-                        "description": "Optional search query for the app (e.g. song name, video title)"
+                        "description": "Optional search query for the app"
                     }
                 },
                 "required": ["app_name"]
