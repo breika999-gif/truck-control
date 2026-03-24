@@ -2096,6 +2096,8 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                 result = raw
                 cards = []
                 for s in raw[:4]:
+                    if "lat" not in s:
+                        continue
                     cards.append({
                         "name":          s.get("name", "Бензиностанция"),
                         "lat":           s["lat"],
