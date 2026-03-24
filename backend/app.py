@@ -15,7 +15,9 @@ import math
 import os
 import re
 import sqlite3
+import time
 import urllib.parse
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -26,6 +28,21 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=False)
+
+
+# ── Rate limiting (in-memory, per IP) ─────────────────────────────────────────
+_rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
+
+def _is_rate_limited(ip: str, limit: int, window_s: int = 60) -> bool:
+    """Returns True if IP has exceeded `limit` requests in the last `window_s` seconds."""
+    now = time.monotonic()
+    timestamps = _rate_data[ip]
+    # Drop old entries outside the window
+    _rate_data[ip] = [t for t in timestamps if now - t < window_s]
+    if len(_rate_data[ip]) >= limit:
+        return True
+    _rate_data[ip].append(now)
+    return False
 
 
 def _strip_md_fence(s: str) -> str:
@@ -141,7 +158,7 @@ _SYSTEM_PROMPT = (
     "5. ROUTING: For routes BG -> W. Europe, always avoid Serbia unless requested; go via Romania (Bucharest -> Cluj -> Budapest).\n"
     "6. TRUCK SAFETY: Always use truck dimensions for routing. Don't go under low bridges or through weight-restricted zones.\n"
     "7. DYNAMIC AVOIDANCE: Support 'avoid' for Serbia, Romania, Tolls, Sofia Center, etc.\n"
-    "8. SEARCH: Use search_business for ANY company, warehouse, factory, repair shop, or address.\n"
+    "8. SEARCH: Use search_business for ANY place — restaurants, pizzerias, cafes, fuel stations, warehouses, factories, repair shops, customs offices, or any other business/address.\n"
     "9. TACHOGRAPH: Help with HOS limits (4.5h rule, 9h rule). Suggest stops 30 min before the limit.\n\n"
     "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
@@ -287,7 +304,8 @@ _TOOLS = [
         "function": {
             "name": "search_business",
             "description": (
-                "Search for a business (warehouse, repair shop, customs, etc.). "
+                "Search for ANY place: restaurant, pizzeria, cafe, fuel station, "
+                "warehouse, repair shop, factory, customs, or any address. "
                 "Translate query to English before calling."
             ),
             "parameters": {
@@ -731,29 +749,47 @@ def _tomtom_traffic_alerts(route: dict, geometry: dict) -> list:
         if sec.get("sectionType") != "TRAFFIC":
             continue
         category = sec.get("simpleCategory", "")
-        if category not in ("JAM", "ROAD_WORK", "ROAD_CLOSURE"):
+        if category not in ("JAM", "ROAD_WORK", "ROAD_CLOSURE", "SLOW_TRAFFIC", "DANGEROUS_CONDITIONS"):
             continue
-        travel    = sec.get("travelTimeInSeconds", 0)
+        travel     = sec.get("travelTimeInSeconds", 0)
         no_traffic = sec.get("noTrafficTravelTimeInSeconds", travel)
-        delay_min = max(0, round((travel - no_traffic) / 60))
-        if delay_min < 2 and category != "ROAD_CLOSURE":
+        delay_min  = max(0, round((travel - no_traffic) / 60))
+        # Thresholds per category
+        if category == "SLOW_TRAFFIC" and delay_min < 5:
             continue
-        mid = (sec.get("startPointIndex", 0) + sec.get("endPointIndex", 0)) // 2
+        if category == "JAM" and delay_min < 2:
+            continue
+        if category not in ("ROAD_CLOSURE", "ROAD_WORK", "DANGEROUS_CONDITIONS") and delay_min < 2:
+            continue
+        start_idx = sec.get("startPointIndex", 0)
+        end_idx   = sec.get("endPointIndex", 0)
+        mid = (start_idx + end_idx) // 2
         if mid >= len(coords):
             continue
-        c   = coords[mid]
-        sev = "severe" if category == "ROAD_CLOSURE" else "heavy" if delay_min >= 20 else "moderate"
+        c = coords[mid]
+        # Approximate length in km (each coord pair ~100m on highways)
+        length_km = round(max(0.1, (end_idx - start_idx) * 0.1), 1)
+        sev = (
+            "severe"   if category in ("ROAD_CLOSURE", "DANGEROUS_CONDITIONS") else
+            "heavy"    if delay_min >= 20 else
+            "moderate"
+        )
         if category == "ROAD_CLOSURE":
             label = "🚫 Затворен път"
+        elif category == "DANGEROUS_CONDITIONS":
+            label = "⚠️ Опасен участък"
         elif category == "ROAD_WORK":
-            label = f"🚧 Ремонт{f' +{delay_min} мин' if delay_min > 0 else ''}"
+            label = f"🚧 Ремонт{f' +{delay_min} мин' if delay_min > 0 else ' (бавно)'}"
+        elif category == "SLOW_TRAFFIC":
+            label = f"🐢 Бавно +{delay_min} мин"
         elif delay_min >= 60:
             label = f"🛑 +{delay_min // 60}ч {delay_min % 60}мин"
         else:
             label = f"🛑 +{delay_min} мин"
         alerts.append({
             "lat": round(c[1], 5), "lng": round(c[0], 5),
-            "delay_min": delay_min, "severity": sev, "label": label,
+            "delay_min": delay_min, "severity": sev,
+            "length_km": length_km, "label": label,
         })
     return alerts[:8]
 
@@ -1819,6 +1855,9 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             if "lat" not in args and context.get("lat") is not None:
                 args["lat"] = context["lat"]
                 args["lng"] = context["lng"]
+            if "dest_lat" not in args and context.get("lat") is not None:
+                args["dest_lat"] = context["lat"]
+                args["dest_lng"] = context["lng"]
             if "driven_seconds" not in args:
                 args["driven_seconds"] = context.get("driven_seconds", 0)
             if "speed_kmh" not in args:
@@ -2156,6 +2195,9 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
 @app.post("/api/chat")
 def chat():
     """GPT-4o map brain — thin REST wrapper over _run_gpt4o_internal."""
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if _is_rate_limited(ip, limit=20, window_s=60):
+        return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     body = request.get_json(silent=True) or {}
     user_msg = (body.get("message") or "").strip()
     if not user_msg:
@@ -2174,6 +2216,9 @@ def chat():
 @app.post("/api/gemini/chat")
 def gemini_chat():
     """Gemini 2.0 Flash voice assistant for trucks."""
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if _is_rate_limited(ip, limit=30, window_s=60):
+        return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     if not _gemini_ready:
         # Fallback to GPT-4o-mini if server Gemini key is missing
         if _gpt4o_ready:

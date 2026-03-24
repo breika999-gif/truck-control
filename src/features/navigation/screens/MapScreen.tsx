@@ -103,6 +103,7 @@ import MapLayers from '../components/MapLayers';
 import { styles, NEON, NEON_DIM } from './MapScreen.styles';
 import {
   NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
+  ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_BIZ, ICON_NO_OVERTAKING,
   NAV_PADDING, ZERO_PADDING,
   APP_URL_MAP, HOS_LIMIT_S, POI_CATEGORIES,
   DEPART_LABELS, type DepartLabel, departIso,
@@ -1337,6 +1338,11 @@ const MapScreen: React.FC = () => {
             'sign-closed':   SIGN_CLOSED,
             'sign-danger-0': SIGN_DANGER0,
             'star-icon':     STAR_ICON,
+            'parking-icon':  ICON_PARKING,
+            'fuel-icon':     ICON_FUEL,
+            'camera-icon':   ICON_CAMERA,
+            'biz-icon':      ICON_BIZ,
+            'no-overtaking': ICON_NO_OVERTAKING,
           }}
           onImageMissing={(imageKey) => {
             console.warn('[Mapbox] missing image in atlas:', imageKey);
