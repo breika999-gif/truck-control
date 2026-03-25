@@ -99,6 +99,8 @@ import {
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 
+const EMPTY_RESTRICTIONS: never[] = [];
+
 import MapLayers from '../components/MapLayers';
 import { styles, NEON, NEON_DIM } from './MapScreen.styles';
 import {
@@ -1486,7 +1488,7 @@ const MapScreen: React.FC = () => {
           handleSelectRouteOption={handleSelectRouteOption}
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}
-          restrictionPoints={route?.restrictions ?? []}
+          restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
         />
 
       </Mapbox.MapView>
