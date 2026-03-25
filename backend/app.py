@@ -64,7 +64,7 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 
 try:
     from google import genai as _google_genai
@@ -1768,24 +1768,6 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
-@app.post("/api/transcribe")
-def transcribe():
-    audio = request.files.get("audio")
-    if not audio:
-        return jsonify({"ok": False, "error": "audio file required"}), 400
-    if not _gpt4o_ready:
-        return jsonify({"ok": False, "error": "OPENAI_API_KEY not set"}), 503
-    try:
-        result = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=(audio.filename or "audio.m4a", audio.stream, audio.content_type or "audio/m4a"),
-            language="bg",
-        )
-        return jsonify({"ok": True, "text": result.text})
-    except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
-
-
 @app.get("/api/health")
 def health():
     return jsonify({
@@ -1838,13 +1820,24 @@ def _gpt_cache_get(key: str) -> dict | None:
 
 def _gpt_cache_set(key: str, result: dict) -> None:
     # Limit cache size to 50 entries — evict oldest
-    if len(_gpt_cache) >= 50:
+    if len(_gpt_cache) >= 500:
         oldest = min(_gpt_cache, key=lambda k: _gpt_cache[k][1])
         _gpt_cache.pop(oldest, None)
     _gpt_cache[key] = (result, _cache_time.time() + _GPT_CACHE_TTL)
 
 
 # ── GPT-4o map engine (shared internal helper) ────────────────────────────────
+
+def _classify_task_complexity(user_msg: str, tools_called: list) -> str:
+    """Returns 'mini' or 'full' based on task complexity."""
+    complex_keywords = ["avoid", "restriction", "hos", "legal", "multi",
+                        "waypoint", "dangerous", "adr", "weight", "height",
+                        "нарушение", "правен", "опасни", "тегло", "височина"]
+    msg_lower = user_msg.lower()
+    if any(kw in msg_lower for kw in complex_keywords):
+        return "full"
+    return "mini"
+
 
 def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     """Core GPT-4o map brain. Returns dict — called by /api/chat and /api/gemini/chat."""
@@ -1893,8 +1886,9 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
 
     try:
         for turn in range(4):
+            gpt_model = "gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini"
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=gpt_model,
                 messages=messages,
                 tools=_TOOLS,
                 tool_choice=(
@@ -2303,12 +2297,11 @@ def chat():
 
 @app.post("/api/gemini/chat")
 def gemini_chat():
-    """Gemini 2.0 Flash voice assistant for trucks."""
+    """Gemini 2.0 Flash voice assistant for trucks with parallel GPT pre-fetch."""
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     if _is_rate_limited(ip, limit=30, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     if not _gemini_ready:
-        # Fallback to GPT-4o-mini if server Gemini key is missing
         if _gpt4o_ready:
             body = request.get_json(silent=True) or {}
             result = _run_gpt4o_internal(
@@ -2328,97 +2321,71 @@ def gemini_chat():
     if not user_msg:
         return jsonify({"ok": False, "error": "message is required"}), 400
 
-    is_personal = False
-    # Always create a fresh client from the current env key to avoid stale init
-    server_key = os.getenv("GEMINI_API_KEY", "")
-    gemini_client_to_use = _google_genai.Client(api_key=server_key) if server_key else _gemini_client
-
     history = body.get("history") or []
     context = body.get("context") or {}
-
-    # Build conversation for Gemini
-    contents = []
-    # Limit history to prevent token bloat
-    for h in history[-4:]:
-        role = "user" if h.get("role") == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
-    
-    ctx_note = ""
-    if context.get("lat"):
-        ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
-    
-    # Inject live tachograph state so Gemini can answer HOS questions
     user_email = (body.get("user_email") or "").strip()
-    tacho = _tacho_summary(user_email)
-    ctx_note += (
-        f" [ТАХОГРАФ: непрекъснато {tacho['continuous_driven_h']}ч/4.5ч; "
-        f"днес {tacho['daily_driven_h']}ч/9ч; "
-        f"седмично {tacho['weekly_driven_h']}ч/56ч; "
-        f"двуседмично {tacho['biweekly_driven_h']}ч/90ч]"
-    )
-    
-    contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
-    def _call_gemini(_unused_client):
-        """Call Gemini REST API directly (bypasses SDK key issues)."""
-        import time as _time
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
-        payload = {
-            "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
-            "contents": contents,
-            "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
-        }
-        for attempt in range(2):
-            try:
-                r = requests.post(url, json=payload, timeout=20)
-                data = r.json()
-                if "error" in data:
-                    err = data["error"]
-                    raise Exception(f"{err.get('code','')} {err.get('status','')}. {data}")
-                # Return a simple object with .text
-                class _R:
-                    text = (data.get("candidates", [{}])[0]
-                            .get("content", {})
-                            .get("parts", [{}])[0]
-                            .get("text", ""))
-                return _R()
-            except Exception as e:
-                if ("429" in str(e) or "RESOURCE_EXHAUSTED" in str(e)) and attempt == 0:
-                    _time.sleep(2)
-                    continue
-                raise e
+    # Parallel Execution
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # Task 1: Gemini Call
+        def call_gemini_task():
+            # Build conversation for Gemini
+            contents = []
+            for h in history[-4:]:
+                role = "user" if h.get("role") == "user" else "model"
+                contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
+            
+            ctx_note = ""
+            if context.get("lat"):
+                ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+            
+            tacho = _tacho_summary(user_email)
+            ctx_note += (
+                f" [ТАХОГРАФ: непрекъснато {tacho['continuous_driven_h']}ч/4.5ч; "
+                f"днес {tacho['daily_driven_h']}ч/9ч; "
+                f"седмично {tacho['weekly_driven_h']}ч/56ч; "
+                f"двуседмично {tacho['biweekly_driven_h']}ч/90ч]"
+            )
+            contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
-    def _fmt_err(raw, personal=False):
-        r = raw.lower()
-        if ("quota" in r and ("exceeded" in r or "billing" in r or "plan" in r)) \
-                or "perday" in r or ("per_day" in r and "quota" in r):
-            source = "Личният ти" if personal else "Сървърният"
-            return (f"{source} Gemini ключ е изчерпал квотата си. "
-                    "Опитай пак след 60 секунди или провери настройките (⚙️).")
-        if "resource_exhausted" in r or "429" in raw:
-            return "Gemini е претоварен (15 съобщения/мин). Изчакай 30 сек."
-        if "timeout" in r or "deadline" in r:
-            return "Gemini не отговори навреме. Опитай пак."
-        if "api_key_invalid" in r or "invalid_api_key" in r or "401" in raw or "403" in raw:
-            return "Невалиден Gemini API ключ. Провери в настройките (⚙️ → Gemini ключ)."
-        return f"Gemini грешка: {raw[:150]}"
+            api_key = os.getenv("GEMINI_API_KEY", "")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
+            payload = {
+                "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+                "contents": contents,
+                "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
+            }
+            r = requests.post(url, json=payload, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+            return (data.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", ""))
 
-    try:
-        resp = _call_gemini(gemini_client_to_use)
-        gemini_text = (resp.text or "").strip()
-    except Exception as exc:
-        err_raw = str(exc)
-        print(f"[Gemini] Error: {err_raw[:300]}", flush=True)
-        return jsonify({"ok": False, "error": _fmt_err(err_raw, is_personal)}), 500
+        # Task 2: GPT-4o Call (pre-fetch)
+        def call_gpt_task():
+            if not _gpt4o_ready:
+                return None
+            return _run_gpt4o_internal(user_msg, history, context)
 
-    # Extract navigation intent → forward to GPT-4o map engine
+        future_gemini = executor.submit(call_gemini_task)
+        future_gpt = executor.submit(call_gpt_task)
+
+        try:
+            gemini_text = future_gemini.result()
+        except Exception as exc:
+            print(f"[Gemini Parallel] Error: {str(exc)}", flush=True)
+            return jsonify({"ok": False, "error": f"Gemini error: {str(exc)[:100]}"}), 500
+
+    # Process Results
     nav_command, clean_reply = _extract_nav_intent(gemini_text)
     app_intent, clean_reply = _extract_app_intent(clean_reply)
     action = None
+
     if nav_command and _gpt4o_ready:
-        gpt_result = _run_gpt4o_internal(nav_command, history, context)
-        if gpt_result.get("ok"):
+        gpt_result = future_gpt.result()
+        if gpt_result and gpt_result.get("ok"):
             action = gpt_result.get("action")
             if not clean_reply:
                 clean_reply = gpt_result.get("reply", "")
@@ -2946,7 +2913,7 @@ def proximity_alerts():
 def gemini_transcribe():
     """Gemini multimodal audio transcription (M4A)."""
     if not _gemini_ready:
-        return transcribe() # fallback to Whisper
+        return whisper_transcribe() # fallback to Whisper ONLY if gemini_ready is False at startup
 
     audio_file = request.files.get("audio")
     if not audio_file:
@@ -2979,7 +2946,7 @@ def gemini_transcribe():
         return jsonify({"ok": bool(text), "text": text})
     except Exception as exc:
         print(f"[Gemini Transcribe] Error: {str(exc)}", flush=True)
-        return transcribe() # fallback on error
+        return jsonify({"ok": False, "error": "Gemini transcription unavailable"}), 500
 
 
 # ── Whisper transcription (OpenAI fallback) ───────────────────────────────────
@@ -2991,6 +2958,9 @@ def whisper_transcribe():
     Accepts multipart/form-data with field 'audio'.
     Returns: { ok, text } or { ok: false, error }
     """
+    if _gemini_ready:
+        return jsonify({"ok": False, "error": "Gemini transcription unavailable"}), 500
+
     if not _gpt4o_ready:
         return jsonify({"ok": False, "error": "OpenAI не е конфигуриран."}), 503
 
