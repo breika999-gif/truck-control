@@ -2469,6 +2469,24 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
+      {/* ── Gemini Chat FAB (bottom-left) — assistant ── */}
+      <TouchableOpacity
+        style={[
+          styles.geminiFab,
+          { left: spacing.md, bottom: insets.bottom + spacing.xl },
+          backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+        ]}
+        onPress={() => {
+          setGeminiChatOpen(v => !v);
+          setGptChatOpen(false);
+        }}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+        {/* Online dot */}
+        <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+      </TouchableOpacity>
+
       {/* ── GPT-4o FAB (bottom-right) — navigation ── */}
       <TouchableOpacity
         style={[
