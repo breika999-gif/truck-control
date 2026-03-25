@@ -871,13 +871,10 @@ const MapScreen: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Trigger elevation + weather fetch whenever route changes
+  // Clear elevation + weather fetch when route is cleared
   useEffect(() => {
-    if (!route) { setElevProfile([]); setWeatherPoints([]); setRouteAheadPOIs([]); return; }
-    buildElevProfile(route);
-    fetchWeatherForRoute(route);
-    buildRoutePOIScan(route);
-  }, [route, buildElevProfile, fetchWeatherForRoute]);
+    if (!route) { setElevProfile([]); setWeatherPoints([]); setRouteAheadPOIs([]); }
+  }, [route]);
 
   // ── Add intermediate waypoint + re-route ─────────────────────────────────
   // Appends a stop before the final destination and recalculates the route.
@@ -1011,18 +1008,19 @@ const MapScreen: React.FC = () => {
     if (!prof) return;
     setRestrictionChecking(true);
     try {
+      const coords = routeOptions[idx]?.geometry.coordinates;
       const result = await checkTruckRestrictions({
         weight_t:     prof.weight_t,
         height_m:     prof.height_m,
         width_m:      prof.width_m,
         length_m:     prof.length_m,
         hazmat_class: prof.hazmat_class ?? undefined,
-      });
+      }, coords);
       setRestrictionWarnings(result.warnings);
     } finally {
       setRestrictionChecking(false);
     }
-  }, []);
+  }, [routeOptions]);
 
   // ── Navigation Simulator ───────────────────────────────────────────────────
   // Moves the user position along route.geometry.coordinates at ~80 km/h.

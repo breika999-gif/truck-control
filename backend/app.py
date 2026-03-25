@@ -2363,9 +2363,14 @@ def gemini_chat():
                     .get("parts", [{}])[0]
                     .get("text", ""))
 
-        # Task 2: GPT-4o Call (pre-fetch)
+        # Task 2: GPT-4o pre-fetch only if message looks like nav intent
+        _NAV_HINTS = ["карай", "навигирай", "маршрут", "отиди", "намери", "паркинг",
+                      "гориво", "бензин", "дизел", "спирка", "заобиколи", "тунел",
+                      "navigate", "route", "go to", "find", "parking", "fuel", "avoid"]
+        _likely_nav = any(h in user_msg.lower() for h in _NAV_HINTS)
+
         def call_gpt_task():
-            if not _gpt4o_ready:
+            if not _gpt4o_ready or not _likely_nav:
                 return None
             return _run_gpt4o_internal(user_msg, history, context)
 
