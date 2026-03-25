@@ -616,6 +616,14 @@ export const styles = StyleSheet.create({
   distLabel: { ...typography.label, color: colors.textSecondary, fontSize: 9 },
 
   // Bottom panel
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 44,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    marginBottom: 10,
+  },
   bottomPanel: {
     position: 'absolute',
     bottom: 0,

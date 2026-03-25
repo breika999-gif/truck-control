@@ -12,6 +12,7 @@ import { parseBubbleText } from '../utils/mapUtils';
 import { styles } from '../screens/MapScreen.styles';
 import type { ChatMessage } from '../../../shared/services/backendApi';
 import type { EdgeInsets } from 'react-native-safe-area-context';
+import BottomSheet from './BottomSheet';
 
 interface ChatPanelProps {
   gptChatOpen: boolean;
@@ -50,11 +51,8 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
   kbHeight,
   gptScrollRef,
   geminiScrollRef,
-  insets,
   micLoading,
 }) => {
-  if (!gptChatOpen && !geminiChatOpen) return null;
-
   const isOpen = gptChatOpen || geminiChatOpen;
   const history = gptChatOpen ? gptHistory : geminiHistory;
   const loading = gptChatOpen ? gptLoading : geminiLoading;
@@ -64,39 +62,40 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
     : "Питай Gemini или кажи 'отвори YouTube'...";
 
   return (
-    <View style={[styles.chatPanel, { bottom: insets.bottom + 80 + kbHeight }]}>
-      <ScrollView
-        ref={scrollRef}
-        style={styles.chatMessages}
-        contentContainerStyle={styles.chatMessagesContent}
-        keyboardShouldPersistTaps="handled"
-        onContentSizeChange={() => {
-          if (history.length > 0) {
-            scrollRef.current?.scrollToEnd({ animated: true });
-          }
-        }}
-      >
-        {history.length === 0 && (
-          <Text style={styles.chatPlaceholder}>{placeholder}</Text>
-        )}
-        {history.map((msg, i) => (
-          <View
-            key={i}
-            style={[
-              styles.chatBubble,
-              msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
-            ]}
-          >
-            <Text style={msg.role === 'user' ? styles.chatBubbleText : styles.chatBubbleTextModel}>
-              {parseBubbleText(msg.text)}
-            </Text>
-          </View>
-        ))}
-        {loading && (
-          <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
-        )}
-      </ScrollView>
-      <View style={styles.chatInputRow}>
+    <BottomSheet visible={isOpen} snapHeight={420}>
+      <View style={[styles.chatMessages, { height: 300 }]}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={styles.chatMessagesContent}
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => {
+            if (history.length > 0) {
+              scrollRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+        >
+          {history.length === 0 && (
+            <Text style={styles.chatPlaceholder}>{placeholder}</Text>
+          )}
+          {history.map((msg, i) => (
+            <View
+              key={i}
+              style={[
+                styles.chatBubble,
+                msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
+              ]}
+            >
+              <Text style={msg.role === 'user' ? styles.chatBubbleText : styles.chatBubbleTextModel}>
+                {parseBubbleText(msg.text)}
+              </Text>
+            </View>
+          ))}
+          {loading && (
+            <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
+          )}
+        </ScrollView>
+      </View>
+      <View style={[styles.chatInputRow, { paddingBottom: kbHeight + 12 }]}>
         <TouchableOpacity
           style={[
             styles.chatMicBtn,
@@ -132,7 +131,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           <Text style={styles.chatSendText}>➤</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </BottomSheet>
   );
 });
 

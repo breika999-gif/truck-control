@@ -1,4 +1,4 @@
-import React, { useMemo, memo } from 'react';
+import React, { useMemo, memo, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,10 @@ import {
   Share,
   ActivityIndicator,
   Animated,
+  PanResponder,
 } from 'react-native';
+
+const HANDLE_H = 36; // visible handle height when collapsed
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles, NEON } from '../screens/MapScreen.styles';
@@ -97,6 +100,49 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   roadGrade,
   nearestParkingM,
 }) => {
+  // ── Bottom-sheet snap logic ────────────────────────────────────────────────
+  const panelHeightRef = useRef(0);
+  const translateY     = useRef(new Animated.Value(0)).current;
+  const expandedRef    = useRef(false);
+  const initializedRef = useRef(false);
+
+  const snapTo = useCallback((expanded: boolean) => {
+    const collapsed = Math.max(0, panelHeightRef.current - HANDLE_H);
+    Animated.spring(translateY, {
+      toValue:        expanded ? 0 : collapsed,
+      useNativeDriver: true,
+      damping:         22,
+      stiffness:       220,
+    }).start();
+    expandedRef.current = expanded;
+  }, [translateY]);
+
+  // Collapse when a new route appears
+  useEffect(() => {
+    if (route) {
+      initializedRef.current = false; // allow re-collapse on new route
+    }
+  }, [route?.distance]);
+
+  const panResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gs) =>
+      Math.abs(gs.dy) > 8 && Math.abs(gs.dy) > Math.abs(gs.dx),
+    onPanResponderMove: (_, gs) => {
+      const base = expandedRef.current ? 0 : panelHeightRef.current - HANDLE_H;
+      const next = Math.max(0, Math.min(panelHeightRef.current - HANDLE_H, base + gs.dy));
+      translateY.setValue(next);
+    },
+    onPanResponderRelease: (_, gs) => {
+      if (gs.vy < -0.3 || gs.dy < -40) {
+        snapTo(true);
+      } else if (gs.vy > 0.3 || gs.dy > 40) {
+        snapTo(false);
+      } else {
+        snapTo(expandedRef.current);
+      }
+    },
+  })).current;
+
   const eta = useMemo(() => {
     if (!route) return null;
     const secs = navigating && remainingSeconds > 0 ? remainingSeconds : route.duration;
@@ -180,9 +226,26 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
         </View>
       )}
 
-      {/* ── Bottom panel ── */}
+      {/* ── Bottom panel (swipeable sheet) ── */}
       {route && !loadingRoute && (
-        <View style={[styles.bottomPanel, { paddingBottom: insets.bottom + spacing.md }]}>
+        <Animated.View
+          style={[styles.bottomPanel, { paddingBottom: insets.bottom + spacing.md, transform: [{ translateY }] }]}
+          onLayout={(e) => {
+            const h = e.nativeEvent.layout.height;
+            if (h > 0 && !initializedRef.current) {
+              panelHeightRef.current = h;
+              initializedRef.current = true;
+              // Start collapsed — only handle visible
+              translateY.setValue(h - HANDLE_H);
+              expandedRef.current = false;
+            } else if (h > 0) {
+              panelHeightRef.current = h;
+            }
+          }}
+          {...panResponder.panHandlers}
+        >
+          {/* Drag handle */}
+          <View style={styles.sheetHandle} />
           <View style={styles.infoRow}>
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>РАЗСТОЯНИЕ</Text>
@@ -383,7 +446,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 : '📡 Изчакване на GPS...'}
             </Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       )}
     </>
   );

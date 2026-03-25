@@ -43,6 +43,7 @@ interface MapLayersProps {
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
+  restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'; value: string }>;
 }
 
 const NEON = '#00f7ff';
@@ -85,7 +86,18 @@ const MapLayers: React.FC<MapLayersProps> = ({
   handleSelectRouteOption,
   ttsSpeak,
   voiceMutedRef,
+  restrictionPoints = [],
 }) => {
+  const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: restrictionPoints.map((rp, i) => ({
+      type: 'Feature',
+      id: i,
+      geometry: { type: 'Point', coordinates: [rp.lng, rp.lat] },
+      properties: { value: rp.value, type: rp.type },
+    })),
+  }), [restrictionPoints]);
+
   return (
     <>
       {/* ── Real-time traffic overlay ── */}
@@ -154,6 +166,25 @@ const MapLayers: React.FC<MapLayersProps> = ({
             }}
           />
         </Mapbox.VectorSource>
+      )}
+
+      {/* ── Restriction Signs Layer ── */}
+      {mapIsLoaded && restrictionPoints.length > 0 && (
+        <Mapbox.ShapeSource id="restriction-signs-source" shape={restrictionGeoJSON}>
+          <Mapbox.SymbolLayer
+            id="restriction-signs"
+            slot="top"
+            style={{
+              textField: ['get', 'value'],
+              textSize: 12,
+              textColor: '#CC0000',
+              textHaloColor: '#FFFFFF',
+              textHaloWidth: 2,
+              iconAnchor: 'center',
+              textAllowOverlap: true,
+            }}
+          />
+        </Mapbox.ShapeSource>
       )}
 
       {/* ── Incidents overlay ── */}
