@@ -1486,6 +1486,7 @@ const MapScreen: React.FC = () => {
           handleSelectRouteOption={handleSelectRouteOption}
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}
+          restrictionPoints={route?.restrictions ?? []}
         />
 
       </Mapbox.MapView>
