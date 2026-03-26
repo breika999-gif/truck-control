@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, type MutableRefObject } from 'react';
 
-const Sound = require('react-native-sound');
+let Sound: any = null;
+try { Sound = require('react-native-sound'); } catch { Sound = null; }
 
 type SoundKey =
   | 'speed'
@@ -41,10 +42,12 @@ export function useSoundAlerts(mutedRef: MutableRefObject<boolean>) {
   });
 
   useEffect(() => {
+    if (!Sound) return;
     Sound.setCategory('Playback');
 
     (Object.keys(SOUND_ASSETS) as SoundKey[]).forEach((key) => {
       try {
+        if (!Sound) { soundsRef.current[key] = null; return; }
         soundsRef.current[key] = new Sound(
           SOUND_ASSETS[key],
           Sound.MAIN_BUNDLE,
