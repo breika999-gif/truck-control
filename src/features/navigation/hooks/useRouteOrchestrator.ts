@@ -39,6 +39,8 @@ type UseRouteOrchestratorArgs = {
   setNavCongestionGeoJSON: (geojson: GeoJSON.FeatureCollection | null) => void;
   setWaypoints: (waypoints: Coords[]) => void;
   setWaypointNames: (names: string[]) => void;
+  setRouteOptions: (opts: import('../../../shared/services/backendApi').RouteOption[]) => void;
+  setRouteOptDest: (dest: import('../hooks/useNavigationState').RouteOptDest | null) => void;
 };
 
 export function useRouteOrchestrator({
@@ -66,6 +68,8 @@ export function useRouteOrchestrator({
   setNavCongestionGeoJSON,
   setWaypoints,
   setWaypointNames,
+  setRouteOptions,
+  setRouteOptDest,
 }: UseRouteOrchestratorArgs) {
   const customOriginRef = useRef<Coords | null>(null);
   const handleStartRef = useRef<() => void>(() => {});
@@ -144,6 +148,24 @@ export function useRouteOrchestrator({
       setRoute(result);
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)
       setNavCongestionGeoJSON(result?.congestionGeoJSON ?? null);
+
+      // Show alternatives in RouteOptionsPanel only during ROUTE_PREVIEW (not rerouting)
+      if (result?.alternatives?.length && !navigatingRef.current) {
+        const primary: import('../../../shared/services/backendApi').RouteOption = {
+          label: 'Най-бърз',
+          color: '#00BFFF',
+          duration: result.duration,
+          distance: result.distance,
+          traffic: 'low',
+          geometry: result.geometry,
+          dest_coords: dest,
+          congestion_geojson: result.congestionGeoJSON as any,
+        };
+        setRouteOptions([primary, ...result.alternatives]);
+        setRouteOptDest({ name: destinationNameRef.current, coords: dest, waypoints: waypointsArg });
+      } else if (!navigatingRef.current) {
+        setRouteOptions([]);
+      }
 
       if (result) {
         buildRoutePOIScan(result);

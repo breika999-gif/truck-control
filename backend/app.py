@@ -2519,6 +2519,9 @@ def calculate_route():
     if depart_at:
         params["departAt"] = depart_at
 
+    # Request up to 3 alternatives (2 extra)
+    params["maxAlternatives"] = 2
+
     try:
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
@@ -2553,6 +2556,25 @@ def calculate_route():
                 "bannerInstructions": [banner] if banner else [],
             })
 
+        # Build simplified alternatives (geometry + duration + distance only)
+        alt_colors = ["#FF8C00", "#9B59B6"]
+        alt_labels = ["Алтернатива 1", "Алтернатива 2"]
+        alternatives = []
+        for idx, alt_rt in enumerate(routes_data[1:3]):
+            alt_summary  = alt_rt.get("summary", {})
+            alt_geom     = _tomtom_route_to_geojson(alt_rt)
+            alt_dest_coords = destination if isinstance(destination, list) else [0, 0]
+            alternatives.append({
+                "label":             alt_labels[idx],
+                "color":             alt_colors[idx],
+                "duration":          alt_summary.get("travelTimeInSeconds", 0),
+                "distance":          alt_summary.get("lengthInMeters", 0),
+                "traffic":           "moderate",
+                "geometry":          alt_geom,
+                "dest_coords":       alt_dest_coords,
+                "congestion_geojson": _tomtom_congestion_geojson(alt_rt, alt_geom),
+            })
+
         return jsonify({
             "geometry":          geometry,
             "distance":          summary.get("lengthInMeters", 0),
@@ -2563,6 +2585,7 @@ def calculate_route():
             "congestionGeoJSON": _tomtom_congestion_geojson(rt, geometry),
             "traffic_alerts":    _tomtom_traffic_alerts(rt, geometry),
             "restrictions":      _extract_route_restrictions(geometry),
+            "alternatives":      alternatives,
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500

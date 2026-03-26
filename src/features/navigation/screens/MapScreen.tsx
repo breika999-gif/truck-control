@@ -240,6 +240,8 @@ const MapScreen: React.FC = () => {
     setNavCongestionGeoJSON: (geojson) => setNavCongestionGeoJSONRef.current(geojson),
     setWaypoints,
     setWaypointNames,
+    setRouteOptions,
+    setRouteOptDest,
   });
 
   // ── States & Refs from useLocationRuntime ──────────────────────────────────
@@ -448,6 +450,8 @@ const MapScreen: React.FC = () => {
     avoidUnpavedRef,
     waypointsRef,
     remainingSeconds,
+    speed,
+    speedLimit,
   });
 
   // Apply the faster route when user accepts

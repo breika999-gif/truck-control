@@ -76,6 +76,8 @@ export interface RouteResult {
   congestionGeoJSON: GeoJSON.FeatureCollection;
   /** Road restriction signs along the route (maxheight / maxweight / maxwidth) */
   restrictions: RestrictionPoint[];
+  /** Alternative routes (simplified, no steps) returned alongside primary */
+  alternatives?: import('../../../shared/services/backendApi').RouteOption[];
 }
 
 /**
@@ -182,6 +184,7 @@ export async function fetchRoute(
       congestionGeoJSON: data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
       steps,
       restrictions:      data.restrictions ?? [],
+      alternatives:      data.alternatives ?? [],
     };
   } catch {
     return null;

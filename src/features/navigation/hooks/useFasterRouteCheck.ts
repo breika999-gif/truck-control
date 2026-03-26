@@ -11,9 +11,14 @@ export interface FasterRouteOffer {
   saveMin: number;
 }
 
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const MIN_SAVE_SECONDS  = 120;           // 2 minutes minimum saving
-const SNOOZE_MS         = 10 * 60 * 1000; // 10 min snooze after dismiss
+/** Show banner only if saving ≥ 7 minutes */
+const MIN_SAVE_SECONDS = 7 * 60;
+
+/** Speed must stay below 50% of limit for this long before we check */
+const SLOW_THRESHOLD_MS = 120_000; // 2 minutes
+
+/** After dismissing, snooze for 10 minutes */
+const SNOOZE_MS = 10 * 60_000;
 
 interface Args {
   navigating: boolean;
@@ -24,6 +29,8 @@ interface Args {
   avoidUnpavedRef: MutableRefObject<boolean>;
   waypointsRef: MutableRefObject<Coords[]>;
   remainingSeconds: number;
+  speed: number;           // km/h, from GPS
+  speedLimit: number | null; // km/h, from route maxspeeds
 }
 
 export function useFasterRouteCheck({
@@ -35,67 +42,86 @@ export function useFasterRouteCheck({
   avoidUnpavedRef,
   waypointsRef,
   remainingSeconds,
+  speed,
+  speedLimit,
 }: Args) {
-  const [offer, setOffer] = useState<FasterRouteOffer | null>(null);
-  const remainingRef  = useRef(remainingSeconds);
-  const snoozeUntil   = useRef(0);
-  const intervalRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [offer, setOffer]     = useState<FasterRouteOffer | null>(null);
+  const remainingRef          = useRef(remainingSeconds);
+  const slowSinceRef          = useRef<number | null>(null);
+  const checkingRef           = useRef(false);
+  const snoozeUntil           = useRef(0);
 
   useEffect(() => { remainingRef.current = remainingSeconds; }, [remainingSeconds]);
 
   const check = useCallback(async () => {
+    if (checkingRef.current) return;
     if (Date.now() < snoozeUntil.current) return;
     const origin = userCoordsRef.current;
     const dest   = destinationRef.current;
     if (!origin || !dest || !routeRef.current) return;
 
-    const prof = profileRef.current;
-    const truck = prof
-      ? {
-          max_height:  prof.height_m,
-          max_width:   prof.width_m,
-          max_weight:  prof.weight_t,
-          max_length:  prof.length_m,
-          exclude:     adrToExclude(prof.hazmat_class ?? 'none'),
-          avoidUnpaved: avoidUnpavedRef.current,
-          adr_tunnel:  prof.adr_tunnel ?? 'none' as const,
-        }
-      : avoidUnpavedRef.current ? { avoidUnpaved: true, adr_tunnel: 'none' as const } : undefined;
-
+    checkingRef.current = true;
     try {
+      const prof = profileRef.current;
+      const truck = prof
+        ? {
+            max_height:   prof.height_m,
+            max_width:    prof.width_m,
+            max_weight:   prof.weight_t,
+            max_length:   prof.length_m,
+            exclude:      adrToExclude(prof.hazmat_class ?? 'none'),
+            avoidUnpaved: avoidUnpavedRef.current,
+            adr_tunnel:   prof.adr_tunnel ?? 'none' as const,
+          }
+        : avoidUnpavedRef.current
+          ? { avoidUnpaved: true, adr_tunnel: 'none' as const }
+          : undefined;
+
       const result = await fetchRoute(origin, dest, truck, undefined, waypointsRef.current);
       if (!result) return;
 
-      const currentRemaining = remainingRef.current;
-      const saving = currentRemaining - result.duration;
+      const saving = remainingRef.current - result.duration;
       if (saving >= MIN_SAVE_SECONDS) {
         setOffer({ route: result, saveMin: Math.round(saving / 60) });
       }
     } catch {
       // silent — don't interrupt navigation
+    } finally {
+      checkingRef.current = false;
     }
   }, [userCoordsRef, destinationRef, routeRef, profileRef, avoidUnpavedRef, waypointsRef]);
 
-  // Start/stop interval based on navigating state
+  // Speed-based trigger: if speed < 50% of limit for 120s → check for faster route
   useEffect(() => {
-    if (!navigating) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setOffer(null);
+    if (!navigating || speedLimit === null || speedLimit <= 0) {
+      slowSinceRef.current = null;
       return;
     }
-    // Run first check after 3 min (let user settle into route first)
-    const firstCheck = setTimeout(check, 3 * 60 * 1000);
-    intervalRef.current = setInterval(check, CHECK_INTERVAL_MS);
-    return () => {
-      clearTimeout(firstCheck);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [navigating, check]);
 
-  const acceptOffer = useCallback(() => {
-    setOffer(null);
-  }, []);
+    const threshold = speedLimit * 0.5;
+
+    if (speed < threshold) {
+      if (slowSinceRef.current === null) {
+        slowSinceRef.current = Date.now();
+      } else if (Date.now() - slowSinceRef.current >= SLOW_THRESHOLD_MS) {
+        slowSinceRef.current = null; // reset timer
+        check();
+      }
+    } else {
+      // Speed recovered — reset timer
+      slowSinceRef.current = null;
+    }
+  }, [speed, speedLimit, navigating, check]);
+
+  // Reset when navigation stops
+  useEffect(() => {
+    if (!navigating) {
+      setOffer(null);
+      slowSinceRef.current = null;
+    }
+  }, [navigating]);
+
+  const acceptOffer = useCallback(() => setOffer(null), []);
 
   const dismissOffer = useCallback(() => {
     snoozeUntil.current = Date.now() + SNOOZE_MS;
