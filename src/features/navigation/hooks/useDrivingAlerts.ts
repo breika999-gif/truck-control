@@ -3,6 +3,7 @@ import { Animated } from 'react-native';
 import type { MutableRefObject } from 'react';
 import { haversineMeters, ttsSpeak } from '../utils/mapUtils';
 import type { POICard, ProximityAlerts } from '../../../shared/services/backendApi';
+import { useSoundAlerts } from './useSoundAlerts';
 
 interface UseDrivingAlertsArgs {
   speed: number;
@@ -23,6 +24,7 @@ export function useDrivingAlerts({
   voiceMutedRef,
   lanePulseOn,
 }: UseDrivingAlertsArgs) {
+  const { playSpeedAlert, playCameraAlert } = useSoundAlerts(voiceMutedRef);
   const [cameraAlert, setCameraAlert] = useState<{ dist: number; name: string } | null>(null);
   const [overtakingResults, setOvertakingResults] = useState<ProximityAlerts['overtaking']>([]);
   const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
@@ -39,8 +41,9 @@ export function useDrivingAlerts({
     const now = Date.now();
     if (now - lastSpeedAlarmRef.current < 30_000) return;
     lastSpeedAlarmRef.current = now;
-    if (!voiceMutedRef.current) ttsSpeak(`Превишена скорост! Лимит ${speedLimit} км/ч.`);
-  }, [speed, speedLimit, navigating, voiceMutedRef]);
+    playSpeedAlert();
+    if (!voiceMutedRef.current) ttsSpeak(`Лимит ${speedLimit} км/ч.`);
+  }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert]);
 
   // ── Speed camera proximity alert — TTS + flash every 10 s when < 600 m ──
   useEffect(() => {
@@ -57,7 +60,8 @@ export function useDrivingAlerts({
     const now = Date.now();
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
-      if (!voiceMutedRef.current) ttsSpeak(`Внимание! Камера на ${Math.round(nearest.dist)} метра.`);
+      playCameraAlert();
+      if (!voiceMutedRef.current) ttsSpeak(`Камера на ${Math.round(nearest.dist)} метра.`);
       Animated.sequence([
         Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
         Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
@@ -66,7 +70,7 @@ export function useDrivingAlerts({
       ]).start();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userCoords, navigating, cameraResults]);
+  }, [userCoords, navigating, cameraResults, playCameraAlert, voiceMutedRef]);
 
   // ── Lane glow pulse — starts/stops based on lanePulseOn ──
   useEffect(() => {
