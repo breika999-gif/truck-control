@@ -46,6 +46,7 @@ import RouteOptionsPanel from '../components/RouteOptionsPanel';
 import RestrictionSign from '../components/RestrictionSign';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
+import RouteTimeline from '../components/RouteTimeline';
 import GoogleAccountModal from '../components/GoogleAccountModal';
 import type { GeoPlace } from '../api/geocoding';
 import {
@@ -1317,26 +1318,14 @@ const MapScreen: React.FC = () => {
       )}
 
 
-      {/* ── Route-ahead POI panel (parking + fuel) ── */}
-      {navigating && routeAheadPOIs.length > 0 && (
-        <View style={styles.routeAheadPanel}>
-          {routeAheadPOIs.map((poi, i) => {
-            const drivingDistKm = userCoords
-              ? Math.round(haversineMeters(userCoords, [poi.lng, poi.lat]) / 1000)
-              : poi.distKm;
-            if (drivingDistKm < 0) return null;
-            return (
-              <TouchableOpacity
-                key={i}
-                style={styles.routeAheadCard}
-                onPress={() => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
-              >
-                <Text style={styles.routeAheadIcon}>{poi.type === 'parking' ? 'P' : '⛽'}</Text>
-                <Text style={styles.routeAheadKm}>{drivingDistKm} км</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+      {/* ── Route Timeline (parking + fuel pins along route) ── */}
+      {navigating && route && routeAheadPOIs.length > 0 && (
+        <RouteTimeline
+          routeAheadPOIs={routeAheadPOIs}
+          totalDistM={route.distance}
+          userCoords={userCoords}
+          onPOIPress={(poi) => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
+        />
       )}
 
       {/* ── Options Panel (Settings, Toggles, POIs) ── */}
