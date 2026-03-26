@@ -14,6 +14,7 @@ const HANDLE_H = 92; // handle + infoRow + destName always visible when collapse
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles, NEON } from '../screens/MapScreen.styles';
+import ManeuverPanel from './ManeuverPanel';
 import { colors, spacing } from '../../../shared/constants/theme';
 import {
   fmtDistance,
@@ -70,6 +71,7 @@ interface NavigationHUDProps {
 const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   navigating,
   route,
+  currentStep,
   distToTurn,
   speed,
   speedLimit,
@@ -222,12 +224,14 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
         </View>
       )}
 
-      {/* ── Bottom-right: distance to next turn ── */}
-      {navigating && distToTurn != null && (
-        <View style={[styles.distBox, { bottom: 240 + insets.bottom }]}>
-          <Text style={styles.distValue}>{fmtDistance(distToTurn)}</Text>
-          <Text style={styles.distLabel}>ДО ЗАВОЙ</Text>
-        </View>
+      {/* ── Maneuver panel (turn arrow + instruction + distance) ── */}
+      {navigating && route && distToTurn != null && currentStep < route.steps.length && (
+        <ManeuverPanel
+          step={route.steps[currentStep]}
+          nextStep={route.steps[currentStep + 1] ?? null}
+          distToTurn={distToTurn}
+          bottom={240 + insets.bottom}
+        />
       )}
 
       {/* ── Bottom panel (swipeable sheet) ── */}
