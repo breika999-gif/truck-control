@@ -6,16 +6,11 @@ interface Props {
   restriction: RestrictionPoint | null;
 }
 
-const LABEL: Record<string, string> = {
-  maxheight: '↕',
-  maxweight: '⚖',
-  maxwidth:  '↔',
-};
-
-const UNIT: Record<string, string> = {
-  maxheight: 'м',
-  maxweight: 'т',
-  maxwidth:  'м',
+// type → { top label, unit }
+const SIGN_META: Record<string, { top: string; unit: string }> = {
+  maxheight: { top: 'ВИСОЧИНА', unit: 'м' },
+  maxweight: { top: 'ТЕГЛО',    unit: 'т' },
+  maxwidth:  { top: 'ШИРИНА',   unit: 'м' },
 };
 
 const RestrictionSign: React.FC<Props> = ({ restriction }) => {
@@ -25,7 +20,7 @@ const RestrictionSign: React.FC<Props> = ({ restriction }) => {
     if (restriction) {
       Animated.sequence([
         Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
-        Animated.delay(6000),
+        Animated.delay(7000),
         Animated.timing(opacity, { toValue: 0, duration: 400, useNativeDriver: true }),
       ]).start();
     } else {
@@ -35,16 +30,19 @@ const RestrictionSign: React.FC<Props> = ({ restriction }) => {
 
   if (!restriction) return null;
 
-  const icon  = LABEL[restriction.type] ?? '⚠';
-  const unit  = UNIT[restriction.type]  ?? '';
-  const label = `${icon} ${restriction.value_num}${unit}`;
+  const meta = SIGN_META[restriction.type] ?? { top: 'ЛИМИТ', unit: '' };
 
   return (
     <Animated.View style={[s.wrap, { opacity }]}>
       <View style={s.sign}>
-        <Text style={s.label}>{label}</Text>
+        {/* small type label at top */}
+        <Text style={s.typeLabel}>{meta.top}</Text>
+        {/* big value */}
+        <Text style={s.value}>{restriction.value_num}</Text>
+        {/* unit */}
+        <Text style={s.unit}>{meta.unit}</Text>
       </View>
-      <View style={s.triangle} />
+      <View style={s.pin} />
     </Animated.View>
   );
 };
@@ -58,35 +56,45 @@ const s = StyleSheet.create({
     zIndex: 50,
   },
   sign: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: '#FFFFFF',
-    borderWidth: 6,
+    borderWidth: 7,
     borderColor: '#D0021B',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 10,
+    elevation: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: '800',
+  typeLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#D0021B',
+    letterSpacing: 0.5,
+    marginBottom: 1,
+  },
+  value: {
+    fontSize: 22,
+    fontWeight: '900',
     color: '#1A1A1A',
-    textAlign: 'center',
+    lineHeight: 24,
   },
-  triangle: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 8,
-    borderLeftColor:  'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor:   '#D0021B',
+  unit: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#555',
+    marginTop: 1,
+  },
+  pin: {
+    width: 3,
+    height: 10,
+    backgroundColor: '#D0021B',
+    borderBottomLeftRadius: 2,
+    borderBottomRightRadius: 2,
     marginTop: -1,
   },
 });

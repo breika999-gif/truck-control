@@ -10,7 +10,7 @@ import {
   PanResponder,
 } from 'react-native';
 
-const HANDLE_H = 36; // visible handle height when collapsed
+const HANDLE_H = 92; // handle + infoRow + destName always visible when collapsed
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles, NEON } from '../screens/MapScreen.styles';
@@ -63,6 +63,8 @@ interface NavigationHUDProps {
   proximityAlerts?: { overtaking: any[] };
   roadGrade?: number | null;
   nearestParkingM?: number | null;
+  onFetchElevation?: () => void;
+  onFetchWeather?: () => void;
 }
 
 const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
@@ -99,6 +101,8 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   proximityAlerts,
   roadGrade,
   nearestParkingM,
+  onFetchElevation,
+  onFetchWeather,
 }) => {
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
   const panelHeightRef = useRef(0);
@@ -235,9 +239,15 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             if (h > 0 && !initializedRef.current) {
               panelHeightRef.current = h;
               initializedRef.current = true;
-              // Start collapsed — only handle visible
-              translateY.setValue(h - HANDLE_H);
-              expandedRef.current = false;
+              if (navigating) {
+                // Navigating: collapse so only handle is visible
+                translateY.setValue(h - HANDLE_H);
+                expandedRef.current = false;
+              } else {
+                // Preview: expand so Тръгваме! button is visible
+                translateY.setValue(0);
+                expandedRef.current = true;
+              }
             } else if (h > 0) {
               panelHeightRef.current = h;
             }
@@ -429,23 +439,36 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity
-            style={[
-              styles.startBtn,
-              navigating && styles.startBtnActive,
-              !navigating && !gpsReady && styles.startBtnDisabled,
-            ]}
-            onPress={navigating ? onStop : (gpsReady ? onStart : undefined)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.startBtnText}>
-              {navigating
-                ? '🛑 Спри навигацията'
-                : gpsReady
-                ? '🚀 Тръгваме!'
-                : '📡 Изчакване на GPS...'}
-            </Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xs }}>
+            {!navigating && (
+              <TouchableOpacity
+                style={[styles.startBtn, { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(0,191,255,0.4)' }]}
+                onPress={() => {
+                  if (onFetchElevation) onFetchElevation();
+                  if (onFetchWeather) onFetchWeather();
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.startBtnText, { fontSize: 16 }]}>📊 Детайли</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.startBtn,
+                { flex: navigating ? 0 : 2 },
+                navigating && styles.startBtnActive,
+              ]}
+              onPress={navigating ? onStop : onStart}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.startBtnText}>
+                {navigating
+                  ? '🛑 Спри навигацията'
+                  : '🚀 Тръгваме!'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </Animated.View>
       )}
     </>

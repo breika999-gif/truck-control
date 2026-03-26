@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -24,6 +24,7 @@ import { useVoice } from '../hooks/useVoice';
 import { useTacho } from '../hooks/useTacho';
 import { usePOI } from '../hooks/usePOI';
 import { useChat } from '../hooks/useChat';
+import { useSessionBootstrap } from '../hooks/useSessionBootstrap';
 
 import type * as GeoJSON from 'geojson';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -45,7 +46,6 @@ import RestrictionSign from '../components/RestrictionSign';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
 import GoogleAccountModal from '../components/GoogleAccountModal';
-import { loadSavedAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 import type { GeoPlace } from '../api/geocoding';
 import {
   fetchRoute,
@@ -80,10 +80,8 @@ import {
   transcribeAudio,
   starPlace,
   listStarred,
-  fetchHealth,
   checkTruckRestrictions,
   saveTachoSession,
-  fetchTachoSummary,
   fetchProximityAlerts,
   type ChatMessage,
   type ChatContext,
@@ -116,6 +114,8 @@ import {
 
 import { useMapUIState, type MapMode } from '../hooks/useMapUIState';
 import { useNavigationState, type RouteOptDest } from '../hooks/useNavigationState';
+import { useRouteInsights } from '../hooks/useRouteInsights';
+import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -181,19 +181,22 @@ const MapScreen: React.FC = () => {
   const [speed, setSpeed] = useState(0);
   const isDrivingRef = useRef(false);
 
-  // ── Backend / AI chat status ──
-  const [backendOnline, setBackendOnline]       = useState(false);
-  const [starredPOIs, setStarredPOIs]           = useState<SavedPOI[]>([]);
-
-  // ── Google account ──
-  const [googleUser, setGoogleUser]             = useState<GoogleAccount | null>(null);
-  const googleUserRef = useRef<GoogleAccount | null>(null);
-  useEffect(() => { googleUserRef.current = googleUser; }, [googleUser]);
-  const [showAccountModal, setShowAccountModal] = useState(false);
-
   // ── Hooks Integration ──────────────────────────────────────────────────────
-  
-  // 1. Voice & TTS
+
+  // 0. Session bootstrap (account, starred POIs, backend health)
+  const setTachoSummaryRef = useRef<(summary: TachoSummary) => void>(() => {});
+
+  const {
+    backendOnline,
+    googleUser,
+    setGoogleUser,
+    googleUserRef,
+    showAccountModal,
+    setShowAccountModal,
+    starredPOIs,
+    setStarredPOIs,
+  } = useSessionBootstrap({ setTachoSummaryRef });
+
   const {
     voiceMuted, setVoiceMuted, voiceMutedRef, lastSpokenStepRef, speak
   } = useVoice(navigating, currentStep, route);
@@ -202,6 +205,7 @@ const MapScreen: React.FC = () => {
   const {
     drivingSeconds, tachoSummary, setTachoSummary, resetSession, saveSession
   } = useTacho(navigating, isDrivingRef, googleUserRef, speak);
+  useLayoutEffect(() => { setTachoSummaryRef.current = setTachoSummary; });
 
   // 3. POI Search (Nearby & Along Route)
   const {
@@ -320,19 +324,20 @@ const MapScreen: React.FC = () => {
   }>>([]);
   const [showBorderPanel, setShowBorderPanel] = useState(false);
 
-  // ── Route-ahead POI panel (parking + fuel along route) ───────────────────
-  interface RoutePOI { type: 'parking' | 'fuel'; name: string; distKm: number; lng: number; lat: number; }
-  const [routeAheadPOIs, setRouteAheadPOIs] = useState<RoutePOI[]>([]);
-
   // ── GPS / route / waypoint state ───────────────────────────────────────────
+  const {
+    elevProfile,
+    weatherPoints,
+    routeAheadPOIs,
+    buildElevProfile,
+    fetchWeatherForRoute,
+    buildRoutePOIScan,
+  } = useRouteInsights(route);
+
   const [navCongestionGeoJSON, setNavCongestionGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
   const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
-  const [cameraAlert, setCameraAlert]       = useState<{ dist: number; name: string } | null>(null);
-  const [elevProfile, setElevProfile]       = useState<number[]>([]);
-  const [weatherPoints, setWeatherPoints]   = useState<{ coords: [number, number]; emoji: string; temp: number }[]>([]);
   const [customOriginName, setCustomOriginName] = useState('');
-  const [overtakingResults, setOvertakingResults] = useState<ProximityAlerts['overtaking']>([]);
 
   const isMountedRef = useRef(true);
   useEffect(() => () => { isMountedRef.current = false; }, []);
@@ -343,7 +348,6 @@ const MapScreen: React.FC = () => {
   const mapIsLoaded = mapLoaded;
 
   // ── Tilequery state ────────────────────────────────────────────────────────
-  const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
   const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
 
   // Tilequery throttle refs — timestamps of last call per query type
@@ -516,15 +520,6 @@ const MapScreen: React.FC = () => {
   }, []); // stable — all logic reads via refs
 
   // ── Flask backend health check — poll every 5 min (was 60s, 60 req/h → 12 req/h) ────
-  useEffect(() => {
-    const check = () =>
-      fetchHealth().then(h => {
-        if (isMountedRef.current) setBackendOnline(h?.status === 'ok');
-      });
-    check();
-    const interval = setInterval(check, 300_000);
-    return () => clearInterval(interval);
-  }, []);
 
   // ── Traffic tile refresh every 3 min (was 60s, 60 req/h → 20 req/h) ─────
   useEffect(() => {
@@ -547,25 +542,6 @@ const MapScreen: React.FC = () => {
   }, [navigating, userCoords]);
 
   // ── Load Google account + starred POIs + tacho summary on mount ──────────
-  useEffect(() => {
-    loadSavedAccount().then(acc => {
-      if (!isMountedRef.current) return;
-      const email = acc?.email;
-      if (acc) {
-        setGoogleUser(acc);
-        listStarred(email).then(places => {
-          if (isMountedRef.current) setStarredPOIs(places);
-        });
-      }
-      // Load today's tacho summary regardless of account
-      fetchTachoSummary(email).then(s => {
-        if (!s || !isMountedRef.current) return;
-        setTachoSummary(s);
-        // Note: useTacho hook already seeds drivingSeconds from s.continuous_driven_s
-      });
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── HOS timer & warnings handled by useTacho hook ────────────────────────
 
@@ -584,40 +560,6 @@ const MapScreen: React.FC = () => {
   }, [navigating, route]);
 
 
-  // ── Speed limit TTS alarm — fires once per 30 s when exceeding the limit ──
-  useEffect(() => {
-    if (!navigating || speedLimit == null || speed <= speedLimit) return;
-    const now = Date.now();
-    if (now - lastSpeedAlarmRef.current < 30_000) return;
-    lastSpeedAlarmRef.current = now;
-    if (!voiceMutedRef.current) ttsSpeak(`Превишена скорост! Лимит ${speedLimit} км/ч.`);
-  }, [speed, speedLimit, navigating]);
-
-  // ── Speed camera proximity alert — fires TTS + flash every 10 s when < 600 m ──
-  useEffect(() => {
-    if (!navigating || !userCoords || cameraResults.length === 0) {
-      setCameraAlert(null);
-      return;
-    }
-    const nearest = cameraResults
-      .filter(c => c.lat && c.lng)
-      .map(c => ({ ...c, dist: haversineMeters(userCoords, [c.lng as number, c.lat as number]) }))
-      .sort((a, b) => a.dist - b.dist)[0];
-    if (!nearest || nearest.dist >= 600) { setCameraAlert(null); return; }
-    setCameraAlert({ dist: Math.round(nearest.dist), name: nearest.name });
-    const now = Date.now();
-    if (now - lastCameraWarnRef.current >= 10_000) {
-      lastCameraWarnRef.current = now;
-      if (!voiceMutedRef.current) ttsSpeak(`Внимание! Камера на ${Math.round(nearest.dist)} метра.`);
-      Animated.sequence([
-        Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
-        Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
-        Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
-        Animated.timing(cameraFlashAnim, { toValue: 0, duration: 350, useNativeDriver: false }),
-      ]).start();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userCoords, navigating, cameraResults]);
 
   // ── Refs — stable values readable inside the GPS callback ────────────────
   // Pattern: state drives render; refs let the stable callback read latest values
@@ -634,13 +576,8 @@ const MapScreen: React.FC = () => {
   const waypointsRef          = useRef<[number, number][]>([]);
   const waypointNamesRef      = useRef<string[]>([]);
   const profileRerouteTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cameraFlashAnim       = useRef(new Animated.Value(0)).current;
-  const lastCameraWarnRef     = useRef<number>(0);
-  const lastSpeedAlarmRef     = useRef<number>(0);
   const navStartRef           = useRef<number>(0);
   const navInitDurationRef    = useRef<number>(0);
-  const laneGlowAnim          = useRef(new Animated.Value(0)).current;
-  const laneGlowLoop          = useRef<Animated.CompositeAnimation | null>(null);
   // Stable refs for callbacks that close over mutable state (avoids stale closure)
   const drivingSecondsRef = useRef(0);
 
@@ -743,6 +680,7 @@ const MapScreen: React.FC = () => {
       setNavCongestionGeoJSON(result?.congestionGeoJSON ?? null);
 
       if (result) {
+        buildRoutePOIScan(result);
         const coords = result.geometry.coordinates;
         let minLng = coords[0][0], maxLng = coords[0][0];
         let minLat = coords[0][1], maxLat = coords[0][1];
@@ -777,106 +715,6 @@ const MapScreen: React.FC = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // stable — reads everything via refs; handleStart accessed via handleStartRef
-
-  // Profile change while navigating → debounced re-route
-  useEffect(() => { if (!destination) return; const timer = setTimeout(() => { navigateTo(destination, destinationName, waypoints, navigatingRef.current); }, 500); return () => clearTimeout(timer); }, [profile, destination, destinationName, waypoints, navigateTo]);
-
-  // AbortControllers — cancel in-flight elevation/weather when route changes
-  const elevAbortRef    = useRef<AbortController | null>(null);
-  const weatherAbortRef = useRef<AbortController | null>(null);
-
-  // ── Route elevation profile: sample 8 points from geometry ───────────────
-  const buildElevProfile = useCallback(async (r: RouteResult) => {
-    elevAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    elevAbortRef.current = ctrl;
-
-    const coords = r.geometry.coordinates;
-    const step = Math.max(1, Math.floor(coords.length / 8));
-    const samples: [number, number][] = [];
-    for (let i = 0; i < coords.length; i += step) {
-      if (samples.length >= 8) break;
-      samples.push([coords[i][0], coords[i][1]]);
-    }
-    const elevs = await Promise.all(
-      samples.map(([lng, lat]) => fetchElevationAtPoint(lng, lat)),
-    );
-    if (isMountedRef.current && !ctrl.signal.aborted) {
-      setElevProfile(elevs.filter((e): e is number => e != null));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // stable
-
-  // ── Route weather: Open-Meteo current_weather at destination only (1 request) ──
-  const fetchWeatherForRoute = useCallback(async (r: RouteResult) => {
-    weatherAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    weatherAbortRef.current = ctrl;
-
-    const coords = r.geometry.coordinates;
-    const [lng, lat] = coords[coords.length - 1]; // destination only
-    try {
-      const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`,
-        { signal: ctrl.signal },
-      );
-      const data = await res.json() as { current_weather: { weathercode: number; temperature: number } };
-      const w = data.current_weather;
-      if (isMountedRef.current && !ctrl.signal.aborted) {
-        setWeatherPoints([{ coords: [lng, lat] as [number, number], emoji: weatherEmoji(w.weathercode), temp: Math.round(w.temperature) }]);
-      }
-    } catch {
-      if (isMountedRef.current && !ctrl.signal.aborted) setWeatherPoints([]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // stable
-
-  // ── Route POI scan: parking + fuel at 5 points along route (one-time) ──────
-  const buildRoutePOIScan = useCallback(async (r: RouteResult) => {
-    const coords = r.geometry.coordinates;
-    if (coords.length < 2) return;
-
-    // Cumulative distances along route (metres)
-    const cumDist: number[] = [0];
-    for (let i = 1; i < coords.length; i++) {
-      cumDist.push(cumDist[i - 1] + haversineMeters(
-        coords[i - 1] as [number, number], coords[i] as [number, number],
-      ));
-    }
-    const totalM = cumDist[cumDist.length - 1];
-
-    // Sample at 20%, 40%, 60%, 80% of route
-    const fractions = [0.2, 0.4, 0.6, 0.8];
-    const sampleIdxs = fractions.map(f => {
-      const target = f * totalM;
-      return cumDist.findIndex(d => d >= target);
-    }).filter(i => i > 0);
-
-    const results: RoutePOI[] = [];
-    await Promise.all(sampleIdxs.map(async idx => {
-      const [lng, lat] = coords[idx] as [number, number];
-      const distFromStartKm = Math.round(cumDist[idx] / 1000);
-      const [parkings, fuels] = await Promise.all([
-        fetchNearbyParking(lng, lat, 3000),
-        fetchNearbyFuel(lng, lat, 3000),
-      ]);
-      for (const p of parkings.slice(0, 1)) {
-        results.push({ type: 'parking', name: p.name, distKm: distFromStartKm, lng: p.lng, lat: p.lat });
-      }
-      for (const f of fuels.slice(0, 1)) {
-        results.push({ type: 'fuel', name: f.name, distKm: distFromStartKm, lng: f.lng, lat: f.lat });
-      }
-    }));
-
-    results.sort((a, b) => a.distKm - b.distKm);
-    if (isMountedRef.current) setRouteAheadPOIs(results.slice(0, 6));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Clear elevation + weather fetch when route is cleared
-  useEffect(() => {
-    if (!route) { setElevProfile([]); setWeatherPoints([]); setRouteAheadPOIs([]); }
-  }, [route]);
 
   // ── Add intermediate waypoint + re-route ─────────────────────────────────
   // Appends a stop before the final destination and recalculates the route.
@@ -983,8 +821,6 @@ const MapScreen: React.FC = () => {
     setWaypointNames([]);
     setLongPressCoord(null);
     setCameraAlert(null);
-    setElevProfile([]);
-    setWeatherPoints([]);
     waypointsRef.current     = [];
     waypointNamesRef.current = [];
     lastRerouteRef.current = 0;
@@ -1070,15 +906,6 @@ const MapScreen: React.FC = () => {
       Linking.openURL(`https://www.google.com/search?q=${encodeURIComponent(q)}`).catch(() => null);
     });
   }, []);
-
-  // ETA — clock time of arrival based on live remaining seconds during nav,
-  // or full route duration when browsing before start.
-  const eta = useMemo(() => {
-    if (!route) return null;
-    const secs = navigating && remainingSeconds > 0 ? remainingSeconds : route.duration;
-    const arrival = new Date(Date.now() + secs * 1000);
-    return arrival.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' });
-  }, [route, navigating, remainingSeconds]);
 
   // Puck scale: arrow grows when approaching a turn (≤300 m) so the driver
   // can clearly see the heading. Uses a plain number — Value<number> accepts
@@ -1270,21 +1097,41 @@ const MapScreen: React.FC = () => {
   const nextStep   = route?.steps?.[currentStep + 1];
   const stepToShow = navigating ? activeStep : null;
 
-  // ── Nearest upcoming restriction sign (within 600m ahead while navigating) ──
+  // ── Nearest upcoming restriction sign (within 600m, strictly ahead on route) ──
   const activeRestriction = useMemo<RestrictionPoint | null>(() => {
     if (!navigating || !userCoords || !route?.restrictions?.length) return null;
+    const coords = route.geometry.coordinates;
     const ALERT_M = 600;
+
+    // Find user's closest index along route
+    let userIdx = 0;
+    let userMinD = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = haversineMeters(userCoords, [coords[i][0], coords[i][1]]);
+      if (d < userMinD) { userMinD = d; userIdx = i; }
+    }
+
     let nearest: RestrictionPoint | null = null;
     let nearestDist = Infinity;
     for (const r of route.restrictions) {
-      const d = haversineMeters(userCoords, [r.lng, r.lat]);
-      if (d < ALERT_M && d < nearestDist) {
-        nearestDist = d;
-        nearest = r;
+      // Find restriction's closest index along route
+      let rIdx = 0;
+      let rMinD = Infinity;
+      for (let i = userIdx; i < coords.length; i++) {
+        const d = haversineMeters([r.lng, r.lat], [coords[i][0], coords[i][1]]);
+        if (d < rMinD) { rMinD = d; rIdx = i; }
+      }
+      // Only show if restriction is ahead (index > user) and within 600m
+      if (rIdx > userIdx) {
+        const dist = haversineMeters(userCoords, [r.lng, r.lat]);
+        if (dist < ALERT_M && dist < nearestDist) {
+          nearestDist = dist;
+          nearest = r;
+        }
       }
     }
     return nearest;
-  }, [navigating, userCoords, route?.restrictions]);
+  }, [navigating, userCoords, route?.restrictions, route?.geometry.coordinates]);
 
   const routeLineColor = dominantCongestion === 'heavy' ? '#FF3B30'
     : dominantCongestion === 'moderate' ? '#FF9500'
@@ -1325,36 +1172,22 @@ const MapScreen: React.FC = () => {
 
   const displayLanes = testLanesMode ? MOCK_LANES : currentLanes;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const laneGlowBg = useMemo(() => laneGlowAnim.interpolate({
-    inputRange: [0, 1], outputRange: ['rgba(0,191,255,0.22)', 'rgba(0,191,255,0.60)'],
-  }), []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const laneGlowShadow = useMemo(() => laneGlowAnim.interpolate({
-    inputRange: [0, 1], outputRange: [0.55, 1.0],
-  }), []);
-
   const lanePulseOn = testLanesMode ||
     (navigating && distToTurn != null && distToTurn < 350 && displayLanes.some(l => l.active));
-  useEffect(() => {
-    if (lanePulseOn) {
-      laneGlowLoop.current?.stop();
-      laneGlowLoop.current = Animated.loop(Animated.sequence([
-        Animated.timing(laneGlowAnim, { toValue: 1, duration: 550, useNativeDriver: false }),
-        Animated.timing(laneGlowAnim, { toValue: 0, duration: 550, useNativeDriver: false }),
-      ]));
-      laneGlowLoop.current.start();
-    } else {
-      laneGlowLoop.current?.stop();
-      laneGlowAnim.setValue(0);
-    }
-    return () => { laneGlowLoop.current?.stop(); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lanePulseOn]);
 
-  const speedingBg = speed > (speedLimit ?? Infinity) ? '#FF3B30' : 'transparent';
-
-  const proximityAlerts = { overtaking: overtakingResults };
+  const {
+    cameraAlert, setCameraAlert,
+    overtakingResults, setOvertakingResults,
+    tunnelWarning, setTunnelWarning,
+    cameraFlashAnim,
+    laneGlowBg, laneGlowShadow,
+    speedingBg,
+    proximityAlerts,
+  } = useDrivingAlerts({
+    speed, speedLimit, navigating,
+    userCoords, cameraResults,
+    voiceMutedRef, lanePulseOn,
+  });
 
   const starGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
@@ -2221,107 +2054,38 @@ const MapScreen: React.FC = () => {
 
       {/* ── Route options panel from GPT-4o show_routes ── */}
       {routeOptions.length > 0 && !route && (
-        <View style={[styles.routeOptionsPanel, { bottom: insets.bottom + 16 }]}>
-          {/* Liquid Glass top highlight line */}
-          <View style={styles.routeOptionsGlassHighlight} />
-          <View style={styles.routeOptionsHeader}>
-            <Text style={styles.routeOptionsTitle}>🗺️ Изберете маршрут</Text>
-            <TouchableOpacity
-              onPress={() => {
-                setRouteOptions([]); setRouteOptDest(null);
-                setSelectedRouteIdx(null); setRestrictionWarnings([]);
-              }}
-              style={styles.parkingDismissBtn}
-            >
-              <Text style={styles.parkingDismissTxt}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Cards row */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.routeOptionsContent}
-          >
-            {routeOptions.map((opt, i) => {
-              const isSelected = selectedRouteIdx === i;
-              const trafficEmoji =
-                opt.traffic === 'heavy' ? '🔴' : opt.traffic === 'moderate' ? '🟡' : opt.traffic === 'low' ? '🟢' : null;
-              const minDur  = Math.min(...routeOptions.map(o => o.duration));
-              const diffMin = Math.round((opt.duration - minDur) / 60);
-              const diffBadge = diffMin === 0 ? '⚡ Най-бърз' : `+${diffMin} мин`;
-              return (
-                <TouchableOpacity
-                  key={i}
-                  style={[
-                    styles.routeOptionCard,
-                    { borderColor: opt.color },
-                    isSelected && styles.routeOptionCardSelected,
-                  ]}
-                  activeOpacity={0.8}
-                  onPress={() => handleSelectRouteOption(i)}
-                >
-                  <View style={[styles.routeOptionDot, { backgroundColor: opt.color }]} />
-                  {/* Diff badge — "⚡ Най-бърз" or "+20 мин" */}
-                  <Text style={[
-                    styles.routeOptionDiff,
-                    { color: diffMin === 0 ? '#4cff91' : '#ffcc00' },
-                  ]}>{diffBadge}</Text>
-                  <Text style={styles.routeOptionLabel} numberOfLines={3}>{opt.label}</Text>
-                  <Text style={styles.routeOptionDist}>{fmtDistance(opt.distance)}</Text>
-                  <Text style={styles.routeOptionDur}>{fmtDuration(opt.duration)}</Text>
-                  {trafficEmoji && (
-                    <Text style={styles.routeOptionTraffic}>
-                      {trafficEmoji} {opt.traffic === 'heavy' ? 'Задръстване' : opt.traffic === 'moderate' ? 'Умерено' : 'Свободно'}
-                    </Text>
-                  )}
-                  {!isSelected && <Text style={styles.routeOptionTap}>Натисни →</Text>}
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* Restrictions + Start button */}
-          {selectedRouteIdx !== null && (
-            <View style={styles.routeSelectedSummary}>
-              {restrictionChecking && (
-                <ActivityIndicator size="small" color={NEON} style={{ alignSelf: 'center' }} />
-              )}
-              {restrictionWarnings.map((w, i) => (
-                <Text key={i} style={styles.routeRestrictionWarn}>{w}</Text>
-              ))}
-              <TouchableOpacity
-                style={styles.routeStartBtn}
-                activeOpacity={0.85}
-                onPress={() => {
-                  // Save congestion + traffic alerts before clearing routeOptions
-                  const selIdx = selectedRouteIdx ?? 0;
-                  const selOpt = routeOptions[selIdx];
-                  const cong = selOpt?.congestion_geojson as GeoJSON.FeatureCollection | undefined;
-                  setNavCongestionGeoJSON(cong ?? null);
-                  const alerts = selOpt?.traffic_alerts;
-                  setNavTrafficAlerts(alerts && alerts.length > 0 ? {
-                    type: 'FeatureCollection',
-                    features: alerts.map(a => ({
-                      type: 'Feature' as const,
-                      properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
-                      geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
-                    })),
-                  } : null);
-                  if (routeOptDest) {
-                    // autoStart=true to avoid the user having to press "Тръгваме!" again.
-                    navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);
-                  }
-                  setRouteOptions([]);
-                  setSelectedRouteIdx(null);
-                  setRestrictionWarnings([]);
-                }}
-              >
-                <Text style={styles.routeStartBtnTxt}>🚀 Старт</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+        <RouteOptionsPanel
+          routeOptions={routeOptions}
+          selectedRouteIdx={selectedRouteIdx}
+          routeOptDest={routeOptDest}
+          restrictionChecking={restrictionChecking}
+          restrictionWarnings={restrictionWarnings}
+          insets={insets}
+          onSelectRoute={handleSelectRouteOption}
+          onDismiss={() => {
+            setRouteOptions([]);
+            setRouteOptDest(null);
+            setSelectedRouteIdx(null);
+            setRestrictionWarnings([]);
+          }}
+          onStart={(cong, alerts) => {
+            setNavCongestionGeoJSON(cong ?? null);
+            setNavTrafficAlerts(alerts && alerts.length > 0 ? {
+              type: 'FeatureCollection',
+              features: alerts.map((a: any) => ({
+                type: 'Feature' as const,
+                properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
+                geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
+              })),
+            } : null);
+            if (routeOptDest) {
+              navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);
+            }
+            setRouteOptions([]);
+            setSelectedRouteIdx(null);
+            setRestrictionWarnings([]);
+          }}
+        />
       )}
 
       {/* ── Road restriction sign popup ── */}
@@ -2346,6 +2110,8 @@ const MapScreen: React.FC = () => {
         loadingRoute={loadingRoute}
         gpsReady={gpsReady}
         onStart={handleStart}
+        onFetchElevation={() => route && buildElevProfile(route)}
+        onFetchWeather={() => route && fetchWeatherForRoute(route)}
         profile={profile}
         dominantCongestion={dominantCongestion}
         elevProfile={elevProfile}

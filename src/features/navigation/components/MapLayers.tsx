@@ -171,17 +171,35 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {/* ── Restriction Signs Layer ── */}
       {mapIsLoaded && restrictionPoints.length > 0 && (
         <Mapbox.ShapeSource id="restriction-signs-source" shape={restrictionGeoJSON}>
+          {/* Sign background: White circle with red border (European style) */}
+          <Mapbox.CircleLayer
+            id="restriction-circles"
+            slot="top"
+            style={{
+              circleRadius: 18,
+              circleColor: '#FFFFFF',
+              circleStrokeWidth: 3,
+              circleStrokeColor: '#D0021B',
+              circlePitchAlignment: 'viewport',
+            }}
+          />
           <Mapbox.SymbolLayer
             id="restriction-signs"
             slot="top"
             style={{
-              textField: ['get', 'value'],
-              textSize: 12,
-              textColor: '#CC0000',
+              textField: [
+                'concat',
+                ['get', 'value'],
+                ['match', ['get', 'type'], 'maxheight', 'м', 'maxweight', 'т', 'maxwidth', 'м', ''],
+              ],
+              textSize: 14,
+              textColor: '#1A1A1A',
               textHaloColor: '#FFFFFF',
               textHaloWidth: 2,
-              iconAnchor: 'center',
+              textAnchor: 'center',
               textAllowOverlap: true,
+              textIgnorePlacement: true,
+              textPitchAlignment: 'viewport',
             }}
           />
         </Mapbox.ShapeSource>
