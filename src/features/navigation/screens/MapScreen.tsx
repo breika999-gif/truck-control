@@ -42,6 +42,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';
+import RouteOptionsPanel from '../components/RouteOptionsPanel';
 import RestrictionSign from '../components/RestrictionSign';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
@@ -239,8 +240,11 @@ const MapScreen: React.FC = () => {
   const {
     userCoords,
     userCoordsRef,
+    setUserCoords,
     gpsReady,
+    setGpsReady,
     speed,
+    setSpeed,
     isDrivingRef,
     isSimulatingRef,
     simIndexRef,
@@ -704,16 +708,6 @@ const MapScreen: React.FC = () => {
     })),
   }), [cameraResults]);
 
-  const overtakingGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: overtakingResults.map((r, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] },
-      properties: { ...r },
-    })),
-  }), [overtakingResults]);
-
   // ── GeoJSON for SymbolLayers replacing PointAnnotation (GEMINI.md rule) ──
   const waypointsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
@@ -898,6 +892,16 @@ const MapScreen: React.FC = () => {
     voiceMutedRef, lanePulseOn,
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
+
+  const overtakingGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: overtakingResults.map((r, i) => ({
+      type: 'Feature' as const,
+      id: i,
+      geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] },
+      properties: { ...r },
+    })),
+  }), [overtakingResults]);
 
   const starGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',

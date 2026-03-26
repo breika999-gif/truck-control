@@ -66,8 +66,8 @@ const POIListScreen = () => {
   const handleSelect = (poi: SavedPOI) => {
     // Navigate back to Map and center on this POI
     // Note: In a real app we'd pass this to MapScreen via a store or params
+    // @ts-ignore - MapScreen params not typed for POI deep-link
     navigation.navigate('Map', {
-      // @ts-ignore - MapScreen might need to handle these params
       initialCenter: [poi.lng, poi.lat],
       selectedPOI: poi,
     });

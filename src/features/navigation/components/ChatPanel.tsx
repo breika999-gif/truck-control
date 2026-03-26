@@ -28,8 +28,8 @@ interface ChatPanelProps {
   handleMicStart: () => void;
   handleMicStop: () => void;
   kbHeight: number;
-  gptScrollRef: React.RefObject<ScrollView>;
-  geminiScrollRef: React.RefObject<ScrollView>;
+  gptScrollRef: React.RefObject<ScrollView | null>;
+  geminiScrollRef: React.RefObject<ScrollView | null>;
   googleUser: { email: string } | null;
   insets: EdgeInsets;
   micLoading?: boolean;

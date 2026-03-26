@@ -16,12 +16,12 @@ interface MapLayersProps {
   trafficKey: number;
   lightMode: boolean;
   route: RouteResult | null;
-  routeShape: GeoJSON.FeatureCollection | GeoJSON.Geometry | null;
+  routeShape: GeoJSON.FeatureCollection | GeoJSON.Geometry | GeoJSON.Feature | null;
   routeLineColor: string;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
   starGeoJSON: GeoJSON.FeatureCollection;
-  starredPOIs: TruckPOI[];
+  starredPOIs: any[];
   customOriginRef: React.MutableRefObject<[number, number] | null>;
   userCoords: [number, number] | null;
   destination: [number, number] | null;
@@ -29,9 +29,9 @@ interface MapLayersProps {
   parkingGeoJSON: GeoJSON.FeatureCollection;
   fuelResults: POICard[];
   fuelGeoJSON: GeoJSON.FeatureCollection;
-  businessResults: TruckPOI[];
+  businessResults: any[];
   businessGeoJSON: GeoJSON.FeatureCollection;
-  cameraResults: TruckPOI[];
+  cameraResults: any[];
   cameraGeoJSON: GeoJSON.FeatureCollection;
   overtakingResults: any[]; 
   overtakingGeoJSON: GeoJSON.FeatureCollection;

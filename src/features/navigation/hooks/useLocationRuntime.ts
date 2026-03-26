@@ -248,8 +248,11 @@ export const useLocationRuntime = ({
   return {
     userCoords,
     userCoordsRef,
+    setUserCoords,
     gpsReady,
+    setGpsReady,
     speed,
+    setSpeed,
     isDrivingRef,
     isSimulatingRef,
     simIndexRef,

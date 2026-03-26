@@ -2043,4 +2043,22 @@ export const styles = StyleSheet.create({
   },
   weatherPinEmoji: { fontSize: 16 },
   weatherPinTemp: { fontSize: 9, color: NEON, fontWeight: '700' },
+
+  // ── NavigationHUD elev + weather sub-styles ───────────────────────────────
+  elevProfileStripHUD: { marginTop: 6, paddingHorizontal: 4 },
+  elevProfileLabelHUD: { fontSize: 10, color: 'rgba(255,255,255,0.5)', marginBottom: 3 },
+  elevProfileBarsHUD: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 32 },
+  elevBarHUD: { width: 3, borderRadius: 1, backgroundColor: NEON, opacity: 0.7 },
+  weatherStripHUD: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  weatherChipHUD: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(0,10,30,0.7)', borderRadius: 8,
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderWidth: 1, borderColor: 'rgba(0,247,255,0.2)',
+  },
+
+  // ── Camera HUD text sub-styles ────────────────────────────────────────────
+  cameraHUDIcon: { fontSize: 24 },
+  cameraHUDDist: { fontSize: 18, fontWeight: '900', color: '#FFFFFF' },
+  cameraHUDLabel: { fontSize: 10, fontWeight: '700', color: 'rgba(255,255,255,0.7)', letterSpacing: 1 },
 });

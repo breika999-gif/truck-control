@@ -60,7 +60,7 @@ interface NavigationHUDProps {
   userCoords?: [number, number] | null;
   navigateTo?: (dest: [number, number], name: string, wps?: [number, number][], autoStart?: boolean) => void;
   HOS_LIMIT_S: number;
-  speedingBg?: Animated.AnimatedInterpolation<string | number>;
+  speedingBg?: Animated.AnimatedInterpolation<string | number> | string;
   proximityAlerts?: { overtaking: any[] };
   roadGrade?: number | null;
   nearestParkingM?: number | null;
@@ -348,17 +348,17 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
 
           {/* Route elevation profile mini bar chart */}
           {elevProfile.length > 1 && (
-            <View style={styles.elevProfileStrip}>
-              <Text style={styles.elevProfileLabel}>
+            <View style={styles.elevProfileStripHUD}>
+              <Text style={styles.elevProfileLabelHUD}>
                 ⛰ {Math.round(Math.min(...elevProfile))}–{Math.round(Math.max(...elevProfile))} м н.в.
               </Text>
-              <View style={styles.elevProfileBars}>
+              <View style={styles.elevProfileBarsHUD}>
                 {(() => {
                   const min = Math.min(...elevProfile);
                   const max = Math.max(...elevProfile);
                   return elevProfile.map((e, i) => {
                     const pct = max > min ? (e - min) / (max - min) : 0.5;
-                    return <View key={i} style={[styles.elevBar, { height: Math.max(4, pct * 28) }]} />;
+                    return <View key={i} style={[styles.elevBarHUD, { height: Math.max(4, pct * 28) }]} />;
                   });
                 })()}
               </View>
@@ -367,11 +367,11 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
 
           {/* Weather strip along route */}
           {weatherPoints.length > 0 && (
-            <View style={styles.weatherStrip}>
+            <View style={styles.weatherStripHUD}>
               {weatherPoints.map((wp, i) => (
-                <View key={i} style={styles.weatherChip}>
-                  <Text style={styles.weatherChipEmoji}>{wp.emoji}</Text>
-                  <Text style={styles.weatherChipTemp}>{wp.temp}°C</Text>
+                <View key={i} style={styles.weatherChipHUD}>
+                  <Text style={styles.weatherPinEmoji}>{wp.emoji}</Text>
+                  <Text style={styles.weatherPinTemp}>{wp.temp}°C</Text>
                 </View>
               ))}
             </View>
