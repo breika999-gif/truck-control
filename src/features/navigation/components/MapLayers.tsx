@@ -112,28 +112,28 @@ const MapLayers: React.FC<MapLayersProps> = ({
             sourceLayerID="traffic"
             slot="top"
             filter={['==', ['get', 'congestion'], 'low']}
-            style={{ lineColor: '#2ecc71', lineWidth: 3, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
+            style={{ lineColor: '#4CAF82', lineWidth: 3, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
             id="traffic-moderate"
             sourceLayerID="traffic"
             slot="top"
             filter={['==', ['get', 'congestion'], 'moderate']}
-            style={{ lineColor: '#f39c12', lineWidth: 4, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
+            style={{ lineColor: '#FFBC40', lineWidth: 4, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
             id="traffic-heavy"
             sourceLayerID="traffic"
             slot="top"
             filter={['==', ['get', 'congestion'], 'heavy']}
-            style={{ lineColor: '#8B0000', lineWidth: 7, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
+            style={{ lineColor: '#FF9100', lineWidth: 7, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
             id="traffic-closed-bg"
             sourceLayerID="traffic"
             slot="top"
             filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
-            style={{ lineColor: '#cc0000', lineWidth: 9, lineOpacity: 1.0, lineCap: 'butt', lineJoin: 'miter' }}
+            style={{ lineColor: '#FA0000', lineWidth: 9, lineOpacity: 1.0, lineCap: 'butt', lineJoin: 'miter' }}
           />
           <Mapbox.LineLayer
             id="traffic-closed-stripe"
@@ -276,7 +276,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="route-line"
             slot="middle"
             style={{
-              lineColor: ['match', ['get', 'congestion'], 'low', routeLineColor, 'moderate', '#FF9500', 'heavy', '#FF3B30', 'severe', '#8B0000', routeLineColor],
+              lineColor: ['match', ['get', 'congestion'], 'low', routeLineColor, 'moderate', '#FFBC40', 'heavy', '#FF9100', 'severe', '#FA0000', routeLineColor],
               lineWidth: 5, lineCap: 'round', lineJoin: 'round',
             }}
           />
