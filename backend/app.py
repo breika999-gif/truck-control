@@ -2512,10 +2512,17 @@ def calculate_route():
     code = _adr_to_tunnel_code(truck.get("hazmat_class", "none") or "none")
     if code:
         params["vehicleAdrTunnelRestrictionCode"] = code
+
+    # Build avoid list — combine ADR tunnel restriction with unpaved roads
+    avoid_parts = []
     if adr_tunnel_code in ("D", "E"):
-        params["avoid"] = "tunnels"
+        avoid_parts.append("tunnels")
     elif adr_tunnel_code == "C":
-        params["avoid"] = "ferries"
+        avoid_parts.append("ferries")
+    if truck.get("avoid_unpaved"):
+        avoid_parts.append("unpavedRoads")
+    if avoid_parts:
+        params["avoid"] = ",".join(avoid_parts)
     if depart_at:
         params["departAt"] = depart_at
 
