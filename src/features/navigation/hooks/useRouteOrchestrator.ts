@@ -222,5 +222,6 @@ export function useRouteOrchestrator({
     navStartRef,
     navInitDurationRef,
     lastRerouteRef,
+    avoidUnpavedRef,
   };
 }

@@ -47,6 +47,8 @@ import RestrictionSign from '../components/RestrictionSign';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
 import RouteTimeline from '../components/RouteTimeline';
+import FasterRouteBanner from '../components/FasterRouteBanner';
+import { useFasterRouteCheck } from '../hooks/useFasterRouteCheck';
 import GoogleAccountModal from '../components/GoogleAccountModal';
 import type { GeoPlace } from '../api/geocoding';
 import {
@@ -212,6 +214,7 @@ const MapScreen: React.FC = () => {
     navStartRef,
     navInitDurationRef,
     lastRerouteRef,
+    avoidUnpavedRef,
   } = useRouteOrchestrator({
     isMountedRef,
     navigatingRef,
@@ -434,6 +437,27 @@ const MapScreen: React.FC = () => {
 
   useEffect(() => { buildRoutePOIScanRef.current = buildRoutePOIScan; }, [buildRoutePOIScan]);
   useEffect(() => { setNavCongestionGeoJSONRef.current = setNavCongestionGeoJSON; }, [setNavCongestionGeoJSON]);
+
+  // ── Faster route detection ────────────────────────────────────────────────
+  const { offer: fasterOffer, acceptOffer, dismissOffer } = useFasterRouteCheck({
+    navigating,
+    userCoordsRef,
+    destinationRef,
+    routeRef,
+    profileRef,
+    avoidUnpavedRef,
+    waypointsRef,
+    remainingSeconds,
+  });
+
+  // Apply the faster route when user accepts
+  const handleAcceptFasterRoute = useCallback(() => {
+    if (!fasterOffer) return;
+    setRoute(fasterOffer.route);
+    setNavCongestionGeoJSON(fasterOffer.route.congestionGeoJSON ?? null);
+    acceptOffer();
+  }, [fasterOffer, acceptOffer, setRoute, setNavCongestionGeoJSON]);
+
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
   const [customOriginName, setCustomOriginName] = useState('');
 
@@ -1327,6 +1351,14 @@ const MapScreen: React.FC = () => {
           onPOIPress={(poi) => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
         />
       )}
+
+      {/* ── Faster route banner ── */}
+      <FasterRouteBanner
+        offer={fasterOffer}
+        onAccept={handleAcceptFasterRoute}
+        onDismiss={dismissOffer}
+        top={insets.top + 8}
+      />
 
       {/* ── Options Panel (Settings, Toggles, POIs) ── */}
       <OptionsPanel
