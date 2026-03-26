@@ -8,6 +8,8 @@ export const HazmatClassEnum = z.enum([
   '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ]);
 export type HazmatClass = z.infer<typeof HazmatClassEnum>;
+export const AdrTunnelEnum = z.enum(['none', 'B', 'C', 'D', 'E']);
+export type AdrTunnelCode = z.infer<typeof AdrTunnelEnum>;
 
 export const VehicleProfileSchema = z.object({
   name: z.string().min(1, 'Моля въведете наименование'),
@@ -35,6 +37,7 @@ export const VehicleProfileSchema = z.object({
     .max(9, 'Максимум 9 оси'),
   fuel_type: FuelTypeEnum,
   hazmat_class: HazmatClassEnum.default('none'),
+  adr_tunnel: AdrTunnelEnum.default('none'),
 });
 
 export type VehicleProfile = z.infer<typeof VehicleProfileSchema>;
@@ -49,4 +52,5 @@ export const DEFAULT_VEHICLE_PROFILE: VehicleProfile = {
   axle_count: 3,
   fuel_type: 'diesel',
   hazmat_class: 'none',
+  adr_tunnel: 'none',
 };

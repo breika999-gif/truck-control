@@ -181,7 +181,8 @@ export const useLocationRuntime = ({
           const truck = prof
             ? { max_height: prof.height_m, max_width: prof.width_m,
                 max_weight: prof.weight_t, max_length: prof.length_m,
-                exclude: adrToExclude(prof.hazmat_class ?? 'none') }
+                exclude: adrToExclude(prof.hazmat_class ?? 'none'),
+                adr_tunnel: prof.adr_tunnel ?? 'none' }
             : undefined;
 
           fetchRoute(coords, dest, truck, undefined, waypointsRef.current)

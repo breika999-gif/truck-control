@@ -27,15 +27,15 @@ export interface BannerInstruction {
     text: string;
     type: string;
     modifier?: string;
-    /** Components array — contains exit-number, text (destinations), icon, delimiter parts */
+    /** Components array вЂ” contains exit-number, text (destinations), icon, delimiter parts */
     components?: BannerComponent[];
   };
-  /** Secondary sign — additional road names / route numbers (e.g. "A1 / E80") */
+  /** Secondary sign вЂ” additional road names / route numbers (e.g. "A1 / E80") */
   secondary?: {
     text: string;
     components?: BannerComponent[];
   };
-  /** sub contains lane components — use sub.components.filter(c => c.type === 'lane') */
+  /** sub contains lane components вЂ” use sub.components.filter(c => c.type === 'lane') */
   sub?: { components: BannerComponent[] };
 }
 
@@ -72,7 +72,7 @@ export interface RouteResult {
   /** Per-coordinate congestion level: 'low' | 'moderate' | 'heavy' | 'severe' | 'unknown' */
   congestion: string[];
   steps: RouteStep[];
-  /** Pre-built FeatureCollection for congestion-colored line rendering — never null */
+  /** Pre-built FeatureCollection for congestion-colored line rendering вЂ” never null */
   congestionGeoJSON: GeoJSON.FeatureCollection;
   /** Road restriction signs along the route (maxheight / maxweight / maxwidth) */
   restrictions: RestrictionPoint[];
@@ -109,12 +109,13 @@ export function buildCongestionGeoJSON(
 }
 
 export interface TruckDimensions {
-  max_height?: number;  // meters (0–10)
-  max_width?: number;   // meters (0–10)
-  max_weight?: number;  // metric tons (0–100)
-  max_length?: number;  // meters — vehicle length restriction
-  exclude?: string;     // 'tunnel' | 'tunnel,motorway' | undefined — ADR hazmat routing
+  max_height?: number;  // meters (0вЂ“10)
+  max_width?: number;   // meters (0вЂ“10)
+  max_weight?: number;  // metric tons (0вЂ“100)
+  max_length?: number;  // meters вЂ” vehicle length restriction
+  exclude?: string;     // 'tunnel' | 'tunnel,motorway' | undefined вЂ” ADR hazmat routing
   avoidUnpaved?: boolean;
+  adr_tunnel?: 'none' | 'B' | 'C' | 'D' | 'E';
 }
 
 /**
@@ -129,7 +130,7 @@ export function adrToExclude(hazmat: string): string | undefined {
 }
 
 /**
- * Fetch a truck-safe route via the Flask backend → TomTom Routing API.
+ * Fetch a truck-safe route via the Flask backend в†’ TomTom Routing API.
  * travelMode=truck with full HGV params: height, width, weight, length,
  * axle count, ADR tunnel restriction code.
  * Real-time traffic is included by default in every TomTom response.
@@ -151,6 +152,7 @@ export async function fetchRoute(
         waypoints: waypoints ?? [],
         truck: truck ?? {},
         avoid_unpaved: truck?.avoidUnpaved ?? false,
+        adr_tunnel_code: truck?.adr_tunnel ?? 'none',
         depart_at: departAt ?? null,
       }),
     });
@@ -230,9 +232,9 @@ export function getCurrentStepIndex(
 
 /** Format distance in human-readable Bulgarian (internal helper). */
 function fmtDistBg(m: number): string {
-  if (m >= 1000) return `${(m / 1000).toFixed(1)} километра`;
-  if (m >= 100)  return `${Math.round(m / 100) * 100} метра`;
-  return `${Math.round(m)} метра`;
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} РєРёР»РѕРјРµС‚СЂР°`;
+  if (m >= 100)  return `${Math.round(m / 100) * 100} РјРµС‚СЂР°`;
+  return `${Math.round(m)} РјРµС‚СЂР°`;
 }
 
 /**
@@ -242,61 +244,61 @@ function fmtDistBg(m: number): string {
  */
 export function bgInstruction(step: RouteStep): string {
   const { type, modifier } = step.maneuver;
-  const road  = step.name ? ` по ${step.name}` : '';
-  const ahead = step.distance > 50 ? ` след ${fmtDistBg(step.distance)}` : '';
+  const road  = step.name ? ` РїРѕ ${step.name}` : '';
+  const ahead = step.distance > 50 ? ` СЃР»РµРґ ${fmtDistBg(step.distance)}` : '';
 
   switch (type) {
     case 'depart':
-      return `Тръгнете${road}.`;
+      return `РўСЂСЉРіРЅРµС‚Рµ${road}.`;
     case 'arrive':
-      return 'Пристигнахте на дестинацията.';
+      return 'РџСЂРёСЃС‚РёРіРЅР°С…С‚Рµ РЅР° РґРµСЃС‚РёРЅР°С†РёСЏС‚Р°.';
     case 'continue':
     case 'new name':
-      return `Продължете направо${road}.`;
+      return `РџСЂРѕРґСЉР»Р¶РµС‚Рµ РЅР°РїСЂР°РІРѕ${road}.`;
     case 'merge':
-      return `Влезте в потока${road}.`;
+      return `Р’Р»РµР·С‚Рµ РІ РїРѕС‚РѕРєР°${road}.`;
     case 'on ramp':
-      return `Качете се на магистралата${road}.`;
+      return `РљР°С‡РµС‚Рµ СЃРµ РЅР° РјР°РіРёСЃС‚СЂР°Р»Р°С‚Р°${road}.`;
     case 'off ramp':
-      return `Слезте от магистралата${road}.`;
+      return `РЎР»РµР·С‚Рµ РѕС‚ РјР°РіРёСЃС‚СЂР°Р»Р°С‚Р°${road}.`;
     case 'fork':
       return modifier?.includes('left')
-        ? `Вземете левия клон${road}.`
-        : `Вземете десния клон${road}.`;
+        ? `Р’Р·РµРјРµС‚Рµ Р»РµРІРёСЏ РєР»РѕРЅ${road}.`
+        : `Р’Р·РµРјРµС‚Рµ РґРµСЃРЅРёСЏ РєР»РѕРЅ${road}.`;
     case 'end of road':
       return modifier?.includes('left')
-        ? `В края на пътя завийте наляво${road}.`
-        : `В края на пътя завийте надясно${road}.`;
+        ? `Р’ РєСЂР°СЏ РЅР° РїСЉС‚СЏ Р·Р°РІРёР№С‚Рµ РЅР°Р»СЏРІРѕ${road}.`
+        : `Р’ РєСЂР°СЏ РЅР° РїСЉС‚СЏ Р·Р°РІРёР№С‚Рµ РЅР°РґСЏСЃРЅРѕ${road}.`;
     case 'turn':
     case 'ramp': {
       switch (modifier) {
-        case 'sharp left':   return `Завийте рязко наляво${ahead}${road}.`;
-        case 'left':         return `Завийте наляво${ahead}${road}.`;
-        case 'slight left':  return `Завийте леко наляво${ahead}${road}.`;
-        case 'straight':     return `Продължете направо${road}.`;
-        case 'slight right': return `Завийте леко надясно${ahead}${road}.`;
-        case 'right':        return `Завийте надясно${ahead}${road}.`;
-        case 'sharp right':  return `Завийте рязко надясно${ahead}${road}.`;
-        case 'uturn':        return `Направете обратен завой.`;
-        default:             return `Завийте${road}.`;
+        case 'sharp left':   return `Р—Р°РІРёР№С‚Рµ СЂСЏР·РєРѕ РЅР°Р»СЏРІРѕ${ahead}${road}.`;
+        case 'left':         return `Р—Р°РІРёР№С‚Рµ РЅР°Р»СЏРІРѕ${ahead}${road}.`;
+        case 'slight left':  return `Р—Р°РІРёР№С‚Рµ Р»РµРєРѕ РЅР°Р»СЏРІРѕ${ahead}${road}.`;
+        case 'straight':     return `РџСЂРѕРґСЉР»Р¶РµС‚Рµ РЅР°РїСЂР°РІРѕ${road}.`;
+        case 'slight right': return `Р—Р°РІРёР№С‚Рµ Р»РµРєРѕ РЅР°РґСЏСЃРЅРѕ${ahead}${road}.`;
+        case 'right':        return `Р—Р°РІРёР№С‚Рµ РЅР°РґСЏСЃРЅРѕ${ahead}${road}.`;
+        case 'sharp right':  return `Р—Р°РІРёР№С‚Рµ СЂСЏР·РєРѕ РЅР°РґСЏСЃРЅРѕ${ahead}${road}.`;
+        case 'uturn':        return `РќР°РїСЂР°РІРµС‚Рµ РѕР±СЂР°С‚РµРЅ Р·Р°РІРѕР№.`;
+        default:             return `Р—Р°РІРёР№С‚Рµ${road}.`;
       }
     }
     case 'roundabout':
     case 'rotary': {
       const exit = (step.maneuver as { exit?: number }).exit;
       return exit
-        ? `Влезте в кръговото и излезте на ${exit}-ия изход.`
-        : 'Влезте в кръговото движение.';
+        ? `Р’Р»РµР·С‚Рµ РІ РєСЂСЉРіРѕРІРѕС‚Рѕ Рё РёР·Р»РµР·С‚Рµ РЅР° ${exit}-РёСЏ РёР·С…РѕРґ.`
+        : 'Р’Р»РµР·С‚Рµ РІ РєСЂСЉРіРѕРІРѕС‚Рѕ РґРІРёР¶РµРЅРёРµ.';
     }
     default:
-      return step.maneuver.instruction || `Продължете${road}.`;
+      return step.maneuver.instruction || `РџСЂРѕРґСЉР»Р¶РµС‚Рµ${road}.`;
   }
 }
 
 /**
  * Nearest-neighbour TSP approximation for waypoint ordering.
  * Reorders intermediate stops to minimize total travel distance from origin.
- * O(n²) — fast enough for ≤20 waypoints.
+ * O(nВІ) вЂ” fast enough for в‰¤20 waypoints.
  */
 export function optimizeWaypointOrder(
   origin: [number, number],
@@ -322,28 +324,28 @@ export function optimizeWaypointOrder(
 
 /** Format distance in human-readable Bulgarian. */
 export function fmtDistance(meters: number): string {
-  if (meters < 1000) return `${Math.round(meters)} м`;
-  return `${(meters / 1000).toFixed(1)} км`;
+  if (meters < 1000) return `${Math.round(meters)} Рј`;
+  return `${(meters / 1000).toFixed(1)} РєРј`;
 }
 
 /** Format duration in human-readable Bulgarian. */
 export function fmtDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
-  if (h === 0) return `${m} мин`;
-  return `${h} ч ${m} мин`;
+  if (h === 0) return `${m} РјРёРЅ`;
+  return `${h} С‡ ${m} РјРёРЅ`;
 }
 
 /** Emoji for maneuver type + modifier. */
 export function maneuverEmoji(type: string, modifier?: string): string {
-  if (type === 'arrive') return '🎯';
-  if (type === 'depart') return '🚦';
-  if (type === 'roundabout' || type === 'rotary') return '🔃';
-  if (type === 'fork') return modifier?.includes('left') ? '↙️' : '↘️';
-  if (modifier === 'uturn') return '🔄';
-  if (modifier === 'sharp left' || modifier === 'left') return '⬅️';
-  if (modifier === 'slight left') return '↖️';
-  if (modifier === 'sharp right' || modifier === 'right') return '➡️';
-  if (modifier === 'slight right') return '↗️';
-  return '⬆️';
+  if (type === 'arrive') return 'рџЋЇ';
+  if (type === 'depart') return 'рџљ¦';
+  if (type === 'roundabout' || type === 'rotary') return 'рџ”ѓ';
+  if (type === 'fork') return modifier?.includes('left') ? 'в†™пёЏ' : 'в†пёЏ';
+  if (modifier === 'uturn') return 'рџ”„';
+  if (modifier === 'sharp left' || modifier === 'left') return 'в¬…пёЏ';
+  if (modifier === 'slight left') return 'в†–пёЏ';
+  if (modifier === 'sharp right' || modifier === 'right') return 'вћЎпёЏ';
+  if (modifier === 'slight right') return 'в†—пёЏ';
+  return 'в¬†пёЏ';
 }

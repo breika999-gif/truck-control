@@ -2481,6 +2481,7 @@ def calculate_route():
     waypoints   = data.get("waypoints", [])
     truck       = data.get("truck", {})
     depart_at   = data.get("depart_at")
+    adr_tunnel_code = data.get("adr_tunnel_code", "none")
 
     if not origin or not destination:
         return jsonify({"error": "origin and destination required"}), 400
@@ -2511,6 +2512,10 @@ def calculate_route():
     code = _adr_to_tunnel_code(truck.get("hazmat_class", "none") or "none")
     if code:
         params["vehicleAdrTunnelRestrictionCode"] = code
+    if adr_tunnel_code in ("D", "E"):
+        params["avoid"] = "tunnels"
+    elif adr_tunnel_code == "C":
+        params["avoid"] = "ferries"
     if depart_at:
         params["departAt"] = depart_at
 

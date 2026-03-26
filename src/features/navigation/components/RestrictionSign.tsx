@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, Animated, StyleSheet } from 'react-native';
+﻿import React, { useEffect, useRef } from 'react';
+import { View, Text, Animated, StyleSheet, Image } from 'react-native';
 import type { RestrictionPoint } from '../api/directions';
 
 interface Props {
@@ -7,12 +7,33 @@ interface Props {
   vehicleProfile?: { height_m: number; weight_t: number; width_m: number } | null;
 }
 
-// type -> { top label, unit }
-const SIGN_META: Record<string, { top: string; unit: string }> = {
-  maxheight: { top: 'ВИСОЧИНА', unit: 'м' },
-  maxweight: { top: 'ТЕГЛО',    unit: 'т' },
-  maxwidth:  { top: 'ШИРИНА',   unit: 'м' },
-};
+const ICONS = {
+  maxheight: {
+    normal: require('../../../../android/app/src/main/res/raw/restriction_height.png'),
+    exceed: require('../../../../android/app/src/main/res/raw/restriction_height_exceed.png'),
+    unit: 'м',
+  },
+  maxweight: {
+    normal: require('../../../../android/app/src/main/res/raw/restriction_weight.png'),
+    exceed: require('../../../../android/app/src/main/res/raw/restriction_weight_exceed.png'),
+    unit: 'т',
+  },
+  maxwidth: {
+    normal: require('../../../../android/app/src/main/res/raw/restriction_width.png'),
+    exceed: require('../../../../android/app/src/main/res/raw/restriction_width_exceed.png'),
+    unit: 'м',
+  },
+  no_trucks: {
+    normal: require('../../../../android/app/src/main/res/raw/restriction_no_trucks.png'),
+    exceed: require('../../../../android/app/src/main/res/raw/restriction_no_trucks_violated.png'),
+    unit: '',
+  },
+  adr: {
+    normal: require('../../../../android/app/src/main/res/raw/restriction_adr.png'),
+    exceed: require('../../../../android/app/src/main/res/raw/restriction_adr_exceed.png'),
+    unit: '',
+  },
+} as const;
 
 function isExceeded(
   restriction: RestrictionPoint | null,
@@ -38,24 +59,21 @@ const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
     } else {
       opacity.setValue(0);
     }
-  }, [restriction?.lat, restriction?.lng]);
+  }, [opacity, restriction?.lat, restriction?.lng]);
 
   if (!restriction) return null;
 
-  const meta = SIGN_META[restriction.type] ?? { top: 'ЛИМИТ', unit: '' };
   const exceeded = isExceeded(restriction, vehicleProfile);
   const accent = exceeded ? '#FF6B00' : '#D0021B';
+  const iconMeta = ICONS[restriction.type] ?? ICONS.no_trucks;
+  const iconSource = exceeded ? iconMeta.exceed : iconMeta.normal;
 
   return (
     <Animated.View style={[s.wrap, { opacity }]}>
       <View style={[s.sign, { borderColor: accent }]}>
-        {/* small type label at top */}
-        <Text style={[s.typeLabel, { color: accent }]}>{meta.top}</Text>
-        {/* big value */}
+        <Image source={iconSource} style={s.icon} resizeMode="contain" />
         <Text style={s.value}>{restriction.value_num}</Text>
-        {/* unit */}
-        <Text style={s.unit}>{meta.unit}</Text>
-        {exceeded ? <Text style={s.warning}>{'\u26A0'}</Text> : null}
+        <Text style={s.unit}>{iconMeta.unit}</Text>
       </View>
       <View style={[s.pin, { backgroundColor: accent }]} />
     </Animated.View>
@@ -85,30 +103,23 @@ const s = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 5,
   },
-  typeLabel: {
-    fontSize: 8,
-    fontWeight: '700',
-    color: '#D0021B',
-    letterSpacing: 0.5,
-    marginBottom: 1,
+  icon: {
+    width: 40,
+    height: 40,
+    marginBottom: -2,
   },
   value: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '900',
     color: '#1A1A1A',
-    lineHeight: 24,
+    lineHeight: 20,
+    marginTop: -1,
   },
   unit: {
     fontSize: 9,
     fontWeight: '600',
     color: '#555',
     marginTop: 1,
-  },
-  warning: {
-    fontSize: 10,
-    color: '#FF6B00',
-    marginTop: 1,
-    lineHeight: 10,
   },
   pin: {
     width: 3,

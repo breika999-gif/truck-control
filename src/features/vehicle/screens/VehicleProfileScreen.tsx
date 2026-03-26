@@ -18,29 +18,38 @@ import {
   DEFAULT_VEHICLE_PROFILE,
   FuelType,
   HazmatClass,
+  AdrTunnelCode,
 } from '../../../shared/types/vehicle';
 import { useVehicleStore } from '../../../store/vehicleStore';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 
 const FUEL_OPTIONS: { label: string; value: FuelType }[] = [
-  { label: 'Дизел', value: 'diesel' },
+  { label: 'Р вЂќР С‘Р В·Р ВµР В»', value: 'diesel' },
   { label: 'LPG', value: 'lpg' },
-  { label: 'Електрически', value: 'electric' },
-  { label: 'Хибрид', value: 'hybrid' },
+  { label: 'Р вЂўР В»Р ВµР С”РЎвЂљРЎР‚Р С‘РЎвЂЎР ВµРЎРѓР С”Р С‘', value: 'electric' },
+  { label: 'Р ТђР С‘Р В±РЎР‚Р С‘Р Т‘', value: 'hybrid' },
   { label: 'CNG', value: 'cng' },
 ];
 
 const HAZMAT_OPTIONS: { label: string; value: HazmatClass }[] = [
-  { label: 'Без ADR', value: 'none' },
-  { label: 'Клас 1 — Взривни', value: '1' },
-  { label: 'Клас 2 — Газове', value: '2' },
-  { label: 'Клас 3 — Запалими течности', value: '3' },
-  { label: 'Клас 4 — Запалими твърди', value: '4' },
-  { label: 'Клас 5 — Оксиданти', value: '5' },
-  { label: 'Клас 6 — Токсични', value: '6' },
-  { label: 'Клас 7 — Радиоактивни', value: '7' },
-  { label: 'Клас 8 — Корозивни', value: '8' },
-  { label: 'Клас 9 — Разни', value: '9' },
+  { label: 'Р вЂР ВµР В· ADR', value: 'none' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 1 РІР‚вЂќ Р вЂ™Р В·РЎР‚Р С‘Р Р†Р Р…Р С‘', value: '1' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 2 РІР‚вЂќ Р вЂњР В°Р В·Р С•Р Р†Р Вµ', value: '2' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 3 РІР‚вЂќ Р вЂ”Р В°Р С—Р В°Р В»Р С‘Р СР С‘ РЎвЂљР ВµРЎвЂЎР Р…Р С•РЎРѓРЎвЂљР С‘', value: '3' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 4 РІР‚вЂќ Р вЂ”Р В°Р С—Р В°Р В»Р С‘Р СР С‘ РЎвЂљР Р†РЎР‰РЎР‚Р Т‘Р С‘', value: '4' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 5 РІР‚вЂќ Р С›Р С”РЎРѓР С‘Р Т‘Р В°Р Р…РЎвЂљР С‘', value: '5' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 6 РІР‚вЂќ Р СћР С•Р С”РЎРѓР С‘РЎвЂЎР Р…Р С‘', value: '6' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 7 РІР‚вЂќ Р В Р В°Р Т‘Р С‘Р С•Р В°Р С”РЎвЂљР С‘Р Р†Р Р…Р С‘', value: '7' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 8 РІР‚вЂќ Р С™Р С•РЎР‚Р С•Р В·Р С‘Р Р†Р Р…Р С‘', value: '8' },
+  { label: 'Р С™Р В»Р В°РЎРѓ 9 РІР‚вЂќ Р В Р В°Р В·Р Р…Р С‘', value: '9' },
+];
+
+const ADR_TUNNEL_OPTIONS: { label: string; value: AdrTunnelCode }[] = [
+  { label: 'РќСЏРјР°', value: 'none' },
+  { label: 'B', value: 'B' },
+  { label: 'C', value: 'C' },
+  { label: 'D', value: 'D' },
+  { label: 'E', value: 'E' },
 ];
 
 function FieldLabel({ label }: { label: string }) {
@@ -136,9 +145,9 @@ export default function VehicleProfileScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.sectionTitle}>Основни данни</Text>
+        <Text style={styles.sectionTitle}>Р С›РЎРѓР Р…Р С•Р Р†Р Р…Р С‘ Р Т‘Р В°Р Р…Р Р…Р С‘</Text>
 
-        <FieldLabel label="Наименование" />
+        <FieldLabel label="Р СњР В°Р С‘Р СР ВµР Р…Р С•Р Р†Р В°Р Р…Р С‘Р Вµ" />
         <Controller
           control={control}
           name="name"
@@ -149,7 +158,7 @@ export default function VehicleProfileScreen() {
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
-                placeholder="напр. Влекач МАН"
+                placeholder="Р Р…Р В°Р С—РЎР‚. Р вЂ™Р В»Р ВµР С”Р В°РЎвЂЎ Р СљР С’Р Сњ"
                 placeholderTextColor={colors.textMuted}
               />
               <ErrorText msg={errors.name?.message} />
@@ -157,7 +166,7 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <FieldLabel label="Регистрационен номер" />
+        <FieldLabel label="Р В Р ВµР С–Р С‘РЎРѓРЎвЂљРЎР‚Р В°РЎвЂ Р С‘Р С•Р Р…Р ВµР Р… Р Р…Р С•Р СР ВµРЎР‚" />
         <Controller
           control={control}
           name="plate"
@@ -168,7 +177,7 @@ export default function VehicleProfileScreen() {
                 value={value}
                 onChangeText={(t) => onChange(t.toUpperCase())}
                 onBlur={onBlur}
-                placeholder="МА 1234 АВ"
+                placeholder="Р СљР С’ 1234 Р С’Р вЂ™"
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="characters"
               />
@@ -177,11 +186,11 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <Text style={styles.sectionTitle}>Размери и маса</Text>
+        <Text style={styles.sectionTitle}>Р В Р В°Р В·Р СР ВµРЎР‚Р С‘ Р С‘ Р СР В°РЎРѓР В°</Text>
 
         <View style={styles.row}>
           <View style={styles.halfField}>
-            <FieldLabel label="Височина (м)" />
+            <FieldLabel label="Р вЂ™Р С‘РЎРѓР С•РЎвЂЎР С‘Р Р…Р В° (Р С)" />
             <Controller
               control={control}
               name="height_m"
@@ -196,7 +205,7 @@ export default function VehicleProfileScreen() {
             />
           </View>
           <View style={styles.halfField}>
-            <FieldLabel label="Ширина (м)" />
+            <FieldLabel label="Р РЃР С‘РЎР‚Р С‘Р Р…Р В° (Р С)" />
             <Controller
               control={control}
               name="width_m"
@@ -214,7 +223,7 @@ export default function VehicleProfileScreen() {
 
         <View style={styles.row}>
           <View style={styles.halfField}>
-            <FieldLabel label="Дължина (м)" />
+            <FieldLabel label="Р вЂќРЎР‰Р В»Р В¶Р С‘Р Р…Р В° (Р С)" />
             <Controller
               control={control}
               name="length_m"
@@ -229,7 +238,7 @@ export default function VehicleProfileScreen() {
             />
           </View>
           <View style={styles.halfField}>
-            <FieldLabel label="Тегло (т)" />
+            <FieldLabel label="Р СћР ВµР С–Р В»Р С• (РЎвЂљ)" />
             <Controller
               control={control}
               name="weight_t"
@@ -245,7 +254,7 @@ export default function VehicleProfileScreen() {
           </View>
         </View>
 
-        <FieldLabel label="Брой оси" />
+        <FieldLabel label="Р вЂРЎР‚Р С•Р в„– Р С•РЎРѓР С‘" />
         <Controller
           control={control}
           name="axle_count"
@@ -267,7 +276,7 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <Text style={styles.sectionTitle}>Тип гориво</Text>
+        <Text style={styles.sectionTitle}>Р СћР С‘Р С— Р С–Р С•РЎР‚Р С‘Р Р†Р С•</Text>
         <Controller
           control={control}
           name="fuel_type"
@@ -276,7 +285,7 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <Text style={styles.sectionTitle}>ADR клас (опционален)</Text>
+        <Text style={styles.sectionTitle}>ADR Р С”Р В»Р В°РЎРѓ (Р С•Р С—РЎвЂ Р С‘Р С•Р Р…Р В°Р В»Р ВµР Р…)</Text>
         <Controller
           control={control}
           name="hazmat_class"
@@ -289,8 +298,21 @@ export default function VehicleProfileScreen() {
           )}
         />
 
+
+        <Text style={styles.sectionTitle}>ADR тунел код</Text>
+        <Controller
+          control={control}
+          name="adr_tunnel"
+          render={({ field: { value, onChange } }) => (
+            <SegmentedPicker
+              options={ADR_TUNNEL_OPTIONS}
+              value={(value ?? 'none') as AdrTunnelCode}
+              onChange={onChange}
+            />
+          )}
+        />
         <TouchableOpacity style={styles.saveButton} onPress={handleSubmit(onSave)}>
-          <Text style={styles.saveButtonText}>Запази профила</Text>
+          <Text style={styles.saveButtonText}>Р вЂ”Р В°Р С—Р В°Р В·Р С‘ Р С—РЎР‚Р С•РЎвЂћР С‘Р В»Р В°</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

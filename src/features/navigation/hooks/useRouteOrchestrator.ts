@@ -132,9 +132,10 @@ export function useRouteOrchestrator({
             max_length: prof.length_m,
             exclude: adrToExclude(prof.hazmat_class ?? 'none'),
             avoidUnpaved: avoidUnpavedRef.current,
+            adr_tunnel: prof.adr_tunnel ?? 'none',
           }
         : avoidUnpavedRef.current
-          ? { avoidUnpaved: true }
+          ? { avoidUnpaved: true, adr_tunnel: 'none' as const }
           : undefined;
 
       const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg);
