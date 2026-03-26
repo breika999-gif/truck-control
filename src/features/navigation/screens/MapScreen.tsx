@@ -115,7 +115,9 @@ import {
 import { useMapUIState, type MapMode } from '../hooks/useMapUIState';
 import { useNavigationState, type RouteOptDest } from '../hooks/useNavigationState';
 import { useRouteInsights } from '../hooks/useRouteInsights';
+import { useRouteOrchestrator } from '../hooks/useRouteOrchestrator';
 import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
+import { useLocationRuntime } from '../hooks/useLocationRuntime';
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -175,11 +177,100 @@ const MapScreen: React.FC = () => {
   const routeRef = useRef<RouteResult | null>(null);
   useEffect(() => { routeRef.current = route; }, [route]);
 
-  const [userCoords, setUserCoords]         = useState<[number, number] | null>(null);
-  const userCoordsRef = useRef<[number, number] | null>(null);
-  const [gpsReady, setGpsReady] = useState(false);
-  const [speed, setSpeed] = useState(0);
-  const isDrivingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
+
+  const profileRef         = useRef<VehicleProfile | null>(null);
+  const stoppedSinceRef    = useRef<number | null>(null);
+  const lastParkingRef     = useRef<number>(0);
+  const lastRestrictionRef = useRef<number>(0);
+  const orchestratorUserCoordsRef = useRef<[number, number] | null>(null);
+  const buildRoutePOIScanRef = useRef<(r: RouteResult) => void>(() => {});
+  const setNavCongestionGeoJSONRef = useRef<(geojson: GeoJSON.FeatureCollection | null) => void>(() => {});
+  // These must be declared before useRouteOrchestrator / useLocationRuntime to avoid TDZ
+  const [navCongestionGeoJSON, setNavCongestionGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
+  const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
+  const setTunnelWarningRef = useRef<(msg: string | null) => void>(() => {});
+
+  useEffect(() => { profileRef.current         = profile;          }, [profile]);
+
+  const {
+    navigateTo,
+    addWaypoint,
+    handleStartRef,
+    customOriginRef,
+    destinationRef,
+    destinationNameRef,
+    departAtRef,
+    waypointsRef,
+    waypointNamesRef,
+    navStartRef,
+    navInitDurationRef,
+    lastRerouteRef,
+  } = useRouteOrchestrator({
+    isMountedRef,
+    navigatingRef,
+    routeRef,
+    profileRef,
+    userCoordsRef: orchestratorUserCoordsRef,
+    cameraRef,
+    profile,
+    destination,
+    destinationName,
+    departAt,
+    waypoints,
+    waypointNames,
+    buildRoutePOIScan: (r) => buildRoutePOIScanRef.current(r),
+    setRoute,
+    setDestination,
+    setDestinationName,
+    setNavigating,
+    setCurrentStep,
+    setSpeedLimit,
+    setDistToTurn,
+    setLoadingRoute,
+    setNavCongestionGeoJSON: (geojson) => setNavCongestionGeoJSONRef.current(geojson),
+    setWaypoints,
+    setWaypointNames,
+  });
+
+  // ── States & Refs from useLocationRuntime ──────────────────────────────────
+  const {
+    userCoords,
+    userCoordsRef,
+    gpsReady,
+    speed,
+    isDrivingRef,
+    isSimulatingRef,
+    simIndexRef,
+    simIntervalRef,
+  } = useLocationRuntime({
+    isMountedRef,
+    navigatingRef,
+    routeRef,
+    profileRef,
+    destinationRef,
+    destinationNameRef,
+    waypointsRef,
+    lastRerouteRef,
+    stoppedSinceRef,
+    lastParkingRef,
+    lastRestrictionRef,
+    setAutoParking,
+    setTunnelWarning: (msg) => setTunnelWarningRef.current(msg),
+    setSpeedLimit,
+    setCurrentStep,
+    setDistToTurn,
+    setRerouting,
+    setRoute,
+    setNavCongestionGeoJSON,
+    navigating,
+  });
+  // Sync GPS userCoordsRef → orchestratorUserCoordsRef so navigateTo uses real position
+  useLayoutEffect(() => {
+    orchestratorUserCoordsRef.current = userCoordsRef.current;
+  }, [userCoords]);
 
   // ── Hooks Integration ──────────────────────────────────────────────────────
 
@@ -334,212 +425,15 @@ const MapScreen: React.FC = () => {
     buildRoutePOIScan,
   } = useRouteInsights(route);
 
-  const [navCongestionGeoJSON, setNavCongestionGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
-  const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
+  useEffect(() => { buildRoutePOIScanRef.current = buildRoutePOIScan; }, [buildRoutePOIScan]);
+  useEffect(() => { setNavCongestionGeoJSONRef.current = setNavCongestionGeoJSON; }, [setNavCongestionGeoJSON]);
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
   const [customOriginName, setCustomOriginName] = useState('');
 
-  const isMountedRef = useRef(true);
-  useEffect(() => () => { isMountedRef.current = false; }, []);
-  const customOriginRef    = useRef<[number, number] | null>(null);
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
 
   // Convenience alias — JSX uses mapIsLoaded for readability
   const mapIsLoaded = mapLoaded;
-
-  // ── Tilequery state ────────────────────────────────────────────────────────
-  const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
-
-  // Tilequery throttle refs — timestamps of last call per query type
-  const lastElevationRef   = useRef<number>(0);
-  const lastRestrictionRef = useRef<number>(0);
-  const lastParkingRef     = useRef<number>(0);
-  // Stopped detection: timestamp when speed first dropped below 2 km/h
-  const stoppedSinceRef    = useRef<number | null>(null);
-
-  // ── Runtime location permission + GPS (react-native-geolocation-service) ──
-  // Uses Google Fused Location Provider on Android for faster first fix and
-  // better accuracy than the default RN location. locationManager.start()
-  // keeps the Mapbox LocationPuck updated via the native SDK.
-  useEffect(() => {
-    let watchId: number | null = null;
-
-    const startWatch = () => {
-      locationManager.start(); // warm Mapbox location engine for LocationPuck
-
-      // Get initial position immediately to set gpsReady=true as fast as possible
-      Geolocation.getCurrentPosition(
-        (pos) => {
-          if (!isMountedRef.current) return;
-          const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
-          userCoordsRef.current = coords;
-          setUserCoords(coords);
-          setGpsReady(true);
-        },
-        () => {},
-        { enableHighAccuracy: true, timeout: 5000 },
-      );
-
-      watchId = Geolocation.watchPosition(
-        (pos) => {
-          if (!isMountedRef.current) return;
-          if (isSimulatingRef.current) return; // simulator overrides GPS
-          const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
-          userCoordsRef.current = coords;
-          setUserCoords(coords);
-          setGpsReady(true);
-
-          const spd = pos.coords.speed ?? -1;
-          const kmh = spd > 0 ? spd * 3.6 : 0;
-          setSpeed(Math.round(kmh));
-          isDrivingRef.current = kmh > 3;
-
-          // ── Tilequery queries (all throttled) ─────────────────────────────
-          const tqNow = Date.now();
-          const [tqLng, tqLat] = coords;
-
-          // 1. Stopped detection → auto-search parking once per stop
-          //    Triggers after 20 s stationary, 2-minute cooldown between searches
-          if (kmh < 2) {
-            if (stoppedSinceRef.current === null) stoppedSinceRef.current = tqNow;
-            const stoppedMs = tqNow - stoppedSinceRef.current;
-            if (stoppedMs >= 20_000 && tqNow - lastParkingRef.current >= 120_000) {
-              lastParkingRef.current = tqNow;
-              fetchNearbyParking(tqLng, tqLat, 1000).then(spots => {
-                if (isMountedRef.current && spots.length > 0) setAutoParking(spots);
-              });
-            }
-          } else {
-            stoppedSinceRef.current = null;
-          }
-          // ── end Tilequery (pre-nav) ────────────────────────────────────────
-
-          const isNav = navigatingRef.current;
-          const cur   = routeRef.current;
-          if (!isNav || !cur) return;
-
-          // 3. Restriction check — tunnels/bridges (1 min urban <50 km/h, 1 h highway)
-          const profR = profileRef.current;
-          const restrictInterval = kmh < 50 ? 60_000 : 3_600_000;
-          if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
-            lastRestrictionRef.current = tqNow;
-            fetchNearbyRestrictions(tqLng, tqLat, 400).then(r => {
-              if (!isMountedRef.current) return;
-              if (r.hasTunnel) {
-                const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';
-                setTunnelWarning(`⚠️ Тунел${dist} — провери клиренс!`);
-              } else if (r.hasBridge) {
-                const dist = r.bridgeDistance > 0 ? ` ${r.bridgeDistance} м` : '';
-                setTunnelWarning(`⚠️ Мост${dist} — провери носимост!`);
-              } else {
-                setTunnelWarning(null);
-              }
-            });
-          }
-
-          setSpeedLimit(
-            getSpeedLimitAtPosition(cur.geometry.coordinates, cur.maxspeeds, coords),
-          );
-
-          const stepIdx = getCurrentStepIndex(cur.steps, coords);
-          setCurrentStep(stepIdx);
-
-          const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
-          setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
-
-          // ── Auto re-route when > 50 m off route (30-second cooldown) ──────
-          const now = Date.now();
-          if (now - lastRerouteRef.current < 30_000) return;
-
-          let minDist = Infinity;
-          const routeCoords = cur.geometry.coordinates;
-          for (let i = 0; i < routeCoords.length; i++) {
-            const d = haversineMeters(coords, routeCoords[i] as [number, number]);
-            if (d < minDist) minDist = d;
-            if (minDist < 50) return;
-          }
-
-          const dest = destinationRef.current;
-          if (!dest) return;
-
-          lastRerouteRef.current = now;
-          setRerouting(true);
-          const prof = profileRef.current;
-          const truck = prof
-            ? { max_height: prof.height_m, max_width: prof.width_m,
-                max_weight: prof.weight_t, max_length: prof.length_m,
-                exclude: adrToExclude(prof.hazmat_class ?? 'none') }
-            : undefined;
-
-          fetchRoute(coords, dest, truck, undefined, waypointsRef.current)
-            .then(result => {
-              if (result) {
-                routeRef.current = result;
-                setRoute(result);
-                // Sync congestion colors on re-route (fixes missing traffic colors bug)
-                setNavCongestionGeoJSON(result.congestionGeoJSON);
-              }
-            })
-            .catch(() => {})
-            .finally(() => { if (isMountedRef.current) setRerouting(false); });
-        },
-        () => { /* silently ignore errors — GPS may be unavailable indoors */ },
-        {
-          enableHighAccuracy: true,
-          distanceFilter: 2,        // update every 2 m of movement
-          interval: 1000,           // Android: check every 1 s
-          fastestInterval: 500,     // Android: max rate
-          forceRequestLocation: true,
-          showLocationDialog: true,
-        },
-      );
-    };
-
-    if (Platform.OS === 'android') {
-      PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: 'Разрешение за местоположение',
-          message: 'TruckAI Pro се нуждае от GPS за навигация.',
-          buttonPositive: 'Разреши',
-          buttonNegative: 'Откажи',
-        },
-      ).then(status => {
-        if (status === PermissionsAndroid.RESULTS.GRANTED) startWatch();
-      });
-    } else {
-      Geolocation.requestAuthorization('whenInUse').then(auth => {
-        if (auth === 'granted') startWatch();
-      });
-    }
-
-    return () => {
-      if (watchId !== null) Geolocation.clearWatch(watchId);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // stable — all logic reads via refs
-
-  // ── Flask backend health check — poll every 5 min (was 60s, 60 req/h → 12 req/h) ────
-
-  // ── Traffic tile refresh every 3 min (was 60s, 60 req/h → 20 req/h) ─────
-  useEffect(() => {
-    const interval = setInterval(() => setTrafficKey(k => k + 1), 180_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // ── Speed limit via tilequery when no active route ───────────────────────
-  const speedLimitFetchRef = useRef<number>(0);
-  useEffect(() => {
-    if (navigating || !userCoords) return;
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      if (now - speedLimitFetchRef.current < 10_000) return;
-      speedLimitFetchRef.current = now;
-      const limit = await fetchSpeedLimitAtPoint(userCoords[0], userCoords[1]);
-      if (isMountedRef.current) setSpeedLimit(limit);
-    }, 10_000);
-    return () => clearInterval(interval);
-  }, [navigating, userCoords]);
 
   // ── Load Google account + starred POIs + tacho summary on mount ──────────
 
@@ -558,189 +452,6 @@ const MapScreen: React.FC = () => {
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigating, route]);
-
-
-
-  // ── Refs — stable values readable inside the GPS callback ────────────────
-  // Pattern: state drives render; refs let the stable callback read latest values
-  // without re-creating it (re-creation mid-forEach crashes AnimatedNode).
-
-  const isSimulatingRef    = useRef(false);
-  const simIndexRef        = useRef(0);
-  const simIntervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const destinationRef     = useRef<[number, number] | null>(null);
-  const destinationNameRef = useRef('');
-  const profileRef         = useRef<VehicleProfile | null>(null);
-  const departAtRef        = useRef<string | null>(null);
-  const lastRerouteRef        = useRef<number>(0);
-  const waypointsRef          = useRef<[number, number][]>([]);
-  const waypointNamesRef      = useRef<string[]>([]);
-  const profileRerouteTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const navStartRef           = useRef<number>(0);
-  const navInitDurationRef    = useRef<number>(0);
-  // Stable refs for callbacks that close over mutable state (avoids stale closure)
-  const drivingSecondsRef = useRef(0);
-
-  useEffect(() => { userCoordsRef.current      = userCoords;       }, [userCoords]);
-  useEffect(() => { destinationRef.current     = destination;      }, [destination]);
-  useEffect(() => { destinationNameRef.current = destinationName;  }, [destinationName]);
-  useEffect(() => { departAtRef.current        = departAt;         }, [departAt]);
-  useEffect(() => { waypointsRef.current       = waypoints;        }, [waypoints]);
-  useEffect(() => { waypointNamesRef.current   = waypointNames;    }, [waypointNames]);
-  useEffect(() => { drivingSecondsRef.current  = drivingSeconds;   }, [drivingSeconds]);
-
-  // Keep profileRef in sync
-  useEffect(() => { profileRef.current = profile; }, [profile]);
-
-  // ── Proactive Proximity Alerts — every 5 km or first move ────────────────
-  useEffect(() => {
-    if (!userCoords) return;
-    const [lng, lat] = userCoords;
-
-    // Check if we moved > 5 km since last alert fetch
-    if (lastAlertCheckPos.current) {
-      const distKm = haversineMeters(userCoords, lastAlertCheckPos.current) / 1000;
-      if (distKm < 5) return;
-    }
-
-    lastAlertCheckPos.current = [lng, lat];
-
-    fetchProximityAlerts(lat, lng).then(res => {
-      if (res?.ok) {
-        if (res.cameras.length > 0) setCameraResults(res.cameras);
-        if (res.overtaking.length > 0) setOvertakingResults(res.overtaking);
-
-        // Instant voice alert for VERY near camera found in proximity scan
-        if (res.nearest_camera_m > 0 && res.nearest_camera_m < 800) {
-          if (!voiceMutedRef.current) ttsSpeak(`Внимание, камера след ${Math.round(res.nearest_camera_m)} метра.`);
-        }
-      }
-    });
-  }, [userCoords]);
-
-  // Profile change WHILE navigating → debounced re-route (800 ms).
-  // CRITICAL: deps = [profile] only — navigating must NOT be a dep.
-  // If navigating were in deps, pressing "Тръгваме" would trigger this effect,
-  // fire navigateTo() after 800 ms, and call setNavigating(false) — resetting nav.
-  useEffect(() => {
-    if (!navigatingRef.current || !destinationRef.current) return;
-    if (profileRerouteTimer.current) clearTimeout(profileRerouteTimer.current);
-    profileRerouteTimer.current = setTimeout(() => {
-      if (navigatingRef.current && destinationRef.current) {
-        navigateTo(destinationRef.current, destinationNameRef.current, waypointsRef.current);
-      }
-    }, 800);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile]);
-
-  // Stable ref so navigateTo can call handleStart without forward-reference TS error
-  const handleStartRef = useRef<() => void>(() => {});
-
-  // ── Shared route-to helper ────────────────────────────────────────────────
-  // Single source of truth for fetching a route and fitting the camera.
-  // All data read via refs → deps:[] → stable identity across renders.
-  // isMountedRef guard prevents setState after component unmounts.
-
-  const navigateTo = useCallback(async (dest: [number, number], name: string, waypoints?: [number, number][], autoStart = false) => {
-    setDestination(dest);
-    setDestinationName(name);
-    // If not auto-starting and not already navigating, ensure we are in preview mode.
-    // If we ARE already navigating, keep it true so the UI doesn't flicker/reset.
-    if (!autoStart && !navigatingRef.current) {
-      setNavigating(false);
-    }
-    setRoute(null);
-    setCurrentStep(0);
-    setSpeedLimit(null);
-    setDistToTurn(null);
-
-    // Origin priority: custom (manually set) > GPS > fallback centre
-    const origin: [number, number] =
-      customOriginRef.current ??
-      userCoordsRef.current ??
-      [MAP_CENTER.longitude, MAP_CENTER.latitude];
-    setLoadingRoute(true);
-    try {
-      const prof = profileRef.current;
-      const truck = prof
-        ? {
-            max_height: prof.height_m,
-            max_width: prof.width_m,
-            max_weight: prof.weight_t,
-            max_length: prof.length_m,
-            exclude: adrToExclude(prof.hazmat_class ?? 'none'),
-          }
-        : undefined;
-
-      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypoints);
-      if (!isMountedRef.current) return; // unmount guard
-
-      setRoute(result);
-      // Sync congestion colors for direct navigation (fixes missing traffic colors bug)
-      setNavCongestionGeoJSON(result?.congestionGeoJSON ?? null);
-
-      if (result) {
-        buildRoutePOIScan(result);
-        const coords = result.geometry.coordinates;
-        let minLng = coords[0][0], maxLng = coords[0][0];
-        let minLat = coords[0][1], maxLat = coords[0][1];
-        for (let i = 1; i < coords.length; i++) {
-          if (coords[i][0] < minLng) minLng = coords[i][0];
-          if (coords[i][0] > maxLng) maxLng = coords[i][0];
-          if (coords[i][1] < minLat) minLat = coords[i][1];
-          if (coords[i][1] > maxLat) maxLat = coords[i][1];
-        }
-        
-        // Only fit bounds if we are NOT navigating. 
-        // During navigation, the StableCamera followUserLocation takes over.
-        if (!navigatingRef.current && !autoStart) {
-          cameraRef.current?.fitBounds(
-            [maxLng, maxLat],
-            [minLng, minLat],
-            [120, 40, 220, 40],
-            1000,
-          );
-        }
-
-        if (autoStart) {
-          handleStartRef.current();
-        }
-      } else {
-        if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
-      }
-    } catch (err) {
-      if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
-    } finally {
-      if (isMountedRef.current) setLoadingRoute(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // stable — reads everything via refs; handleStart accessed via handleStartRef
-
-  // ── Add intermediate waypoint + re-route ─────────────────────────────────
-  // Appends a stop before the final destination and recalculates the route.
-  const addWaypoint = useCallback(async (coord: [number, number], name: string) => {
-    const appended = [...waypointsRef.current, coord];
-    const appendedNames = [...waypointNamesRef.current, name];
-
-    // Auto-optimize order when there are 2+ waypoints (nearest-neighbour TSP)
-    const origin: [number, number] = userCoordsRef.current ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
-    const optimized = appended.length >= 2 ? optimizeWaypointOrder(origin, appended) : appended;
-
-    // Sync names to match the optimized order
-    const nameMap = new Map(appended.map((wp, i) => [`${wp[0]},${wp[1]}`, appendedNames[i]]));
-    const optimizedNames = optimized.map(wp => nameMap.get(`${wp[0]},${wp[1]}`) ?? '');
-
-    setWaypoints(optimized);
-    setWaypointNames(optimizedNames);
-    // Immediate ref update so re-route picks up the new list even if state
-    // hasn't propagated yet (React batching).
-    waypointsRef.current     = optimized;
-    waypointNamesRef.current = optimizedNames;
-    const dest = destinationRef.current;
-    if (dest) await navigateTo(dest, destinationNameRef.current, optimized);
-  }, [navigateTo]);
-
-  // ── Long-press map handler — shows popup for navigate / add-as-stop ───────
   const handleMapLongPress = useCallback((event: GeoJSON.Feature) => {
     if (event.geometry.type !== 'Point') return;
     const [lng, lat] = (event.geometry as GeoJSON.Point).coordinates as [number, number];
@@ -1188,6 +899,7 @@ const MapScreen: React.FC = () => {
     userCoords, cameraResults,
     voiceMutedRef, lanePulseOn,
   });
+  useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
 
   const starGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
