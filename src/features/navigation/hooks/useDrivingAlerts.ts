@@ -113,5 +113,6 @@ export function useDrivingAlerts({
     laneGlowShadow,
     speedingBg,
     proximityAlerts,
+    playCameraAlert,
   };
 }

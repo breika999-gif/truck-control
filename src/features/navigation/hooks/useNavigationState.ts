@@ -36,6 +36,7 @@ export const useNavigationState = () => {
   const [waypointNames, setWaypointNames]     = useState<string[]>([]);
   const [restrictionChecking, setRestrictionChecking] = useState(false);
   const [restrictionWarnings, setRestrictionWarnings] = useState<string[]>([]);
+  const [avoidUnpaved, setAvoidUnpaved]       = useState(false);
 
   // Derived booleans — single source of truth is navPhase
   const navigating   = navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
@@ -65,5 +66,6 @@ export const useNavigationState = () => {
     waypointNames, setWaypointNames,
     restrictionChecking, setRestrictionChecking,
     restrictionWarnings, setRestrictionWarnings,
+    avoidUnpaved, setAvoidUnpaved,
   };
 };

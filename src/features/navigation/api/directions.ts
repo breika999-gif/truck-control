@@ -114,6 +114,7 @@ export interface TruckDimensions {
   max_weight?: number;  // metric tons (0–100)
   max_length?: number;  // meters — vehicle length restriction
   exclude?: string;     // 'tunnel' | 'tunnel,motorway' | undefined — ADR hazmat routing
+  avoidUnpaved?: boolean;
 }
 
 /**
@@ -149,6 +150,7 @@ export async function fetchRoute(
         destination,
         waypoints: waypoints ?? [],
         truck: truck ?? {},
+        avoid_unpaved: truck?.avoidUnpaved ?? false,
         depart_at: departAt ?? null,
       }),
     });

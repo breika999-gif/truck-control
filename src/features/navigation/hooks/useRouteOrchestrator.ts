@@ -25,6 +25,7 @@ type UseRouteOrchestratorArgs = {
   destination: Coords | null;
   destinationName: string;
   departAt: string | null;
+  avoidUnpaved: boolean;
   waypoints: Coords[];
   waypointNames: string[];
   buildRoutePOIScan: (r: RouteResult) => void;
@@ -51,6 +52,7 @@ export function useRouteOrchestrator({
   destination,
   destinationName,
   departAt,
+  avoidUnpaved,
   waypoints,
   waypointNames,
   buildRoutePOIScan,
@@ -70,6 +72,7 @@ export function useRouteOrchestrator({
   const destinationRef = useRef<Coords | null>(null);
   const destinationNameRef = useRef('');
   const departAtRef = useRef<string | null>(null);
+  const avoidUnpavedRef = useRef(false);
   const waypointsRef = useRef<Coords[]>([]);
   const waypointNamesRef = useRef<string[]>([]);
   const lastRerouteRef = useRef<number>(0);
@@ -80,6 +83,7 @@ export function useRouteOrchestrator({
   useEffect(() => { destinationRef.current = destination; }, [destination]);
   useEffect(() => { destinationNameRef.current = destinationName; }, [destinationName]);
   useEffect(() => { departAtRef.current = departAt; }, [departAt]);
+  useEffect(() => { avoidUnpavedRef.current = avoidUnpaved; }, [avoidUnpaved]);
   useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
   useEffect(() => { waypointNamesRef.current = waypointNames; }, [waypointNames]);
 
@@ -127,8 +131,11 @@ export function useRouteOrchestrator({
             max_weight: prof.weight_t,
             max_length: prof.length_m,
             exclude: adrToExclude(prof.hazmat_class ?? 'none'),
+            avoidUnpaved: avoidUnpavedRef.current,
           }
-        : undefined;
+        : avoidUnpavedRef.current
+          ? { avoidUnpaved: true }
+          : undefined;
 
       const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg);
       if (!isMountedRef.current) return; // unmount guard

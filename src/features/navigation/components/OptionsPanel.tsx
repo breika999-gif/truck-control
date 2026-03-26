@@ -3,7 +3,7 @@ import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
+  Share,
 } from 'react-native';
 import Tts from 'react-native-tts';
 import { styles } from '../screens/MapScreen.styles';
@@ -30,6 +30,8 @@ interface OptionsPanelProps {
   setShowRestrictions: (show: boolean | ((v: boolean) => boolean)) => void;
   showContours: boolean;
   setShowContours: (show: boolean | ((v: boolean) => boolean)) => void;
+  avoidUnpaved: boolean;
+  setAvoidUnpaved: (value: boolean | ((v: boolean) => boolean)) => void;
   showStarredLayer: boolean;
   setShowStarredLayer: (show: boolean | ((v: boolean) => boolean)) => void;
   navigating: boolean;
@@ -53,6 +55,8 @@ interface OptionsPanelProps {
   isSearchingAlongRoute?: boolean;
   handleSearchAlongRoute: () => void;
   setMapIsLoaded: (loaded: boolean) => void;
+  userCoords: [number, number] | null;
+  onReportCamera: () => void;
 }
 
 const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
@@ -72,6 +76,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setShowRestrictions,
   showContours,
   setShowContours,
+  avoidUnpaved,
+  setAvoidUnpaved,
   showStarredLayer,
   setShowStarredLayer,
   navigating,
@@ -95,6 +101,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   isSearchingAlongRoute,
   handleSearchAlongRoute,
   setMapIsLoaded,
+  userCoords,
+  onReportCamera,
 }) => {
   return (
     <View style={[styles.optionsContainer, { top: searchTop }]}>
@@ -107,7 +115,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
 
       {optionsOpen && (
         <View style={styles.optionsPanel}>
-          {/* ── Bento Grid Header Row ── */}
           <View style={styles.optionsRow}>
             <TouchableOpacity
               style={styles.optionBtn}
@@ -115,7 +122,65 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             >
               <Text style={styles.mapBtnText}>🚚</Text>
             </TouchableOpacity>
-            
+
+            <TouchableOpacity
+              style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
+              onPress={() => setShowTraffic(v => !v)}
+            >
+              <Text style={styles.mapBtnText}>🚦</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionBtn, !showRestrictions && styles.optionBtnOff]}
+              onPress={() => setShowRestrictions(v => !v)}
+            >
+              <Text style={styles.mapBtnText}>🚧</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionBtn, !showStarredLayer && styles.optionBtnOff]}
+              onPress={() => setShowStarredLayer(v => !v)}
+            >
+              <Text style={styles.mapBtnText}>⭐</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.optionsDivider} />
+
+          <View style={styles.optionsRow}>
+            <TouchableOpacity
+              style={styles.optionBtn}
+              onPress={() => {
+                setMapMode(prev => {
+                  const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
+                  if (!navigating) setMapIsLoaded(false);
+                  return next;
+                });
+              }}
+            >
+              <Text style={styles.mapBtnText}>
+                {mapMode === 'vector' ? '🌍' : mapMode === 'hybrid' ? '🌐' : '🛰️'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionBtn, !showIncidents && styles.optionBtnOff]}
+              onPress={() => setShowIncidents(v => !v)}
+            >
+              <Text style={styles.mapBtnText}>⚠️</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.optionBtn, !showContours && styles.optionBtnOff]}
+              onPress={() => setShowContours(v => !v)}
+            >
+              <Text style={styles.mapBtnText}>🗻</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.optionsDivider} />
+
+          <View style={styles.optionsRow}>
             <TouchableOpacity
               style={styles.optionBtn}
               onPress={() => {
@@ -135,16 +200,22 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.optionBtn, !showStarredLayer && styles.optionBtnOff]}
-              onPress={() => setShowStarredLayer(v => !v)}
+              style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
+              onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
             >
-              <Text style={styles.mapBtnText}>⭐</Text>
+              <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.optionBtn}
+              onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); }}
+            >
+              <Text style={styles.mapBtnText}>{lightMode ? '🌙' : '☀️'}</Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.optionsDivider} />
 
-          {/* ── Along Route Search ── */}
           {navigating && (
             <>
               <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
@@ -161,80 +232,20 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </>
           )}
 
-          {/* ── Map Toggles Bento Row ── */}
-          <View style={styles.optionsRow}>
+          <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
             <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => {
-                setMapMode(prev => {
-                  const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
-                  if (!navigating) setMapIsLoaded(false);
-                  return next;
-                });
-              }}
+              style={[styles.optionBtn, !avoidUnpaved && styles.optionBtnOff, avoidUnpaved && styles.optionBtnActive]}
+              onPress={() => setAvoidUnpaved(v => !v)}
             >
-              <Text style={styles.mapBtnText}>
-                {mapMode === 'vector' ? '🌍' : mapMode === 'hybrid' ? '🌐' : '🛰️'}
-              </Text>
+              <Text style={styles.mapBtnText}>{'🛤️'}</Text>
             </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); }}
-            >
-              <Text style={styles.mapBtnText}>{lightMode ? '🌙' : '☀️'}</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
-              onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
-            >
-              <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
-            </TouchableOpacity>
+            <Text style={styles.devRowLabel}>АСФАЛТ</Text>
           </View>
 
-          <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
-              onPress={() => setShowTraffic(v => !v)}
-            >
-              <Text style={styles.mapBtnText}>🚦</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.optionBtn, !showIncidents && styles.optionBtnOff]}
-              onPress={() => setShowIncidents(v => !v)}
-            >
-              <Text style={styles.mapBtnText}>⚠️</Text>
-            </TouchableOpacity>
+          <View style={styles.optionsDivider} />
 
-            {mapMode !== 'satellite' && (
-              <TouchableOpacity
-                style={[styles.optionBtn, !showRestrictions && styles.optionBtnOff]}
-                onPress={() => setShowRestrictions(v => !v)}
-              >
-                <Text style={styles.mapBtnText}>🚧</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* ── Terrain Contours ── */}
-          {mapMode !== 'satellite' && (
-            <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
-              <TouchableOpacity
-                style={[styles.optionBtn, !showContours && styles.optionBtnOff]}
-                onPress={() => setShowContours(v => !v)}
-              >
-                <Text style={styles.mapBtnText}>🗻</Text>
-              </TouchableOpacity>
-              <Text style={styles.devRowLabel}>РЕЛЕФ</Text>
-            </View>
-          )}
-
-          {/* ── Proximity POI row — only when no route ── */}
           {!navigating && !route && (
             <>
-              <View style={styles.optionsDivider} />
               <View style={styles.optionsRow}>
                 {POI_CATEGORIES.map((cat) => (
                   <TouchableOpacity
@@ -246,13 +257,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   </TouchableOpacity>
                 ))}
               </View>
+              <View style={styles.optionsDivider} />
             </>
           )}
 
-          {/* ── Search Along Route row — only when route is loaded ── */}
           {route && (
             <>
-              <View style={styles.optionsDivider} />
               <View style={styles.optionsRow}>
                 <Text style={styles.sarRowLabel}>SAR</Text>
                 {POI_CATEGORIES.map((cat) => (
@@ -265,12 +275,10 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   </TouchableOpacity>
                 ))}
               </View>
+              <View style={styles.optionsDivider} />
             </>
           )}
 
-          <View style={styles.optionsDivider} />
-
-          {/* ── Account Bento Section ── */}
           <TouchableOpacity
             style={styles.geminiConnectBtn}
             onPress={() => { setShowAccountModal(true); setOptionsOpen(false); }}
@@ -281,7 +289,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </Text>
             {googleUser && <View style={styles.geminiDot} />}
           </TouchableOpacity>
-
 
           <TouchableOpacity
             style={styles.geminiConnectBtn}
@@ -296,7 +303,21 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </Text>
           </TouchableOpacity>
 
-          {/* ── Dev Tools ── */}
+          {userCoords && (
+            <TouchableOpacity
+              style={styles.geminiConnectBtn}
+              onPress={() => {
+                setOptionsOpen(false);
+                Share.share({
+                  message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
+                });
+              }}
+            >
+              <Text style={styles.geminiConnectEmoji}>📌</Text>
+              <Text style={styles.geminiConnectLabel}>СПОДЕЛИ ПОЗИЦИЯ</Text>
+            </TouchableOpacity>
+          )}
+
           {route && (
             <>
               <View style={styles.optionsDivider} />
@@ -307,7 +328,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 >
                   <Text style={styles.mapBtnText}>{simulating ? '⏹' : '▶'}</Text>
                 </TouchableOpacity>
-                
+
                 <TouchableOpacity
                   style={[styles.optionBtn, debugMode && styles.simBtnDebug]}
                   onPress={() => setDebugMode(v => !v)}
@@ -318,6 +339,23 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               </View>
             </>
           )}
+
+          <View style={styles.optionsDivider} />
+          <TouchableOpacity
+            style={{
+              width: '100%',
+              borderRadius: 14,
+              backgroundColor: '#D0021B',
+              paddingVertical: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            onPress={() => { onReportCamera(); setOptionsOpen(false); }}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '900' }}>
+              {'📷 ДОКЛАДВАЙ КАМЕРА'}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>

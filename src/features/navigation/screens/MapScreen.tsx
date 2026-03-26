@@ -172,6 +172,7 @@ const MapScreen: React.FC = () => {
     waypointNames, setWaypointNames,
     restrictionChecking, setRestrictionChecking,
     restrictionWarnings, setRestrictionWarnings,
+    avoidUnpaved, setAvoidUnpaved,
   } = useNavigationState();
 
   const navigatingRef = useRef(false);
@@ -221,6 +222,7 @@ const MapScreen: React.FC = () => {
     destination,
     destinationName,
     departAt,
+    avoidUnpaved,
     waypoints,
     waypointNames,
     buildRoutePOIScan: (r) => buildRoutePOIScanRef.current(r),
@@ -886,6 +888,7 @@ const MapScreen: React.FC = () => {
     laneGlowBg, laneGlowShadow,
     speedingBg,
     proximityAlerts,
+    playCameraAlert,
   } = useDrivingAlerts({
     speed, speedLimit, navigating,
     userCoords, cameraResults,
@@ -915,11 +918,26 @@ const MapScreen: React.FC = () => {
 
   const setWaypoint = (name: string, coords: [number, number]) => addWaypoint(coords, name);
 
+  const didInitAvoidUnpavedRef = useRef(false);
+  useEffect(() => {
+    if (!didInitAvoidUnpavedRef.current) {
+      didInitAvoidUnpavedRef.current = true;
+      return;
+    }
+    const dest = destinationRef.current;
+    if (dest) navigateTo(dest, destinationNameRef.current, waypointsRef.current);
+  }, [avoidUnpaved, navigateTo]);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handlePOINavigate = useCallback((poi: import('../api/poi').TruckPOI) => {
     clearPOI();
     navigateTo(poi.coordinates, poi.name);
   }, [navigateTo, clearPOI]);
+
+  const handleReportCamera = useCallback(() => {
+    playCameraAlert();
+    Alert.alert('Благодарим!', 'Камерата е докладвана.');
+  }, [playCameraAlert]);
 
   const pickDeparture = useCallback((label: DepartLabel) => {
     const iso = departIso(label);
@@ -1339,6 +1357,8 @@ const MapScreen: React.FC = () => {
         setShowRestrictions={setShowRestrictions}
         showContours={showContours}
         setShowContours={setShowContours}
+        avoidUnpaved={avoidUnpaved}
+        setAvoidUnpaved={setAvoidUnpaved}
         showStarredLayer={showStarredLayer}
         setShowStarredLayer={setShowStarredLayer}
         navigating={navigating}
@@ -1362,7 +1382,8 @@ const MapScreen: React.FC = () => {
         isSearchingAlongRoute={isSearchingAlongRoute}
         handleSearchAlongRoute={handleSearchAlongRoute}
         setMapIsLoaded={setMapIsLoaded}
-
+        userCoords={userCoords}
+        onReportCamera={handleReportCamera}
       />
 
       {/* ── GPS chip ── */}
