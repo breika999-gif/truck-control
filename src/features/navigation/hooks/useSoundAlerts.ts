@@ -1,7 +1,11 @@
 import { useEffect, useRef, useCallback, type MutableRefObject } from 'react';
 
 let Sound: any = null;
-try { Sound = require('react-native-sound'); } catch { Sound = null; }
+try {
+  const _s = require('react-native-sound');
+  Sound = _s?.default ?? _s;
+  if (typeof Sound?.setCategory !== 'function') Sound = null;
+} catch { Sound = null; }
 
 type SoundKey =
   | 'speed'
