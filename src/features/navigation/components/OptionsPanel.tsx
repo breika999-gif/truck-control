@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   Share,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
 import { styles } from '../screens/MapScreen.styles';
 import { POI_META, type POICategory } from '../api/poi';
@@ -59,6 +60,13 @@ interface OptionsPanelProps {
   onReportCamera: () => void;
 }
 
+// Icon color constants
+const C_ON  = '#FFFFFF';
+const C_OFF = '#4A5568';
+const C_ACT = '#00BFFF';
+const C_RED = '#FF4444';
+const ICON_SIZE = 22;
+
 const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   optionsOpen,
   setOptionsOpen,
@@ -104,49 +112,54 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   userCoords,
   onReportCamera,
 }) => {
+  const mapModeIcon = mapMode === 'vector' ? 'earth' : mapMode === 'hybrid' ? 'layers' : 'satellite-variant';
+
   return (
     <View style={[styles.optionsContainer, { top: searchTop }]}>
       <TouchableOpacity
         style={styles.mapBtn}
         onPress={() => setOptionsOpen(v => !v)}
       >
-        <Text style={styles.mapBtnText}>{optionsOpen ? '✕' : '⚙️'}</Text>
+        <Icon name={optionsOpen ? 'close' : 'tune-variant'} size={ICON_SIZE} color={C_ON} />
       </TouchableOpacity>
 
       {optionsOpen && (
         <View style={styles.optionsPanel}>
+
+          {/* ── Ред 1: Маршрут ── */}
           <View style={styles.optionsRow}>
             <TouchableOpacity
               style={styles.optionBtn}
               onPress={() => { navigation.navigate('VehicleProfile'); setOptionsOpen(false); }}
             >
-              <Text style={styles.mapBtnText}>🚚</Text>
+              <Icon name="truck" size={ICON_SIZE} color={C_ON} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
               onPress={() => setShowTraffic(v => !v)}
             >
-              <Text style={styles.mapBtnText}>🚦</Text>
+              <Icon name="traffic-light" size={ICON_SIZE} color={showTraffic ? C_ON : C_OFF} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, !showRestrictions && styles.optionBtnOff]}
               onPress={() => setShowRestrictions(v => !v)}
             >
-              <Text style={styles.mapBtnText}>🚧</Text>
+              <Icon name="truck-alert" size={ICON_SIZE} color={showRestrictions ? C_ON : C_OFF} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, !showStarredLayer && styles.optionBtnOff]}
               onPress={() => setShowStarredLayer(v => !v)}
             >
-              <Text style={styles.mapBtnText}>⭐</Text>
+              <Icon name="star" size={ICON_SIZE} color={showStarredLayer ? '#FFD700' : C_OFF} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.optionsDivider} />
 
+          {/* ── Ред 2: Слоеве ── */}
           <View style={styles.optionsRow}>
             <TouchableOpacity
               style={styles.optionBtn}
@@ -158,28 +171,27 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 });
               }}
             >
-              <Text style={styles.mapBtnText}>
-                {mapMode === 'vector' ? '🌍' : mapMode === 'hybrid' ? '🌐' : '🛰️'}
-              </Text>
+              <Icon name={mapModeIcon} size={ICON_SIZE} color={C_ACT} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, !showIncidents && styles.optionBtnOff]}
               onPress={() => setShowIncidents(v => !v)}
             >
-              <Text style={styles.mapBtnText}>⚠️</Text>
+              <Icon name="alert-octagon" size={ICON_SIZE} color={showIncidents ? '#FFBC40' : C_OFF} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, !showContours && styles.optionBtnOff]}
               onPress={() => setShowContours(v => !v)}
             >
-              <Text style={styles.mapBtnText}>🗻</Text>
+              <Icon name="terrain" size={ICON_SIZE} color={showContours ? C_ON : C_OFF} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.optionsDivider} />
 
+          {/* ── Ред 3: Система ── */}
           <View style={styles.optionsRow}>
             <TouchableOpacity
               style={styles.optionBtn}
@@ -196,26 +208,40 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 setShowBorderPanel(true);
               }}
             >
-              <Text style={styles.mapBtnText}>🛂</Text>
+              <Icon name="passport" size={ICON_SIZE} color={C_ON} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
               onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
             >
-              <Text style={styles.mapBtnText}>{voiceMuted ? '🔇' : '🔊'}</Text>
+              <Icon name={voiceMuted ? 'volume-off' : 'volume-high'} size={ICON_SIZE} color={voiceMuted ? C_OFF : C_ON} />
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.optionBtn}
               onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); }}
             >
-              <Text style={styles.mapBtnText}>{lightMode ? '🌙' : '☀️'}</Text>
+              <Icon name={lightMode ? 'weather-night' : 'weather-sunny'} size={ICON_SIZE} color={lightMode ? '#A78BFA' : '#FCD34D'} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.optionsDivider} />
 
+          {/* ── Avoid unpaved ── */}
+          <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
+            <TouchableOpacity
+              style={[styles.optionBtn, !avoidUnpaved && styles.optionBtnOff, avoidUnpaved && styles.optionBtnActive]}
+              onPress={() => setAvoidUnpaved(v => !v)}
+            >
+              <Icon name="road-variant" size={ICON_SIZE} color={avoidUnpaved ? C_ACT : C_OFF} />
+            </TouchableOpacity>
+            <Text style={styles.devRowLabel}>АСФАЛТ</Text>
+          </View>
+
+          <View style={styles.optionsDivider} />
+
+          {/* ── Search along route (само при навигация) ── */}
           {navigating && (
             <>
               <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
@@ -224,7 +250,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   onPress={() => { setOptionsOpen(false); handleSearchAlongRoute(); }}
                   disabled={isSearchingAlongRoute}
                 >
-                  <Text style={styles.mapBtnText}>{isSearchingAlongRoute ? '⌛' : '🛰️'}</Text>
+                  <Icon name={isSearchingAlongRoute ? 'timer-sand' : 'map-search'} size={ICON_SIZE} color={C_ON} />
                 </TouchableOpacity>
                 <Text style={styles.devRowLabel}>ПО ПЪТЯ</Text>
               </View>
@@ -232,18 +258,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </>
           )}
 
-          <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
-            <TouchableOpacity
-              style={[styles.optionBtn, !avoidUnpaved && styles.optionBtnOff, avoidUnpaved && styles.optionBtnActive]}
-              onPress={() => setAvoidUnpaved(v => !v)}
-            >
-              <Text style={styles.mapBtnText}>{'🛤️'}</Text>
-            </TouchableOpacity>
-            <Text style={styles.devRowLabel}>АСФАЛТ</Text>
-          </View>
-
-          <View style={styles.optionsDivider} />
-
+          {/* ── POI nearby (само без маршрут) ── */}
           {!navigating && !route && (
             <>
               <View style={styles.optionsRow}>
@@ -261,6 +276,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </>
           )}
 
+          {/* ── SAR (само с маршрут) ── */}
           {route && (
             <>
               <View style={styles.optionsRow}>
@@ -279,6 +295,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             </>
           )}
 
+          {/* ── Google акаунт ── */}
           <TouchableOpacity
             style={styles.geminiConnectBtn}
             onPress={() => { setShowAccountModal(true); setOptionsOpen(false); }}
@@ -290,19 +307,18 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             {googleUser && <View style={styles.geminiDot} />}
           </TouchableOpacity>
 
+          {/* ── История ── */}
           <TouchableOpacity
             style={styles.geminiConnectBtn}
-            onPress={() => {
-              setOptionsOpen(false);
-              navigation.navigate('POIList');
-            }}
+            onPress={() => { setOptionsOpen(false); navigation.navigate('POIList'); }}
           >
-            <Text style={styles.geminiConnectEmoji}>📜</Text>
+            <Icon name="history" size={18} color={C_ACT} style={{ marginRight: 8 }} />
             <Text style={styles.geminiConnectLabel}>
               ИСТОРИЯ {starredPOIs.length > 0 ? `(${starredPOIs.length})` : ''}
             </Text>
           </TouchableOpacity>
 
+          {/* ── Сподели позиция ── */}
           {userCoords && (
             <TouchableOpacity
               style={styles.geminiConnectBtn}
@@ -313,11 +329,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 });
               }}
             >
-              <Text style={styles.geminiConnectEmoji}>📌</Text>
+              <Icon name="map-marker-radius" size={18} color={C_ACT} style={{ marginRight: 8 }} />
               <Text style={styles.geminiConnectLabel}>СПОДЕЛИ ПОЗИЦИЯ</Text>
             </TouchableOpacity>
           )}
 
+          {/* ── DEV: симулация ── */}
           {route && (
             <>
               <View style={styles.optionsDivider} />
@@ -326,20 +343,21 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   style={[styles.optionBtn, simulating && styles.simBtnActive]}
                   onPress={() => { simulating ? stopSim() : startSim(); setOptionsOpen(false); }}
                 >
-                  <Text style={styles.mapBtnText}>{simulating ? '⏹' : '▶'}</Text>
+                  <Icon name={simulating ? 'stop' : 'play'} size={ICON_SIZE} color={simulating ? C_RED : '#4CAF50'} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                   style={[styles.optionBtn, debugMode && styles.simBtnDebug]}
                   onPress={() => setDebugMode(v => !v)}
                 >
-                  <Text style={styles.mapBtnText}>🐛</Text>
+                  <Icon name="bug" size={ICON_SIZE} color={debugMode ? '#FF9100' : C_OFF} />
                 </TouchableOpacity>
                 <Text style={styles.devRowLabel}>DEV</Text>
               </View>
             </>
           )}
 
+          {/* ── Докладвай камера ── */}
           <View style={styles.optionsDivider} />
           <TouchableOpacity
             style={{
@@ -347,15 +365,19 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               borderRadius: 14,
               backgroundColor: '#D0021B',
               paddingVertical: 12,
+              flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 8,
             }}
             onPress={() => { onReportCamera(); setOptionsOpen(false); }}
           >
+            <Icon name="speed-camera" size={18} color="#FFFFFF" />
             <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '900' }}>
-              {'📷 ДОКЛАДВАЙ КАМЕРА'}
+              ДОКЛАДВАЙ КАМЕРА
             </Text>
           </TouchableOpacity>
+
         </View>
       )}
     </View>
