@@ -149,17 +149,18 @@ const MapScreen: React.FC = () => {
   const setMapIsLoaded = setMapLoaded; // alias used throughout JSX
 
   const {
-    navigating, setNavigating,
+    navPhase, setNavPhase,
+    navigating,
+    loadingRoute,
+    rerouting,
     route, setRoute,
     destination, setDestination,
     destinationName, setDestinationName,
-    loadingRoute, setLoadingRoute,
     departLabel, setDepartLabel,
     currentStep, setCurrentStep,
     distToTurn, setDistToTurn,
     speedLimit, setSpeedLimit,
     remainingSeconds, setRemainingSeconds,
-    rerouting, setRerouting,
     simulating, setSimulating,
     routeOptions, setRouteOptions,
     routeOptDest, setRouteOptDest,
@@ -225,11 +226,10 @@ const MapScreen: React.FC = () => {
     setRoute,
     setDestination,
     setDestinationName,
-    setNavigating,
+    setNavPhase,
     setCurrentStep,
     setSpeedLimit,
     setDistToTurn,
-    setLoadingRoute,
     setNavCongestionGeoJSON: (geojson) => setNavCongestionGeoJSONRef.current(geojson),
     setWaypoints,
     setWaypointNames,
@@ -262,7 +262,7 @@ const MapScreen: React.FC = () => {
     setSpeedLimit,
     setCurrentStep,
     setDistToTurn,
-    setRerouting,
+    setNavPhase,
     setRoute,
     setNavCongestionGeoJSON,
     navigating,
@@ -481,7 +481,7 @@ const MapScreen: React.FC = () => {
     // Set navigating LAST — StableCamera's followUserLocation will activate and
     // smoothly move the camera to the user. Do NOT call flyTo() here: it conflicts
     // with followUserLocation and crashes the native Camera animation node.
-    setNavigating(true);
+    setNavPhase('NAVIGATING');
     if (!voiceMutedRef.current) {
       Tts.stop();
       ttsSpeak('Навигацията е стартирана');
@@ -493,16 +493,15 @@ const MapScreen: React.FC = () => {
   // Keeps the route so the user can press "Тръгваме!" again without re-searching.
   const handleStopNav = useCallback(() => {
     Tts.stop();
-    setNavigating(false);
+    setNavPhase('ROUTE_PREVIEW');
     setNavCongestionGeoJSON(null);
     setNavTrafficAlerts(null);
     setMapPitch(0);
     setCurrentStep(0);
     setDistToTurn(null);
-    setRerouting(false);
     lastRerouteRef.current = 0;
     saveSession(); // persist to backend if session ≥ 60 s
-  }, [saveSession]);
+  }, [saveSession, setNavPhase]);
 
   // ── Clear route & stop navigation entirely (✕ close button) ───────────────
   const handleClear = useCallback(() => {
@@ -511,12 +510,11 @@ const MapScreen: React.FC = () => {
     setDestination(null);
     setDestinationName('');
     setRoute(null);
-    setNavigating(false);
+    setNavPhase('IDLE');
     setMapPitch(0);
     setCurrentStep(0);
     setSpeedLimit(null);
     setDistToTurn(null);
-    setRerouting(false);
     clearPOI();
     setParkingResults([]);
     setFuelResults([]);

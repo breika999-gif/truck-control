@@ -10,6 +10,7 @@ import {
   optimizeWaypointOrder,
   type RouteResult,
 } from '../api/directions';
+import type { NavPhase } from './useNavigationState';
 
 type Coords = [number, number];
 
@@ -30,11 +31,10 @@ type UseRouteOrchestratorArgs = {
   setRoute: (route: RouteResult | null) => void;
   setDestination: (dest: Coords | null) => void;
   setDestinationName: (name: string) => void;
-  setNavigating: (navigating: boolean) => void;
+  setNavPhase: (phase: NavPhase) => void;
   setCurrentStep: (step: number) => void;
   setSpeedLimit: (limit: number | null) => void;
   setDistToTurn: (dist: number | null) => void;
-  setLoadingRoute: (loading: boolean) => void;
   setNavCongestionGeoJSON: (geojson: GeoJSON.FeatureCollection | null) => void;
   setWaypoints: (waypoints: Coords[]) => void;
   setWaypointNames: (names: string[]) => void;
@@ -57,11 +57,10 @@ export function useRouteOrchestrator({
   setRoute,
   setDestination,
   setDestinationName,
-  setNavigating,
+  setNavPhase,
   setCurrentStep,
   setSpeedLimit,
   setDistToTurn,
-  setLoadingRoute,
   setNavCongestionGeoJSON,
   setWaypoints,
   setWaypointNames,
@@ -87,7 +86,7 @@ export function useRouteOrchestrator({
   // Profile change WHILE navigating → debounced re-route (800 ms).
   // CRITICAL: deps = [profile] only — navigating must NOT be a dep.
   // If navigating were in deps, pressing "Тръгваме" would trigger this effect,
-  // fire navigateTo() after 800 ms, and call setNavigating(false) — resetting nav.
+  // fire navigateTo() after 800 ms, which would set navPhase to REROUTING — correct behaviour.
   useEffect(() => {
     if (!navigatingRef.current || !destinationRef.current) return;
     if (profileRerouteTimer.current) clearTimeout(profileRerouteTimer.current);
@@ -106,22 +105,19 @@ export function useRouteOrchestrator({
   const navigateTo = useCallback(async (dest: Coords, name: string, waypointsArg?: Coords[], autoStart = false) => {
     setDestination(dest);
     setDestinationName(name);
-    // If not auto-starting and not already navigating, ensure we are in preview mode.
-    // If we ARE already navigating, keep it true so the UI doesn't flicker/reset.
-    if (!autoStart && !navigatingRef.current) {
-      setNavigating(false);
-    }
     setRoute(null);
     setCurrentStep(0);
     setSpeedLimit(null);
     setDistToTurn(null);
+
+    // NAVIGATING → REROUTING; otherwise → SEARCHING
+    setNavPhase(navigatingRef.current ? 'REROUTING' : 'SEARCHING');
 
     // Origin priority: custom (manually set) > GPS > fallback centre
     const origin: Coords =
       customOriginRef.current ??
       userCoordsRef.current ??
       [MAP_CENTER.longitude, MAP_CENTER.latitude];
-    setLoadingRoute(true);
     try {
       const prof = profileRef.current;
       const truck = prof
@@ -173,7 +169,10 @@ export function useRouteOrchestrator({
     } catch (err) {
       if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
     } finally {
-      if (isMountedRef.current) setLoadingRoute(false);
+      // REROUTING → NAVIGATING; SEARCHING → ROUTE_PREVIEW
+      if (isMountedRef.current) {
+        setNavPhase(navigatingRef.current ? 'NAVIGATING' : 'ROUTE_PREVIEW');
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // stable — reads everything via refs; handleStart accessed via handleStartRef

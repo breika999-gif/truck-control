@@ -3,6 +3,13 @@ import type { RouteResult } from '../api/directions';
 import type { RouteOption } from '../../../shared/services/backendApi';
 import type { DepartLabel } from '../utils/mapUtils';
 
+export type NavPhase =
+  | 'IDLE'           // no destination set
+  | 'SEARCHING'      // fetching route, not yet navigating
+  | 'ROUTE_PREVIEW'  // route ready, user hasn't started yet
+  | 'NAVIGATING'     // active turn-by-turn navigation
+  | 'REROUTING';     // navigating + fetching a new route after deviation
+
 export interface RouteOptDest {
   name: string;
   coords: [number, number];
@@ -10,17 +17,15 @@ export interface RouteOptDest {
 }
 
 export const useNavigationState = () => {
-  const [navigating, setNavigating]           = useState(false);
+  const [navPhase, setNavPhase]               = useState<NavPhase>('IDLE');
   const [route, setRoute]                     = useState<RouteResult | null>(null);
   const [destination, setDestination]         = useState<[number, number] | null>(null);
   const [destinationName, setDestinationName] = useState('');
-  const [loadingRoute, setLoadingRoute]       = useState(false);
   const [departLabel, setDepartLabel]         = useState<DepartLabel>('СЕГА');
   const [currentStep, setCurrentStep]         = useState(0);
   const [distToTurn, setDistToTurn]           = useState<number | null>(null);
   const [speedLimit, setSpeedLimit]           = useState<number | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
-  const [rerouting, setRerouting]             = useState(false);
   const [simulating, setSimulating]           = useState(false);
   const [routeOptions, setRouteOptions]       = useState<RouteOption[]>([]);
   const [routeOptDest, setRouteOptDest]       = useState<RouteOptDest | null>(null);
@@ -32,18 +37,24 @@ export const useNavigationState = () => {
   const [restrictionChecking, setRestrictionChecking] = useState(false);
   const [restrictionWarnings, setRestrictionWarnings] = useState<string[]>([]);
 
+  // Derived booleans — single source of truth is navPhase
+  const navigating   = navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
+  const loadingRoute = navPhase === 'SEARCHING'  || navPhase === 'REROUTING';
+  const rerouting    = navPhase === 'REROUTING';
+
   return {
-    navigating, setNavigating,
+    navPhase, setNavPhase,
+    navigating,
+    loadingRoute,
+    rerouting,
     route, setRoute,
     destination, setDestination,
     destinationName, setDestinationName,
-    loadingRoute, setLoadingRoute,
     departLabel, setDepartLabel,
     currentStep, setCurrentStep,
     distToTurn, setDistToTurn,
     speedLimit, setSpeedLimit,
     remainingSeconds, setRemainingSeconds,
-    rerouting, setRerouting,
     simulating, setSimulating,
     routeOptions, setRouteOptions,
     routeOptDest, setRouteOptDest,

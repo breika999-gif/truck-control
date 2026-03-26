@@ -18,6 +18,7 @@ import {
 import { haversineMeters } from '../utils/mapUtils';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type * as GeoJSON from 'geojson';
+import type { NavPhase } from './useNavigationState';
 
 interface UseLocationRuntimeProps {
   isMountedRef: MutableRefObject<boolean>;
@@ -37,7 +38,7 @@ interface UseLocationRuntimeProps {
   setSpeedLimit: (limit: number | null) => void;
   setCurrentStep: (step: number) => void;
   setDistToTurn: (dist: number | null) => void;
-  setRerouting: (rerouting: boolean) => void;
+  setNavPhase: (phase: NavPhase) => void;
   setRoute: (route: RouteResult | null) => void;
   setNavCongestionGeoJSON: (geojson: GeoJSON.FeatureCollection | null) => void;
   navigating: boolean;
@@ -60,7 +61,7 @@ export const useLocationRuntime = ({
   setSpeedLimit,
   setCurrentStep,
   setDistToTurn,
-  setRerouting,
+  setNavPhase,
   setRoute,
   setNavCongestionGeoJSON,
   navigating,
@@ -175,7 +176,7 @@ export const useLocationRuntime = ({
           if (!dest) return;
 
           lastRerouteRef.current = now;
-          setRerouting(true);
+          setNavPhase('REROUTING');
           const prof = profileRef.current;
           const truck = prof
             ? { max_height: prof.height_m, max_width: prof.width_m,
@@ -192,7 +193,7 @@ export const useLocationRuntime = ({
               }
             })
             .catch(() => {})
-            .finally(() => { if (isMountedRef.current) setRerouting(false); });
+            .finally(() => { if (isMountedRef.current) setNavPhase('NAVIGATING'); });
         },
         () => {},
         {
