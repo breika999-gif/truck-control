@@ -185,15 +185,62 @@ export function useChat({
       return;
     }
 
-    const replyText = (response.reply ?? '').trim();
-    if (replyText) {
-      setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
-      speak(replyText);
+    const act = response.action;
+
+    // If backend forwarded nav intent to GPT-4o and returned a map action — execute it
+    if (act && act.action !== 'message') {
+      const displayText = (act as any).message || response.reply || '';
+      if (displayText) {
+        setGeminiHistory([...newHistory, { role: 'model', text: displayText }]);
+        speak(displayText);
+      }
+      if (act.action === 'route') {
+        navigateTo(act.coords, act.destination, act.waypoints, true);
+      } else if (act.action === 'add_waypoint') {
+        addWaypoint(act.coords, act.name);
+      } else if (act.action === 'show_pois') {
+        if (act.category === 'truck_stop') {
+          setParkingResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 5));
+          setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
+        } else if (act.category === 'fuel') {
+          setFuelResults(act.cards.slice(0, 4));
+          setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
+        } else if (act.category === 'speed_camera') {
+          setCameraResults(act.cards);
+          setParkingResults([]); setFuelResults([]); setBusinessResults([]);
+        } else if (act.category === 'business') {
+          setBusinessResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 6));
+          setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
+        }
+      } else if (act.action === 'show_routes') {
+        setRouteOptions(act.options);
+        setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
+        setRoute(null);
+        setDestination(null);
+      } else if (act.action === 'tachograph') {
+        setTachographResult({
+          drivenHours:    act.driven_hours,
+          remainingHours: act.remaining_hours,
+          breakNeeded:    act.break_needed ?? false,
+          suggestedStop:  act.suggested_stop,
+        });
+      }
+    } else {
+      // Normal Gemini reply (no nav action)
+      const replyText = (act?.action === 'message' ? act.text : response.reply ?? '').trim();
+      if (replyText) {
+        setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
+        speak(replyText);
+      }
     }
+
     if (response.app_intent) { handleAppIntent(response.app_intent); }
 
     setGeminiLoading(false);
-  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, googleUser, handleAppIntent]);
+  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, googleUser,
+      navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults,
+      setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination,
+      setTachographResult, handleAppIntent]);
 
   return {
     gptLoading,

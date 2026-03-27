@@ -21,11 +21,7 @@ import time
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 HERE   = os.path.dirname(os.path.abspath(__file__))
-# Use main.py (FastAPI/uvicorn) when available, else fall back to app.py (Flask)
-_fastapi_script = os.path.join(HERE, "main.py")
-_flask_script   = os.path.join(HERE, "app.py")
-USE_FASTAPI     = os.getenv("USE_FASTAPI", "0") == "1"
-SCRIPT          = _fastapi_script if USE_FASTAPI else _flask_script
+SCRIPT = os.path.join(HERE, "app.py")
 
 # Common adb locations on Windows
 _ADB_CANDIDATES = [

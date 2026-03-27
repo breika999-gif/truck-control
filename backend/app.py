@@ -57,6 +57,15 @@ def _strip_md_fence(s: str) -> str:
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 _gpt4o_ready = bool(os.getenv("OPENAI_API_KEY"))
 
+# ── Anthropic setup ────────────────────────────────────────────────────────────
+try:
+    import anthropic as _anthropic_lib
+    _anthropic_client = _anthropic_lib.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    _anthropic_ready = bool(os.getenv("ANTHROPIC_API_KEY"))
+except ImportError:
+    _anthropic_client = None
+    _anthropic_ready = False
+
 _GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY")
 _places_ready = bool(_GOOGLE_PLACES_KEY)
 
@@ -3019,6 +3028,131 @@ def whisper_transcribe():
         return jsonify({"ok": bool(text), "text": text})
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Whisper error: {str(exc)[:120]}"}), 500
+
+
+# ── Multi-agent orchestration pipeline ────────────────────────────────────────
+
+_ORCHESTRATOR_SYSTEM = (
+    "Ти си оркестратор в multi-agent pipeline за камионни шофьори.\n"
+    "Получаваш заявка от шофьор и я разбиваш на максимум 3 подзадачи.\n"
+    "Всяка подзадача ще бъде изпълнена от Gemini AI работник.\n\n"
+    "Отговаряй САМО с валиден JSON масив, без обяснения:\n"
+    "[\n"
+    "  {\"task\": \"<конкретна подзадача>\", \"context\": \"<допълнителен контекст>\"},\n"
+    "  ...\n"
+    "]\n\n"
+    "Примери за декомпозиция:\n"
+    "- 'Безопасно ли е да карам до Германия утре?' →\n"
+    "  [{\"task\": \"Провери времеви ограничения за камиони в Германия\", \"context\": \"неделя/почивен ден\"},\n"
+    "   {\"task\": \"Провери метеорологични условия по маршрута\", \"context\": \"зима/лошо време\"},\n"
+    "   {\"task\": \"Провери HOS лимити за дълго пътуване\", \"context\": \"EU 561/2006\"}]\n"
+    "- 'Имам ли нужда от ADR за гориво?' →\n"
+    "  [{\"task\": \"Обясни ADR изисквания за горива\", \"context\": \"клас 3 запалими течности\"}]\n"
+)
+
+_SYNTHESIZER_SYSTEM = (
+    "Ти си финален синтезатор в multi-agent pipeline за камионни шофьори.\n"
+    "Получаваш резултати от няколко Gemini AI работника и ги комбинираш.\n"
+    "Говори САМО на БЪЛГАРСКИ. Бъди КРАТЪК и ПРАКТИЧЕН (3-5 изречения).\n"
+    "Адресирай шофьора като 'Колега'. Фокусирай се върху практичните изводи.\n"
+)
+
+_GEMINI_WORKER_SYSTEM = (
+    "Ти си специализиран AI работник в multi-agent pipeline за камионни шофьори.\n"
+    "Отговаряй САМО на БЪЛГАРСКИ. Бъди точен и конкретен (2-4 изречения).\n"
+    "Фокусирай се САМО върху зададената подзадача — не разширявай отговора.\n"
+)
+
+
+def _run_gemini_worker(task: str, context: str) -> str:
+    """Executes a single Gemini worker task. Returns text result."""
+    prompt = f"Задача: {task}\nКонтекст: {context}"
+    try:
+        resp = _gemini_client.models.generate_content(
+            model=_GEMINI_MODEL,
+            contents=prompt,
+            config=_google_genai.types.GenerateContentConfig(
+                system_instruction=_GEMINI_WORKER_SYSTEM,
+                max_output_tokens=300,
+            ),
+        )
+        return resp.text or "(без отговор)"
+    except Exception as exc:
+        return f"(грешка: {str(exc)[:250]})"
+
+
+@app.route("/api/orchestrate", methods=["POST"])
+def orchestrate():
+    """Multi-agent pipeline: Claude orchestrates → Gemini workers → Claude synthesizes."""
+    if not _anthropic_ready:
+        return jsonify({"ok": False, "error": "Anthropic API не е конфигуриран."}), 503
+    if not _gemini_ready:
+        return jsonify({"ok": False, "error": "Gemini API не е конфигуриран."}), 503
+
+    ip = request.remote_addr or "unknown"
+    if _is_rate_limited(ip, limit=10, window_s=60):
+        return jsonify({"ok": False, "error": "Прекалено много заявки. Изчакай малко."}), 429
+
+    data = request.get_json(silent=True) or {}
+    user_message = (data.get("message") or "").strip()
+    if not user_message:
+        return jsonify({"ok": False, "error": "Липсва съобщение."}), 400
+
+    # Step 1 — Claude orchestrator: decompose into subtasks
+    try:
+        orch_resp = _anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=_ORCHESTRATOR_SYSTEM,
+            messages=[{"role": "user", "content": user_message}],
+        )
+        raw_tasks = orch_resp.content[0].text.strip()
+        raw_tasks = _strip_md_fence(raw_tasks)
+        tasks: list[dict] = json.loads(raw_tasks)
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("Невалиден task list")
+        tasks = tasks[:3]  # max 3 subtasks
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Orchestrator грешка: {str(exc)[:120]}"}), 500
+
+    # Step 2 — Gemini workers: execute tasks in parallel
+    worker_results: list[str] = [""] * len(tasks)
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {
+            pool.submit(_run_gemini_worker, t.get("task", ""), t.get("context", "")): i
+            for i, t in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            worker_results[idx] = future.result()
+
+    # Step 3 — Claude synthesizer: combine results into final answer
+    synthesis_prompt = (
+        f"Оригинална заявка: {user_message}\n\n"
+        + "\n\n".join(
+            f"Подзадача {i+1} ({tasks[i].get('task', '')}):\n{result}"
+            for i, result in enumerate(worker_results)
+        )
+    )
+    try:
+        synth_resp = _anthropic_client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=512,
+            system=_SYNTHESIZER_SYSTEM,
+            messages=[{"role": "user", "content": synthesis_prompt}],
+        )
+        final_answer = synth_resp.content[0].text.strip()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Synthesizer грешка: {str(exc)[:120]}"}), 500
+
+    return jsonify({
+        "ok": True,
+        "answer": final_answer,
+        "tasks": [
+            {"task": t.get("task", ""), "result": worker_results[i]}
+            for i, t in enumerate(tasks)
+        ],
+    })
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
