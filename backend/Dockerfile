@@ -5,6 +5,7 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# v2 — force cache bust
 COPY backend/ .
 
 ENV PORT=8080
