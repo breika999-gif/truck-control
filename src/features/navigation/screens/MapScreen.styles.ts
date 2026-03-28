@@ -1828,7 +1828,34 @@ export const styles = StyleSheet.create({
   },
   pkBadgePaid: { backgroundColor: 'rgba(239,68,68,0.22)', borderColor: 'rgba(239,68,68,0.5)' },
   pkBadgeFree: { backgroundColor: 'rgba(34,197,94,0.22)', borderColor: 'rgba(34,197,94,0.5)' },
-  pkBadgeTxt: { color: '#e8f4ff', fontSize: 10, fontWeight: '700' },
+  pkBadgeTxt: { color: '#fff', fontSize: 10, fontWeight: '700' },
+
+  // ── Interactive fuel bubble (floating over map) ───────────────────────────
+  fuelBubble: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 14,
+    borderWidth: 2.5,
+    borderColor: '#f59e0b',              // Кехлибарена рамка за гориво
+    padding: 13,
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.80,
+    shadowRadius: 12,
+    elevation: 22,
+  },
+  fuelBadge: {
+    backgroundColor: 'rgba(245,158,11,0.15)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(245,158,11,0.4)',
+  },
+  fuelBadgeTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
+
   parkingBubbleBtns: {
     flexDirection: 'row',
     gap: 8,

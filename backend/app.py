@@ -2769,6 +2769,13 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
         sampled = coords[::step]
     
     try:
+        # Pre-calculate cumulative distances for sampled route points
+        route_dists = [0.0] * len(sampled)
+        curr_total = 0.0
+        for i in range(1, len(sampled)):
+            curr_total += _haversine_m(sampled[i-1][1], sampled[i-1][0], sampled[i][1], sampled[i][0])
+            route_dists[i] = curr_total
+
         url = f"https://api.tomtom.com/search/2/alongRouteSearch/{requests.utils.quote(query)}.json"
         params = {
             "key":           _TOMTOM_KEY,
@@ -2785,25 +2792,40 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
         }
         r = requests.post(url, params=params, json=body, timeout=12)
         r.raise_for_status()
-        
+
         results = []
         for item in r.json().get("results", []):
             pos = item.get("position", {})
             lat, lng = pos.get("lat"), pos.get("lon")
             if lat is None: continue
-            
+
+            # Find nearest point in sampled route to estimate distance_m
+            best_dist_to_route = float('inf')
+            poi_distance_m = 0
+            for i, rp in enumerate(sampled):
+                d = _haversine_m(lat, lng, rp[1], rp[0])
+                if d < best_dist_to_route:
+                    best_dist_to_route = d
+                    poi_distance_m = int(route_dists[i])
+
             poi_data = item.get("poi") or {}
             name = poi_data.get("name") or item.get("address", {}).get("freeformAddress", "Обект")
             brand = (poi_data.get("brands") or [{}])[0].get("name")
-            
+
+            # Check for truck specific lanes (fuel)
+            truck_lane = False
+            for cat in poi_data.get("categories", []):
+                if "truck" in cat.lower(): truck_lane = True
+
             results.append({
                 "name":       name,
                 "lat":        lat,
                 "lng":        lng,
-                "distance_m": 0, # TomTom doesn't give distance from start here, only detour time
+                "distance_m": poi_distance_m,
                 "brand":      brand,
+                "truck_lane": truck_lane,
                 "info":       item.get("address", {}).get("freeformAddress"),
-                "voice_desc": f"Намерих {name} по маршрута.",
+                "voice_desc": f"Намерих {name} на {(poi_distance_m/1000):.1f} километра по маршрута.",
             })
         return results
     except Exception:

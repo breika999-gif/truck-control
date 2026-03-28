@@ -26,9 +26,7 @@ interface MapLayersProps {
   userCoords: [number, number] | null;
   destination: [number, number] | null;
   parkingResults: POICard[];
-  parkingGeoJSON: GeoJSON.FeatureCollection;
   fuelResults: POICard[];
-  fuelGeoJSON: GeoJSON.FeatureCollection;
   businessResults: any[];
   businessGeoJSON: GeoJSON.FeatureCollection;
   cameraResults: any[];
@@ -40,6 +38,7 @@ interface MapLayersProps {
   selectedRouteIdx: number | null;
   navigateTo: (coords: [number, number], name: string) => void;
   setSelectedParking: (p: POICard) => void;
+  setSelectedFuel: (f: POICard) => void;
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
@@ -69,9 +68,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   userCoords,
   destination,
   parkingResults,
-  parkingGeoJSON,
   fuelResults,
-  fuelGeoJSON,
   businessResults,
   businessGeoJSON,
   cameraResults,
@@ -83,6 +80,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   selectedRouteIdx,
   navigateTo,
   setSelectedParking,
+  setSelectedFuel,
   handleSelectRouteOption,
   ttsSpeak,
   voiceMutedRef,
@@ -97,6 +95,26 @@ const MapLayers: React.FC<MapLayersProps> = ({
       properties: { value: rp.value, type: rp.type },
     })),
   }), [restrictionPoints]);
+
+  const fuelGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: fuelResults.filter(f => f.lat && f.lng).map((f, i) => ({
+      type: 'Feature',
+      id: i,
+      geometry: { type: 'Point', coordinates: [f.lng, f.lat] },
+      properties: { index: i, name: f.name, distance_m: f.distance_m },
+    })),
+  }), [fuelResults]);
+
+  const parkingGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: parkingResults.filter(p => p.lat && p.lng).map((p, i) => ({
+      type: 'Feature',
+      id: i,
+      geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+      properties: { index: i, name: p.name, distance_m: p.distance_m },
+    })),
+  }), [parkingResults]);
 
   return (
     <>
@@ -370,7 +388,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {mapIsLoaded && parkingResults.length > 0 && (
         <Mapbox.ShapeSource
           id="parking-source"
-          shape={parkingGeoJSON}
+          shape={parkingGeoJSON_withIdx}
           onPress={(e) => {
             const feat = e.features[0];
             if (!feat) return;
@@ -385,13 +403,18 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="parking-symbols" slot="top" minZoomLevel={7}
             style={{
-              textField: 'P',
+              textField: ['concat', 'P', '\n', ['case',
+                ['>', ['get', 'distance_m'], 0],
+                ['concat', ['to-string', ['round', ['/', ['get', 'distance_m'], 1000]]], ' km'],
+                ''
+              ]],
               textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 10, 12, 14, 18],
-              textColor: 'rgba(0,0,0,0)',
+              textColor: '#ffffff',
               textHaloColor: '#00f7ff',
               textHaloWidth: 1.8,
               textHaloBlur: 0.5,
-              textAllowOverlap: true
+              textAllowOverlap: true,
+              textAnchor: 'center',
             }}
           />
         </Mapbox.ShapeSource>
@@ -399,15 +422,36 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       {/* Fuel station pins */}
       {mapIsLoaded && fuelResults.length > 0 && (
-        <Mapbox.ShapeSource id="fuel-source" shape={fuelGeoJSON}>
+        <Mapbox.ShapeSource
+          id="fuel-source"
+          shape={fuelGeoJSON_withIdx}
+          onPress={(e) => {
+            const feat = e.features[0];
+            if (!feat) return;
+            const idx = feat.properties?.index;
+            const f = fuelResults[idx];
+            if (f) {
+              setSelectedFuel(f);
+              if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
+            }
+          }}
+        >
           <Mapbox.SymbolLayer
             id="fuel-symbols" slot="top"
             style={{
-              textField: '⛽',
-              textSize: 22,
-              textHaloColor: '#2ecc71',
-              textHaloWidth: 1.5,
-              textAllowOverlap: true
+              textField: ['concat', '⛽', '\n', ['case',
+                ['>', ['get', 'distance_m'], 0],
+                ['concat', ['to-string', ['round', ['/', ['get', 'distance_m'], 1000]]], ' km'],
+                ''
+              ]],
+              textSize: 13,
+              textAnchor: 'top',
+              textOffset: [0, 0.5],
+              textHaloColor: '#1a1a2e',
+              textHaloWidth: 2,
+              textColor: '#ffffff',
+              textAllowOverlap: false,
+              iconAllowOverlap: true,
             }}
           />
         </Mapbox.ShapeSource>

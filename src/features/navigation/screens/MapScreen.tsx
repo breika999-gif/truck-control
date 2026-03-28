@@ -44,6 +44,7 @@ import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';
 import RouteOptionsPanel from '../components/RouteOptionsPanel';
 import RestrictionSign from '../components/RestrictionSign';
+import FuelPanel from '../components/FuelPanel';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
 import RouteTimeline from '../components/RouteTimeline';
@@ -333,6 +334,7 @@ const MapScreen: React.FC = () => {
 
   // Results from AI actions (parkingResults/fuelResults/cameraResults declared above useRouteOrchestrator)
   const [selectedParking, setSelectedParking] = useState<POICard | null>(null);
+  const [selectedFuel, setSelectedFuel]       = useState<POICard | null>(null);
   const [businessResults, setBusinessResults] = useState<POICard[]>([]);
   interface AITachoResult {
     drivenHours: number;
@@ -1085,9 +1087,7 @@ const MapScreen: React.FC = () => {
           userCoords={userCoords}
           destination={destination}
           parkingResults={parkingResults}
-          parkingGeoJSON={parkingGeoJSON}
           fuelResults={fuelResults}
-          fuelGeoJSON={fuelGeoJSON}
           businessResults={businessResults}
           businessGeoJSON={businessGeoJSON}
           cameraResults={cameraResults}
@@ -1099,6 +1099,7 @@ const MapScreen: React.FC = () => {
           selectedRouteIdx={selectedRouteIdx}
           navigateTo={navigateTo}
           setSelectedParking={setSelectedParking}
+          setSelectedFuel={setSelectedFuel}
           handleSelectRouteOption={handleSelectRouteOption}
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}
@@ -1106,6 +1107,20 @@ const MapScreen: React.FC = () => {
         />
 
       </Mapbox.MapView>
+
+      {/* ── Floating fuel station detail bubble ── */}
+      {selectedFuel && (
+        <FuelPanel
+          fuel={selectedFuel}
+          onClose={() => setSelectedFuel(null)}
+          topOffset={insets.top + 68}
+          onAddWaypoint={(coords, name) => {
+            setSelectedFuel(null);
+            setFuelResults([]);
+            addWaypoint(coords, name);
+          }}
+        />
+      )}
 
       {/* ── Floating parking detail bubble (appears when map pin is tapped) ── */}
       {selectedParking && (
