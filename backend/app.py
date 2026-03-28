@@ -74,7 +74,7 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = "gemini-2.0-flash-lite"
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
 
 try:
     from google import genai as _google_genai
@@ -2331,7 +2331,7 @@ def gemini_chat():
             contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
             api_key = os.getenv("GEMINI_API_KEY", "")
-            url = f"https://generativelanguage.googleapis.com/v1/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
             payload = {
                 "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM + _build_tacho_context_block()}]},
                 "contents": contents,
