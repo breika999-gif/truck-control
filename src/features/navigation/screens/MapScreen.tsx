@@ -1447,6 +1447,7 @@ const MapScreen: React.FC = () => {
         userCoords={userCoords}
         onReportCamera={handleReportCamera}
         onOpenPoiHistory={() => {/* POIHistoryModal not yet integrated */}}
+        backendOnline={backendOnline}
       />
 
       {/* ── GPS chip ── */}

@@ -210,7 +210,7 @@ export interface TachoSessionPayload {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const TIMEOUT_MS = 45_000; // Gemini 2.5-flash + optional GPT-4o nav forward can take 20-35s
+const TIMEOUT_MS = 45_000; // Gemini 2.0-flash + optional GPT-4o nav forward can take 20-35s
 
 async function apiRequest<T>(
   path: string,

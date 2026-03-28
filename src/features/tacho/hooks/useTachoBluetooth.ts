@@ -8,9 +8,23 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
 import { BACKEND_URL } from '../../../shared/constants/config';
+
+async function requestBlePermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  const granted = await PermissionsAndroid.requestMultiple([
+    PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+    PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+  ]);
+  return (
+    granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN]    === PermissionsAndroid.RESULTS.GRANTED &&
+    granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED
+  );
+}
 
 export interface TachoBleState {
   status: BleStatus;
@@ -58,8 +72,15 @@ export function useTachoBluetooth() {
   }, []);
 
   // ── Scan ──────────────────────────────────────────────────────────
-  const startScan = useCallback(() => {
+  const startScan = useCallback(async () => {
     if (!serviceRef.current) return;
+
+    const ok = await requestBlePermissions();
+    if (!ok) {
+      handleStatus('error', 'Нямам разрешение за Bluetooth. Провери настройките.');
+      return;
+    }
+
     setState(prev => ({ ...prev, foundDevices: [] }));
 
     serviceRef.current.scanForTacho(

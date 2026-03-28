@@ -64,6 +64,7 @@ interface OptionsPanelProps {
   userCoords: [number, number] | null;
   onReportCamera: () => void;
   onOpenPoiHistory: () => void;
+  backendOnline: boolean;
 }
 
 const ICON_SIZE = 26;
@@ -148,6 +149,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   userCoords,
   onReportCamera,
   onOpenPoiHistory,
+  backendOnline,
 }) => {
   const close = () => setOptionsOpen(false);
   const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : mapMode === 'hybrid' ? 'Хибридна карта' : 'Сателитна карта';
@@ -423,13 +425,25 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
 
               {/* АКАУНТ */}
               <Divider />
-              <SectionHeader title="АКАУНТ" />
+              <SectionHeader title="АКАУНТ & AI" />
               <Row
                 icon="google"
                 label={googleUser ? googleUser.email : 'Google акаунт'}
                 onPress={() => { setShowAccountModal(true); close(); }}
                 iconColor="#EA4335"
                 iconBg="rgba(234,67,53,0.12)"
+              />
+              <Row
+                icon="brain"
+                label="Gemini AI (2.0 Flash)"
+                onPress={() => {}}
+                iconColor={backendOnline ? '#4CAF50' : '#FF5252'}
+                iconBg={backendOnline ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)'}
+                rightEl={
+                  <Text style={{ color: backendOnline ? '#4CAF50' : '#FF5252', fontSize: 12, fontWeight: '800' }}>
+                    {backendOnline ? 'СВЪРЗАН ✅' : 'ОФЛАЙН ❌'}
+                  </Text>
+                }
               />
               {userCoords && (
                 <Row

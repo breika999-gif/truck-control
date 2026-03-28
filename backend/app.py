@@ -2760,7 +2760,7 @@ def gemini_validate():
     Sends a minimal ping to Gemini and returns ok/error.
 
     Body: {"api_key": "AIza..."}
-    Response: {"ok": true, "model": "gemini-1.5-flash"} | {"ok": false, "error": "..."}
+    Response: {"ok": true, "model": "gemini-2.0-flash"} | {"ok": false, "error": "..."}
     """
     body = request.get_json(silent=True) or {}
     api_key = (body.get("api_key") or "").strip()
