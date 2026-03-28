@@ -1874,7 +1874,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     messages.append({"role": "user", "content": user_msg})
 
     action = None
-    last_msg = None
+    accumulated_content = []
 
     try:
         for turn in range(4):
@@ -1883,12 +1883,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                 model=gpt_model,
                 messages=messages,
                 tools=_TOOLS,
-                parallel_tool_calls=False,  # one tool at a time → no skipped calls
+                parallel_tool_calls=False,
                 temperature=0.4,
             )
-            last_msg = resp.choices[0].message
+            curr_msg = resp.choices[0].message
+            if curr_msg.content:
+                accumulated_content.append(curr_msg.content)
 
-            if not last_msg.tool_calls:
+            if not curr_msg.tool_calls:
                 break
 
             # Parallel Tool Handling: execute ALL tool calls, but pick one MapAction to return to frontend.
@@ -1896,46 +1898,27 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             turn_action = None
             turn_results = []
 
-            for call in last_msg.tool_calls:
+            for call in curr_msg.tool_calls:
                 fn   = call.function.name
                 args = json.loads(call.function.arguments)
 
-                # GPS correction: GPT often copies driver GPS even for distant cities.
-                # If the user mentioned a location AND the model's coords are within 50 km
-                # of the driver's GPS, override with geocoded city coords.
-                user_msg   = context.get("last_message", "")
-                driver_lat = context.get("lat")
-                driver_lng = context.get("lng")
+                # GPS correction logic
+                user_msg_ctx = context.get("last_message", "")
+                driver_lat   = context.get("lat")
+                driver_lng   = context.get("lng")
 
                 if driver_lat is not None:
-                    location = _extract_location_from_message(user_msg)
+                    location = _extract_location_from_message(user_msg_ctx)
                     if location:
-                        # Check if GPT gave coords too close to driver GPS (copy-paste error)
                         gpt_lat = args.get("lat", driver_lat)
                         gpt_lng = args.get("lng", driver_lng)
                         dist_km = ((gpt_lat - driver_lat)**2 + (gpt_lng - driver_lng)**2) ** 0.5 * 111
-                        if dist_km < 50:  # GPT used driver coords — override with geocoded city
+                        if dist_km < 50:
                             geo = _tool_navigate_to(location)
                             if "coords" in geo:
                                 args["lng"], args["lat"] = geo["coords"]
-                            elif "lat" not in args:
-                                args["lat"] = driver_lat
-                                args["lng"] = driver_lng
-                        elif "lat" not in args:
-                            args["lat"] = driver_lat
-                            args["lng"] = driver_lng
-                    elif "lat" not in args:
-                        args["lat"] = driver_lat
-                        args["lng"] = driver_lng
-                if "dest_lat" not in args and context.get("lat") is not None:
-                    args["dest_lat"] = context["lat"]
-                    args["dest_lng"] = context["lng"]
-                if "driven_seconds" not in args:
-                    args["driven_seconds"] = context.get("driven_seconds", 0)
-                if "speed_kmh" not in args:
-                    args["speed_kmh"] = context.get("speed_kmh", 80)
-
-                # ── Dispatch to tool ──────────────────────────────────────────
+                
+                # Tool execution
                 res = {"error": "unknown tool"}
                 tool_act = None
 
@@ -1952,7 +1935,6 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                                 dest_lng, args.get("avoid"),
                             ),
                         }
-
                 elif fn == "suggest_routes":
                     if "origin_lat" not in args and context.get("lat"):
                         args["origin_lat"] = context["lat"]
@@ -1960,133 +1942,73 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                     truck_prof = args.get("truck_profile") or context.get("profile")
                     res = _tool_suggest_routes(
                         args["destination"],
-                        args.get("origin_lat", 42.70),
-                        args.get("origin_lng", 23.32),
-                        args.get("avoid"),
-                        truck_profile=truck_prof
+                        args.get("origin_lat", 42.70), args.get("origin_lng", 23.32),
+                        args.get("avoid"), truck_profile=truck_prof
                     )
                     if "options" in res:
                         dest_lng_r = res["dest_coords"][0]
-                        forced_wps = _get_avoidance_waypoints(
-                            args.get("origin_lat"), args.get("origin_lng"),
-                            dest_lng_r, args.get("avoid"),
-                        )
-                        tool_act = {
-                            "action":      "show_routes",
-                            "destination": res["destination"],
-                            "dest_coords": res["dest_coords"],
-                            "options":     res["options"],
-                            "waypoints":   forced_wps,
-                        }
-                        # Strip heavy fields for next AI turn if needed
-                        res = {
-                            "destination": res["destination"],
-                            "dest_coords": res["dest_coords"],
-                            "options": [
-                                {k: v for k, v in opt.items() if k not in ("congestion_geojson", "traffic_alerts", "geometry")}
-                                for opt in tool_act["options"]
-                            ],
-                        }
-
+                        forced_wps = _get_avoidance_waypoints(args.get("origin_lat"), args.get("origin_lng"), dest_lng_r, args.get("avoid"))
+                        tool_act = {"action": "show_routes", "destination": res["destination"], "dest_coords": res["dest_coords"], "options": res["options"], "waypoints": forced_wps}
+                        res = {"destination": res["destination"], "dest_coords": res["dest_coords"], "options": [{k: v for k, v in opt.items() if k not in ("congestion_geojson", "traffic_alerts", "geometry")} for opt in tool_act["options"]]}
                 elif fn == "find_truck_parking":
                     raw = _tool_find_truck_parking(args["lat"], args["lng"], args.get("radius_m", 5000))
                     res = raw
-                    cards = []
-                    for p in raw[:5]:
-                        cards.append({
-                            "name": p["name"], "lat": p["lat"], "lng": p["lng"], "distance_m": p["distance_m"],
-                            "paid": p.get("paid", False), "showers": p.get("showers", False),
-                            "toilets": p.get("toilets", False), "wifi": p.get("wifi", False),
-                            "security": p.get("security", False), "lighting": p.get("lighting", False),
-                            "capacity": p.get("capacity"), "website": p.get("website"),
-                            "opening_hours": p.get("opening_hours"), "phone": p.get("phone"),
-                            "voice_desc": _build_voice_desc(p),
-                        })
+                    cards = [{"name": p["name"], "lat": p["lat"], "lng": p["lng"], "distance_m": p["distance_m"], "paid": p.get("paid", False), "showers": p.get("showers", False), "toilets": p.get("toilets", False), "wifi": p.get("wifi", False), "security": p.get("security", False), "lighting": p.get("lighting", False), "capacity": p.get("capacity"), "website": p.get("website"), "opening_hours": p.get("opening_hours"), "phone": p.get("phone"), "voice_desc": _build_voice_desc(p)} for p in raw[:5]]
                     tool_act = {"action": "show_pois", "category": "truck_stop", "cards": cards}
-
                 elif fn == "find_speed_cameras":
                     res = _tool_find_speed_cameras(args["lat"], args["lng"], args.get("radius_m", 10000))
-                    cards = []
-                    for cam in res.get("cameras", [])[:8]:
-                        speed_label = f"{cam['maxspeed']} км/ч" if cam.get("maxspeed") else "неизвестна скорост"
-                        cards.append({
-                            "name": f"📷 Камера {speed_label}", "lat": cam["lat"], "lng": cam["lng"],
-                            "distance_m": cam["distance_m"], "maxspeed": cam.get("maxspeed"),
-                        })
+                    cards = [{"name": f"📷 Камера {f'{cam['maxspeed']} км/ч' if cam.get('maxspeed') else 'неизвестна скорост'}", "lat": cam["lat"], "lng": cam["lng"], "distance_m": cam["distance_m"], "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
                     tool_act = {"action": "show_pois", "category": "speed_camera", "cards": cards, "nearest_m": res.get("nearest_m", -1)}
-
                 elif fn == "calculate_hos_reach":
                     res = _tool_calculate_hos_reach(args["driven_seconds"], args["speed_kmh"])
-                    driven_h = args["driven_seconds"] / 3600
                     rem_h = res["remaining_h"] + res["remaining_min"] / 60
                     suggested_stop = None
                     if rem_h < 0.5 or res["break_needed"]:
                         p_lat, p_lng = context.get("lat"), context.get("lng")
                         if p_lat and p_lng:
                             parkings = _tool_find_truck_parking(p_lat, p_lng, 30_000)
-                            if parkings:
-                                p = parkings[0]
-                                suggested_stop = {"lat": p["lat"], "lng": p["lng"], "name": p["name"]}
-                    tool_act = {
-                        "action": "tachograph", "driven_hours": round(driven_h, 1),
-                        "remaining_hours": round(rem_h, 2), "break_needed": res["break_needed"],
-                        "suggested_stop": suggested_stop,
-                    }
-
+                            if parkings: suggested_stop = {"lat": parkings[0]["lat"], "lng": parkings[0]["lng"], "name": parkings[0]["name"]}
+                    tool_act = {"action": "tachograph", "driven_hours": round(args.get("driven_seconds", 0)/3600, 1), "remaining_hours": round(rem_h, 2), "break_needed": res["break_needed"], "suggested_stop": suggested_stop}
                 elif fn == "search_business":
                     res = _tool_search_business(args["query"], args.get("city", ""), args["lat"], args["lng"])
                     valid = [b for b in res[:6] if not b.get("error") and b.get("lat")]
-                    enriched_list = list(ThreadPoolExecutor(6).map(_enrich_business_with_places, valid)) if _places_ready and valid else valid
-                    cards = []
-                    for b in enriched_list:
-                        cards.append({
-                            "name": b.get("name", ""), "lat": b["lat"], "lng": b["lng"], "distance_m": b.get("distance_m", 0),
-                            "info": b.get("address", ""), "photo_url": b.get("photo_url"), "review_summary": b.get("review_summary"),
-                            "business_status": b.get("business_status"), "open_now": b.get("open_now"), "needs_confirm": b.get("needs_confirm", False),
-                        })
+                    enriched = list(ThreadPoolExecutor(6).map(_enrich_business_with_places, valid)) if _places_ready and valid else valid
+                    cards = [{"name": b.get("name", ""), "lat": b["lat"], "lng": b["lng"], "distance_m": b.get("distance_m", 0), "info": b.get("address", ""), "photo_url": b.get("photo_url"), "review_summary": b.get("review_summary"), "business_status": b.get("business_status"), "open_now": b.get("open_now"), "needs_confirm": b.get("needs_confirm", False)} for b in enriched]
                     tool_act = {"action": "show_pois", "category": "business", "cards": cards}
-
                 elif fn == "add_waypoint":
                     res = _tool_add_waypoint(args["query"], args["lat"], args["lng"])
-                    if "coords" in res:
-                        tool_act = {"action": "add_waypoint", "name": res["name"], "coords": res["coords"]}
-                    else:
-                        tool_act = {"action": "message", "text": res.get("error", "Не намерих спирката.")}
-
+                    if "coords" in res: tool_act = {"action": "add_waypoint", "name": res["name"], "coords": res["coords"]}
+                    else: tool_act = {"action": "message", "text": res.get("error", "Не намерих спирката.")}
                 elif fn == "find_fuel_stations":
                     raw = _tool_find_fuel(args["dest_lat"], args["dest_lng"], args.get("radius_m", 50000))
                     res = raw
                     cards = [{"name": s.get("name", "Бензиностанция"), "lat": s["lat"], "lng": s["lng"], "distance_m": s.get("distance_m", 0), "brand": s.get("brand"), "truck_lane": s.get("truck_lane", False), "opening_hours": s.get("opening_hours"), "phone": s.get("phone")} for s in raw[:4] if "lat" in s]
                     tool_act = {"action": "show_pois", "category": "fuel", "cards": cards}
-
                 elif fn == "launch_app":
                     tool_act = {"action": "app", "data": {"app": args["app_name"], "query": args.get("query", "")}}
                     res = {"status": "success", "app": args["app_name"]}
-
                 elif fn == "calculate_travel_matrix":
                     res = _tool_calculate_travel_matrix(args["points"], args.get("profile", "driving-traffic"))
-
                 elif fn == "check_traffic_route":
                     res = _tool_check_traffic(args["origin_lng"], args["origin_lat"], args["dest_lng"], args["dest_lat"])
 
-                # Prioritize navigation actions for the final 'action' returned to frontend
                 if tool_act:
                     if tool_act.get("action") in ("route", "add_waypoint"):
                         turn_action = tool_act
                     elif not turn_action:
                         turn_action = tool_act
 
-                turn_results.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": json.dumps(res, ensure_ascii=False)
-                })
+                turn_results.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(res, ensure_ascii=False)})
 
-            # Commit all results to message history
-            messages.append(last_msg)
+            messages.append(curr_msg)
             messages.extend(turn_results)
             if turn_action:
                 action = turn_action
+
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    reply = " ".join(accumulated_content).strip()
 
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
