@@ -74,7 +74,9 @@ _TOMTOM_KEY = os.getenv("TOMTOM_API_KEY")
 _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
-_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+if "2.5" in _GEMINI_MODEL:
+    _GEMINI_MODEL = "gemini-2.0-flash"  # Fallback for experimental/non-existent versions
 
 try:
     from google import genai as _google_genai
@@ -83,6 +85,15 @@ try:
 except ImportError:
     _gemini_client = None
     _gemini_ready = False
+
+
+def _get_body() -> dict:
+    """Helper to get JSON body from request safely."""
+    try:
+        return request.get_json(silent=True) or {}
+    except Exception:
+        return {}
+
 
 def _build_tacho_context_block() -> str:
     """Format tacho_live_context for Gemini system prompt."""
@@ -179,9 +190,11 @@ _SYSTEM_PROMPT = (
     "Пловдив=lat:42.150,lng:24.745 | Бургас=lat:42.504,lng:27.469 | Плевен=lat:43.417,lng:24.607 | "
     "Стара Загора=lat:42.425,lng:25.634 | Шумен=lat:43.271,lng:26.919 | "
     "Велико Търново=lat:43.076,lng:25.617 | Видин=lat:43.993,lng:22.870 | Враца=lat:43.200,lng:23.550.\n"
-    "11. NAVIGATION vs SEARCH: If the user says JUST a city name (e.g., 'Русе', 'Пловдив'), "
-    "they want to GO THERE. Use navigate_to immediately. NEVER use find_truck_parking or search_business "
-    "for a single city name unless the user explicitly mentions 'паркинг', 'гориво', 'ядене', etc.\n\n"
+    "11. NAVIGATION vs SEARCH: If the user says JUST a city name (e.g., 'Русе', 'Пловдив', 'София'), "
+    "they want to GO THERE. Use navigate_to immediately with the city name as destination. "
+    "NEVER use find_truck_parking or search_business for a single city name. "
+    "DO NOT search for parking unless keywords like 'паркинг', 'стоянка' or 'truck stop' are present. "
+    "If you are unsure, default to navigate_to.\n\n"
     "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
 
@@ -192,13 +205,13 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "navigate_to",
-            "description": "Navigate to destination: city, address, company or landmark. Use avoid param for country/road exclusions.",
+            "description": "Start navigation to a city, address, or landmark. Use this for single city names like 'Sofia' or 'Ruse'.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "destination": {
                         "type": "string",
-                        "description": "City, full address, company name or landmark",
+                        "description": "The destination name (city, street, or company)",
                     },
                     "avoid": {
                         "type": "array",
@@ -1749,7 +1762,7 @@ def tacho_live_update():
     """
     global tacho_live_context
     try:
-        data = request.get_json(force=True)
+        data = _get_body()
         ctx = data.get('tacho_live_context', {})
 
         tacho_live_context = {
@@ -1862,10 +1875,6 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
         })
     messages.append({"role": "user", "content": user_msg})
 
-    # Force parking tool on first turn for parking keywords
-    _PARKING_KW = ("паркинг", "паркиране", "паркирам", "стоянка", "truck stop", "parking")
-    _force_parking = any(kw in user_msg.lower() for kw in _PARKING_KW)
-
     action = None
     last_msg = None
 
@@ -1876,11 +1885,6 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                 model=gpt_model,
                 messages=messages,
                 tools=_TOOLS,
-                tool_choice=(
-                    {"type": "function", "function": {"name": "find_truck_parking"}}
-                    if (_force_parking and turn == 0)
-                    else "auto"
-                ),
                 parallel_tool_calls=False,  # one tool at a time → no skipped calls
                 temperature=0.4,
             )
@@ -2265,7 +2269,7 @@ def chat():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     if _is_rate_limited(ip, limit=20, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     user_msg = (body.get("message") or "").strip()
     if not user_msg:
         return jsonify({"ok": False, "error": "message is required"}), 400
@@ -2288,7 +2292,7 @@ def gemini_chat():
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     if not _gemini_ready:
         if _gpt4o_ready:
-            body = request.get_json(silent=True) or {}
+            body = _get_body()
             result = _run_gpt4o_internal(
                 (body.get("message") or "").strip(),
                 body.get("history") or [],
@@ -2301,7 +2305,7 @@ def gemini_chat():
             })
         return jsonify({"ok": False, "error": "Gemini не е конфигуриран."}), 503
 
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     user_msg = (body.get("message") or "").strip()
     if not user_msg:
         return jsonify({"ok": False, "error": "message is required"}), 400
@@ -2341,7 +2345,10 @@ def gemini_chat():
                 "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
             }
             r = requests.post(url, json=payload, timeout=20)
-            r.raise_for_status()
+            if r.status_code != 200:
+                print(f"[Gemini REST] Error {r.status_code}: {r.text}", flush=True)
+                r.raise_for_status()
+            
             data = r.json()
             return (data.get("candidates", [{}])[0]
                     .get("content", {})
@@ -2411,7 +2418,7 @@ def list_pois():
 
 @app.post("/api/pois")
 def save_poi():
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     name       = (body.get("name") or "").strip()
     lat        = body.get("lat")
     lng        = body.get("lng")
@@ -2765,7 +2772,7 @@ def gemini_validate():
     Body: {"api_key": "AIza..."}
     Response: {"ok": true, "model": "gemini-2.0-flash"} | {"ok": false, "error": "..."}
     """
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     api_key = (body.get("api_key") or "").strip()
     if not api_key:
         return jsonify({"ok": False, "error": "api_key is required"}), 400
@@ -2799,7 +2806,7 @@ def tacho_save_session():
     Body: { user_email, driven_seconds, date (YYYY-MM-DD), start_time, end_time, type }
     Returns summary for the day + week.
     """
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     user_email     = (body.get("user_email") or "").strip()
     driven_seconds = int(body.get("driven_seconds") or 0)
     sess_type      = (body.get("type") or "driving").strip()
@@ -2851,7 +2858,7 @@ def get_user_settings():
 @app.post("/api/user/settings")
 def save_user_settings():
     """Save/update per-user settings in the cloud database."""
-    body = request.get_json(silent=True) or {}
+    body = _get_body()
     user_email = (body.get("user_email") or "").strip()
     key = (body.get("gemini_api_key") or "").strip()
     if not user_email:
@@ -2888,7 +2895,7 @@ def google_sync():
         return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
 
     if request.method == "POST":
-        body = request.get_json(silent=True) or {}
+        body = _get_body()
         pois = body.get("pois", [])
         if not pois:
             return jsonify({"ok": False, "error": "No POIs provided for sync"}), 400
@@ -2968,7 +2975,7 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
 @app.post("/api/poi-along-route")
 def poi_along_route():
     """Fetch truck parking or fuel along a route. Called when route is established."""
-    data = request.get_json(silent=True) or {}
+    data = _get_body()
     coords = data.get("coords", [])
     category = data.get("category", "truck_stop") # truck_stop, fuel
     
@@ -2988,7 +2995,7 @@ def poi_along_route():
 @app.post("/api/cameras-along-route")
 def cameras_along_route():
     """Fetch speed cameras within bounding box of route. Called once when route is set."""
-    data = request.get_json(silent=True) or {}
+    data = _get_body()
     coords = data.get("coords", [])  # [[lng, lat], ...]
     if not coords or len(coords) < 2:
         return jsonify({"cameras": []})
@@ -3179,7 +3186,7 @@ def orchestrate():
     if _is_rate_limited(ip, limit=10, window_s=60):
         return jsonify({"ok": False, "error": "Прекалено много заявки. Изчакай малко."}), 429
 
-    data = request.get_json(silent=True) or {}
+    data = _get_body()
     user_message = (data.get("message") or "").strip()
     if not user_message:
         return jsonify({"ok": False, "error": "Липсва съобщение."}), 400
