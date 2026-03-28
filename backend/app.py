@@ -178,7 +178,10 @@ _SYSTEM_PROMPT = (
     "City coordinates: Русе=lat:43.849,lng:25.955 | София=lat:42.698,lng:23.321 | Варна=lat:43.204,lng:27.910 | "
     "Пловдив=lat:42.150,lng:24.745 | Бургас=lat:42.504,lng:27.469 | Плевен=lat:43.417,lng:24.607 | "
     "Стара Загора=lat:42.425,lng:25.634 | Шумен=lat:43.271,lng:26.919 | "
-    "Велико Търново=lat:43.076,lng:25.617 | Видин=lat:43.993,lng:22.870 | Враца=lat:43.200,lng:23.550.\n\n"
+    "Велико Търново=lat:43.076,lng:25.617 | Видин=lat:43.993,lng:22.870 | Враца=lat:43.200,lng:23.550.\n"
+    "11. NAVIGATION vs SEARCH: If the user says JUST a city name (e.g., 'Русе', 'Пловдив'), "
+    "they want to GO THERE. Use navigate_to immediately. NEVER use find_truck_parking or search_business "
+    "for a single city name unless the user explicitly mentions 'паркинг', 'гориво', 'ядене', etc.\n\n"
     "Available tools are for map actions. If the user is just chatting, use action:'message' with a Bulgarian reply.\n"
 )
 
