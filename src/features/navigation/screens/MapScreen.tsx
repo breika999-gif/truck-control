@@ -122,6 +122,7 @@ import { useRouteInsights } from '../hooks/useRouteInsights';
 import { useRouteOrchestrator } from '../hooks/useRouteOrchestrator';
 import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
 import { useLocationRuntime } from '../hooks/useLocationRuntime';
+import { useWakeWord } from '../hooks/useWakeWord';
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -199,6 +200,10 @@ const MapScreen: React.FC = () => {
   const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
   const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
   const setTunnelWarningRef = useRef<(msg: string | null) => void>(() => {});
+  // POI result states — declared early so useRouteOrchestrator can auto-populate them on route set
+  const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
+  const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
+  const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
 
   useEffect(() => { profileRef.current         = profile;          }, [profile]);
 
@@ -326,11 +331,8 @@ const MapScreen: React.FC = () => {
   const [geminiChatOpen, setGeminiChatOpen]   = useState(false);
   const [chatInput, setChatInput]             = useState('');
 
-  // Results from AI actions
-  const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
+  // Results from AI actions (parkingResults/fuelResults/cameraResults declared above useRouteOrchestrator)
   const [selectedParking, setSelectedParking] = useState<POICard | null>(null);
-  const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
-  const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
   const [businessResults, setBusinessResults] = useState<POICard[]>([]);
   interface AITachoResult {
     drivenHours: number;
@@ -357,6 +359,20 @@ const MapScreen: React.FC = () => {
   });
 
   const chatLoading = gptChatOpen ? gptLoading : geminiLoading;
+
+  // ── Hands-free wake word: "Колега, <команда>" ─────────────────────────────
+  // Активен само при навигация — пести батерия при browse mode.
+  // Пауза автоматично докато TTS говори за да не чуе себе си.
+  const [wakeWordHeard, setWakeWordHeard] = useState(false); // brief visual flash
+
+  const handleWakeCommand = useCallback((cmd: string) => {
+    if (!cmd) return;
+    setWakeWordHeard(true);
+    setTimeout(() => setWakeWordHeard(false), 1200);
+    sendGeminiText(cmd);
+  }, [sendGeminiText]);
+
+  useWakeWord({ active: navigating, onCommand: handleWakeCommand });
 
   const handleChat = useCallback(async () => {
     const text = chatInput.trim();
@@ -1426,6 +1442,7 @@ const MapScreen: React.FC = () => {
         setMapIsLoaded={setMapIsLoaded}
         userCoords={userCoords}
         onReportCamera={handleReportCamera}
+        onOpenPoiHistory={() => {/* POIHistoryModal not yet integrated */}}
       />
 
       {/* ── GPS chip ── */}
@@ -1885,6 +1902,22 @@ const MapScreen: React.FC = () => {
 
       {/* ── Road restriction sign popup ── */}
       <RestrictionSign restriction={activeRestriction} />
+
+      {/* ── Wake word indicator: green mic dot when navigating (hands-free active) ── */}
+      {navigating && (
+        <View style={{
+          position: 'absolute', top: insets.top + 8, right: 12,
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: wakeWordHeard ? '#00C853' : 'rgba(0,0,0,0.55)',
+          borderRadius: 16, paddingHorizontal: 8, paddingVertical: 4,
+          gap: 4,
+        }}>
+          <Icon name="microphone" size={14} color={wakeWordHeard ? '#fff' : '#4CAF50'} />
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
+            {wakeWordHeard ? 'Чух те!' : 'Колега...'}
+          </Text>
+        </View>
+      )}
 
       {/* ── Bottom-left: HOS badge + speed + limit — anchored just above elevationChip ── */}
       <NavigationHUD

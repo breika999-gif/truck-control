@@ -109,6 +109,13 @@ android {
     }
 }
 
+// Exclude entire com.android.support group to prevent duplicate-class conflicts with androidx.
+// @react-native-voice/voice pulls support-compat:28.0.0 + appcompat-v7:28.0.0 which clash with
+// modern androidx.core:core:1.17.0 and androidx.appcompat:appcompat:1.7.1.
+configurations.all {
+    exclude group: 'com.android.support'
+}
+
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
