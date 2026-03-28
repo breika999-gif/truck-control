@@ -401,7 +401,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {mapIsLoaded && fuelResults.length > 0 && (
         <Mapbox.ShapeSource id="fuel-source" shape={fuelGeoJSON}>
           <Mapbox.SymbolLayer
-            id="fuel-symbols"
+            id="fuel-symbols" slot="top"
             style={{
               textField: '⛽',
               textSize: 22,
@@ -417,7 +417,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {mapIsLoaded && businessResults.length > 0 && (
         <Mapbox.ShapeSource id="biz-source" shape={businessGeoJSON}>
           <Mapbox.SymbolLayer
-            id="biz-symbols"
+            id="biz-symbols" slot="top"
             style={{
               textField: '🏢',
               textSize: 22,
