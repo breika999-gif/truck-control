@@ -1991,22 +1991,6 @@ export const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 4,
   },
-  // kept for state-highlight reuse
-  simBtnActive: {
-    borderColor: '#ff4444',
-    backgroundColor: 'rgba(255,30,30,0.18)',
-    shadowColor: '#ff4444',
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-  },
-  simBtnDebug: {
-    borderColor: '#ffaa00',
-    backgroundColor: 'rgba(255,170,0,0.18)',
-    shadowColor: '#ffaa00',
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-  },
-
   // ── Visual Debug Overlay ──────────────────────────────────────────────────
   debugOverlay: {
     position: 'absolute',
@@ -2088,19 +2072,6 @@ export const styles = StyleSheet.create({
   },
 
   // ── Weather Pins ──────────────────────────────────────────────────────────
-  weatherPin: {
-    backgroundColor: 'rgba(0,10,30,0.85)',
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: NEON,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    alignItems: 'center',
-    shadowColor: NEON,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
-  },
   weatherPinEmoji: { fontSize: 16 },
   weatherPinTemp: { fontSize: 9, color: NEON, fontWeight: '700' },
 
