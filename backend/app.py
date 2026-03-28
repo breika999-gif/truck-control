@@ -75,8 +75,6 @@ _tomtom_ready = bool(_TOMTOM_KEY)
 
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-if "2.5" in _GEMINI_MODEL:
-    _GEMINI_MODEL = "gemini-2.0-flash"  # Fallback for experimental/non-existent versions
 
 try:
     from google import genai as _google_genai
