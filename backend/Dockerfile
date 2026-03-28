@@ -5,8 +5,9 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# v3 — force cache bust 2026-03-29
+# Always copy fresh — no cache for app code
 COPY backend/ .
+RUN echo "Build timestamp: $(date)" && python -c "import py_compile; py_compile.compile('app.py', doraise=True) or print('app.py OK')"
 
 ENV PORT=8080
 EXPOSE 8080
