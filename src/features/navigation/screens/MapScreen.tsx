@@ -1911,25 +1911,6 @@ const MapScreen: React.FC = () => {
       {/* ── Road restriction sign popup ── */}
       <RestrictionSign restriction={activeRestriction} />
 
-      {/* ── Bluetooth Tacho Status (Top Right) ── */}
-      <TouchableOpacity
-        style={{
-          position: 'absolute', top: insets.top + 8, right: 104,
-          width: 32, height: 32,
-          backgroundColor: tachoConnected ? 'rgba(76,175,80,0.85)' : 'rgba(0,0,0,0.55)',
-          borderRadius: 16, alignItems: 'center', justifyContent: 'center',
-          borderWidth: 1, borderColor: tachoConnected ? '#4CAF50' : 'rgba(255,255,255,0.2)',
-          zIndex: 60,
-        }}
-        activeOpacity={0.8}
-        onPress={() => navigation.navigate('Tacho')}
-      >
-        <Icon 
-          name={tachoConnected ? 'bluetooth-connect' : 'bluetooth-off'} 
-          size={18} 
-          color="#fff" 
-        />
-      </TouchableOpacity>
 
       {/* ── Wake word indicator: green mic dot when navigating (hands-free active) ── */}
       {navigating && (
