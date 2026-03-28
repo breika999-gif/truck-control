@@ -895,12 +895,26 @@ export const styles = StyleSheet.create({
   },
   chatBubbleModel: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(50,50,80,0.95)',
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: 'rgba(30,50,100,0.95)', // Deeper blue for distinction
+    borderWidth: 1.5,
+    borderColor: '#00f7ff', // Neon blue border
+    shadowColor: '#00f7ff',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 4,
   },
-  chatBubbleText:      { ...typography.caption, color: colors.text, fontSize: 13 },
-  chatBubbleTextModel: { ...typography.caption, color: colors.text, fontSize: 16, fontWeight: '700', lineHeight: 22 },
+  chatBubbleText:      { ...typography.caption, color: colors.text, fontSize: 14 }, // Increased from 13
+  chatBubbleTextModel: { 
+    ...typography.caption, 
+    color: '#fff', 
+    fontSize: 18, // Increased from 16
+    fontWeight: '800', // Bolder
+    lineHeight: 24, 
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2
+  },
 
   // Input row
   chatInputRow: {

@@ -123,7 +123,6 @@ import { useRouteOrchestrator } from '../hooks/useRouteOrchestrator';
 import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
 import { useLocationRuntime } from '../hooks/useLocationRuntime';
 import { useWakeWord } from '../hooks/useWakeWord';
-import { useTachoBluetooth } from '../../tacho/hooks/useTachoBluetooth';
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -134,8 +133,6 @@ const MapScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { profile } = useVehicleStore();
   const cameraRef = useRef<Mapbox.Camera>(null);
-
-  const { isConnected: tachoConnected } = useTachoBluetooth();
 
   // ── States & Refs ──────────────────────────────────────────────────────────
   const {

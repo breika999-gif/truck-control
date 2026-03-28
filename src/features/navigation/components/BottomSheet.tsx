@@ -32,8 +32,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   const bottomOffset = useRef(new Animated.Value(0)).current;
   
   // Dynamic maxHeight to stay within screen when keyboard is up
-  const maxHeight = SCREEN_HEIGHT * 0.85;
-  const availableHeight = SCREEN_HEIGHT - (kbHeight > 0 ? kbHeight + 60 : 80);
+  const maxHeight = SCREEN_HEIGHT * 0.5; // Changed from 0.85 to 0.5 for half-screen
+  const availableHeight = SCREEN_HEIGHT - (kbHeight > 0 ? kbHeight + 40 : 80);
   const actualMaxHeight = Math.min(maxHeight, availableHeight);
 
   const [currentHeight, setCurrentHeight] = useState(Math.min(initialHeight ?? snapHeight, actualMaxHeight));
@@ -44,18 +44,17 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
     // Instant adjustment for a snappier feel
     Animated.timing(bottomOffset, {
       toValue: kbHeight > 0 ? kbHeight : 0,
-      duration: 150,
+      duration: 200, // Slightly slower for better sync with keyboard
       useNativeDriver: false,
     }).start();
 
     // If keyboard is up, ensure we don't exceed available screen space
     if (kbHeight > 0) {
-      const targetHeight = Math.min(currentHeight, actualMaxHeight);
-      if (currentHeight > actualMaxHeight) {
-        setCurrentHeight(targetHeight);
-      }
+      setCurrentHeight(actualMaxHeight);
+    } else {
+      setCurrentHeight(Math.min(initialHeight ?? snapHeight, maxHeight));
     }
-  }, [kbHeight, bottomOffset, actualMaxHeight, currentHeight]);
+  }, [kbHeight, bottomOffset, actualMaxHeight, initialHeight, snapHeight, maxHeight]);
 
   const prevVisibleRef = useRef(visible);
   useEffect(() => {
