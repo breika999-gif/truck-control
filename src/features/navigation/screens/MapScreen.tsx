@@ -1189,15 +1189,19 @@ const MapScreen: React.FC = () => {
               style={styles.parkingBubbleWebBtn}
               activeOpacity={0.8}
               onPress={() => {
-                const cc = detectCountryCode(selectedParking.lat, selectedParking.lng);
-                const base = cc === 'eu'
-                  ? 'https://truckerapps.eu/transparking/'
-                  : `https://truckerapps.eu/transparking/${cc}/map/`;
-                openInBrowser(base);
+                if (selectedParking.website) {
+                  openInBrowser(selectedParking.website);
+                } else {
+                  const cc = detectCountryCode(selectedParking.lat, selectedParking.lng);
+                  const base = cc === 'eu'
+                    ? 'https://truckerapps.eu/transparking/'
+                    : `https://truckerapps.eu/transparking/${cc}/map/`;
+                  openInBrowser(base);
+                }
               }}
             >
-              <Icon name="web" size={16} color={NEON} />
-              <Text style={styles.parkingBubbleWebBtnTxt}>Коментари</Text>
+              <Icon name="open-in-new" size={16} color={NEON} />
+              <Text style={styles.parkingBubbleWebBtnTxt}>Инфо</Text>
             </TouchableOpacity>
 
             {selectedParking.voice_desc && (
@@ -1620,15 +1624,19 @@ const MapScreen: React.FC = () => {
                     style={styles.parkingWebBtn}
                     activeOpacity={0.8}
                     onPress={() => {
-                      const cc = detectCountryCode(p.lat, p.lng);
-                      const base = cc === 'eu'
-                        ? 'https://truckerapps.eu/transparking/'
-                        : `https://truckerapps.eu/transparking/${cc}/map/`;
-                      openInBrowser(base);
+                      if (p.website) {
+                        openInBrowser(p.website);
+                      } else {
+                        const cc = detectCountryCode(p.lat, p.lng);
+                        const base = cc === 'eu'
+                          ? 'https://truckerapps.eu/transparking/'
+                          : `https://truckerapps.eu/transparking/${cc}/map/`;
+                        openInBrowser(base);
+                      }
                     }}
                   >
-                    <Icon name="web" size={12} color={NEON} />
-                    <Text style={styles.parkingWebBtnTxt}>Web</Text>
+                    <Icon name="open-in-new" size={12} color={NEON} />
+                    <Text style={styles.parkingWebBtnTxt}>Инфо</Text>
                   </TouchableOpacity>
 
                   {p.voice_desc && (

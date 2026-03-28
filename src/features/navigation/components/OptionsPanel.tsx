@@ -8,11 +8,12 @@ import {
   Modal,
   SafeAreaView,
   StyleSheet,
+  Linking,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
 import { POI_META, type POICategory } from '../api/poi';
-import { POI_CATEGORIES } from '../utils/mapUtils';
+import { POI_CATEGORIES, openInBrowser } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode } from '../hooks/useMapUIState';
@@ -195,6 +196,13 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconBg="rgba(0,191,255,0.2)"
                 iconColor={C_ACT}
               />
+              <Row
+                icon="antenna"
+                label="Тахограф 📡"
+                onPress={() => { navigation.navigate('Tacho'); close(); }}
+                iconBg="rgba(76,175,80,0.15)"
+                iconColor="#4CAF50"
+              />
 
               {/* КАРТА */}
               <Divider />
@@ -331,6 +339,26 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   setShowBorderPanel(true);
                 }}
                 iconColor="#FFFFFF"
+              />
+              <Row
+                icon="parking"
+                label="Паркинги на живо"
+                onPress={() => {
+                  close();
+                  openInBrowser('https://truckerapps.eu/transparking/pl/map/');
+                }}
+                iconColor="#4FC3F7"
+                iconBg="rgba(79,195,247,0.15)"
+              />
+              <Row
+                icon="truck-remove"
+                label="Забрани за каране 🚫"
+                onPress={() => {
+                  close();
+                  openInBrowser('https://truckban.eu');
+                }}
+                iconColor="#FF5252"
+                iconBg="rgba(255,82,82,0.15)"
               />
 
               {/* POI / SAR */}

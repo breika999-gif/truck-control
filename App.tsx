@@ -11,6 +11,7 @@ import type { RootStackParamList } from './src/shared/types/navigation';
 import MapScreen from './src/features/navigation/screens/MapScreen';
 import VehicleProfileScreen from './src/features/vehicle/screens/VehicleProfileScreen';
 import POIListScreen from './src/features/navigation/screens/POIListScreen';
+import TachoScreen from './src/features/tacho/screens/TachoScreen';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 
@@ -53,6 +54,16 @@ export default function App() {
           options={{
             headerShown: false,
             presentation: 'card',
+          }}
+        />
+        <Stack.Screen
+          name="Tacho"
+          component={TachoScreen}
+          options={{
+            headerShown: true,
+            title: 'Тахограф',
+            headerStyle: { backgroundColor: colors.bgSecondary },
+            headerTintColor: colors.text,
           }}
         />
       </Stack.Navigator>

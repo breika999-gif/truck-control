@@ -1,0 +1,14 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <mask id="mask" x="0" y="0" width="24" height="24">
+            <rect width="24" height="24" fill="white" />
+            <path fill="black"
+                d="M2.5 8h8s0.5 0 0.5 0.5v3s0 0.5 -0.5 0.5h-8s-0.5 0 -0.5 -0.5v-3s0 -0.5 0.5 -0.5" />
+            <path fill="black"
+                d="M14.5 8h7s0.5 0 0.5 0.5v4s0 0.5 -0.5 0.5h-7s-0.5 0 -0.5 -0.5v-4s0 -0.5 0.5 -0.5" />
+            <path fill="black"
+                d="M12.3 8h0.4s0.3 0 0.3 0.3v7.4s0 0.3 -0.3 0.3h-0.4s-0.3 0 -0.3 -0.3v-7.4s0 -0.3 0.3 -0.3" />
+        </mask>
+    </defs>
+    <rect y="6" width="24" height="13" rx="1.5" fill="#0E478A" mask="url(#mask)" />
+</svg>

@@ -41,15 +41,19 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 
   // Sync bottomOffset with kbHeight from props
   useEffect(() => {
+    // Instant adjustment for a snappier feel
     Animated.timing(bottomOffset, {
-      toValue: kbHeight > 0 ? kbHeight + 5 : 0,
-      duration: 200,
+      toValue: kbHeight > 0 ? kbHeight : 0,
+      duration: 150,
       useNativeDriver: false,
     }).start();
 
-    // Adjust height if it exceeds available space with keyboard
-    if (kbHeight > 0 && currentHeight > actualMaxHeight) {
-      setCurrentHeight(actualMaxHeight);
+    // If keyboard is up, ensure we don't exceed available screen space
+    if (kbHeight > 0) {
+      const targetHeight = Math.min(currentHeight, actualMaxHeight);
+      if (currentHeight > actualMaxHeight) {
+        setCurrentHeight(targetHeight);
+      }
     }
   }, [kbHeight, bottomOffset, actualMaxHeight, currentHeight]);
 

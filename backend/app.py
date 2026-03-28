@@ -32,6 +32,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 # ── Rate limiting (in-memory, per IP) ─────────────────────────────────────────
 _rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
+tacho_live_context = {}   # Live data from BLE tachograph — injected into Gemini system prompt
 
 def _is_rate_limited(ip: str, limit: int, window_s: int = 60) -> bool:
     """Returns True if IP has exceeded `limit` requests in the last `window_s` seconds."""
@@ -83,6 +84,28 @@ except ImportError:
     _gemini_client = None
     _gemini_ready = False
 
+def _build_tacho_context_block() -> str:
+    """Format tacho_live_context for Gemini system prompt."""
+    if not tacho_live_context:
+        return ''
+
+    rem_h  = tacho_live_context.get('driving_time_left_min', 0) // 60
+    rem_m  = tacho_live_context.get('driving_time_left_min', 0) % 60
+    drv_h  = tacho_live_context.get('daily_driven_min', 0) // 60
+    drv_m  = tacho_live_context.get('daily_driven_min', 0) % 60
+
+    return f"""
+ТАХОГРАФ (live BLE данни):
+- Текуща активност: {tacho_live_context.get('current_activity', 'unknown')}
+- Изкарано днес: {drv_h}ч {drv_m}мин
+- Оставащо каране: {rem_h}ч {rem_m}мин
+- Скорост от сензор: {tacho_live_context.get('speed_kmh', 0)} км/ч
+- Последно обновяване: {tacho_live_context.get('timestamp', '')}
+
+Ако шофьорът пита за оставащо време или почивка — използвай горните данни.
+Ако остават < 30 мин — предупреди проактивно и предложи да потърсиш паркинг.
+"""
+
 _GEMINI_SYSTEM = (
     "Gemini — AI асистент в TruckAI Pro. Говориш с КАМИОНЕН ШОФЬОР. "
     "САМО БЪЛГАРСКИ. Кратко и ясно. Обръщай се 'Колега'.\n\n"
@@ -91,8 +114,7 @@ _GEMINI_SYSTEM = (
     "- Дневна почивка: 11ч редовна / 9ч намалена (макс 3× между седм. почивки)\n"
     "- Седмична: 45ч редовна / 24ч намалена (компенсация до 3-та седм.)\n"
     "- Лимити: 56ч/седм, 90ч/2седм. Пауза: 45мин след 4.5ч (или 15+30)\n"
-    "- При <30мин до лимит → предупреди веднага.\n"
-    "- Контекст: [ТАХОГРАФ: днес Xч/9ч; седм Xч/56ч; 2седм Xч/90ч; почивки_9ч X/3; дълг Xч]\n\n"
+    "- При <30мин до лимит → предупреди веднага.\n\n"
     "📱 ПРИЛОЖЕНИЯ — добавяй в края:\n"
     "[APP:{\"app\":\"<name>\",\"query\":\"<опц>\"}]\n"
 )
@@ -1716,6 +1738,30 @@ def health():
     })
 
 
+@app.route('/api/tacho/live_update', methods=['POST'])
+def tacho_live_update():
+    """
+    Receive live data from BLE tachograph and save it in memory.
+    Gemini reads it for every subsequent chat.
+    """
+    global tacho_live_context
+    try:
+        data = request.get_json(force=True)
+        ctx = data.get('tacho_live_context', {})
+
+        tacho_live_context = {
+            'current_activity':      ctx.get('current_activity', 'unknown'),
+            'activity_code':         ctx.get('activity_code', -1),
+            'driving_time_left_min': ctx.get('driving_time_left_min', 0),
+            'daily_driven_min':      ctx.get('daily_driven_min', 0),
+            'speed_kmh':             ctx.get('speed_kmh', 0),
+            'timestamp':             ctx.get('timestamp', ''),
+        }
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+
 # ── In-memory caches (GPT responses + POI results) ───────────────────────────
 import time as _cache_time
 
@@ -2287,7 +2333,7 @@ def gemini_chat():
             api_key = os.getenv("GEMINI_API_KEY", "")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
             payload = {
-                "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
+                "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM + _build_tacho_context_block()}]},
                 "contents": contents,
                 "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
             }

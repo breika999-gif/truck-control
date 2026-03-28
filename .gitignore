@@ -102,3 +102,16 @@ ui_bounds.txt
 android/*.png
 !src/**/*.png
 !src/shared/assets/*.png
+
+# Large files / research artifacts
+tomtom_extracted/
+*.apkm
+android_build_out.txt
+android_build_err.txt
+android/build_log.txt
+test/VDO\ Fleet.apk
+scripts/
+src/shared/assets/tomtom_research/
+src/shared/assets/tomtom_icons/
+src/shared/assets/nav_glow.png
+AGENTS.md
