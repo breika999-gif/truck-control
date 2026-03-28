@@ -107,15 +107,17 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   onFetchWeather,
 }) => {
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
-  const panelHeightRef = useRef(0);
-  const translateY     = useRef(new Animated.Value(0)).current;
-  const expandedRef    = useRef(false);
-  const initializedRef = useRef(false);
+  const panelHeightRef       = useRef(0);
+  const translateY           = useRef(new Animated.Value(0)).current;
+  const expandedRef          = useRef(false);
+  const initializedRef       = useRef(false);
+  const collapseTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleCollapseRef  = useRef<() => void>(() => {});
 
   const snapTo = useCallback((expanded: boolean) => {
     const collapsed = Math.max(0, panelHeightRef.current - HANDLE_H);
     Animated.spring(translateY, {
-      toValue:        expanded ? 0 : collapsed,
+      toValue:         expanded ? 0 : collapsed,
       useNativeDriver: true,
       damping:         22,
       stiffness:       220,
@@ -123,10 +125,28 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
     expandedRef.current = expanded;
   }, [translateY]);
 
-  // Collapse when a new route appears
+  // Keep scheduleCollapseRef current so panResponder can call it without stale closure
+  useEffect(() => {
+    scheduleCollapseRef.current = () => {
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = setTimeout(() => snapTo(false), 4500);
+    };
+  }, [snapTo]);
+
+  // Auto-collapse 4.5 s after navigation starts; cancel when nav stops
+  useEffect(() => {
+    if (navigating) {
+      scheduleCollapseRef.current();
+    }
+    return () => {
+      if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+    };
+  }, [navigating]);
+
+  // Allow re-init on new route
   useEffect(() => {
     if (route) {
-      initializedRef.current = false; // allow re-collapse on new route
+      initializedRef.current = false;
     }
   }, [route?.distance]);
 
@@ -141,8 +161,11 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
     onPanResponderRelease: (_, gs) => {
       if (gs.vy < -0.3 || gs.dy < -40) {
         snapTo(true);
+        // User manually opened → schedule auto-collapse again
+        scheduleCollapseRef.current();
       } else if (gs.vy > 0.3 || gs.dy > 40) {
         snapTo(false);
+        if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
       } else {
         snapTo(expandedRef.current);
       }
@@ -162,7 +185,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
     <>
       {/* ── Bottom-left: HOS badge + speed + limit ── */}
       {(navigating || speedLimit != null) && (
-        <View style={[styles.speedRow, { bottom: 224 + insets.bottom }]}>
+        <Animated.View style={[styles.speedRow, { bottom: 224 + insets.bottom, transform: [{ translateY }] }]}>
           <View>
             <View style={[
               styles.hosBadge,
@@ -221,7 +244,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               </Text>
             </View>
           )}
-        </View>
+        </Animated.View>
       )}
 
       {/* ManeuverPanel removed — pawan-pk native overlay already shows turn instructions at top */}
@@ -235,15 +258,9 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             if (h > 0 && !initializedRef.current) {
               panelHeightRef.current = h;
               initializedRef.current = true;
-              if (navigating) {
-                // Navigating: collapse so only handle is visible
-                translateY.setValue(h - HANDLE_H);
-                expandedRef.current = false;
-              } else {
-                // Preview: expand so Тръгваме! button is visible
-                translateY.setValue(0);
-                expandedRef.current = true;
-              }
+              // Always start expanded — auto-collapse timer handles the rest
+              translateY.setValue(0);
+              expandedRef.current = true;
             } else if (h > 0) {
               panelHeightRef.current = h;
             }
