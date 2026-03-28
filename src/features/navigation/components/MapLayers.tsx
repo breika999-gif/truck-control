@@ -404,8 +404,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="parking-symbols" slot="top" minZoomLevel={7}
             style={{
               textField: ['concat', 'P', '\n', ['case',
-                ['>', ['get', 'distance_m'], 0],
-                ['concat', ['to-string', ['round', ['/', ['get', 'distance_m'], 1000]]], ' km'],
+                ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
+                ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
               ]],
               textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 10, 12, 14, 18],
@@ -440,8 +440,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="fuel-symbols" slot="top"
             style={{
               textField: ['concat', '⛽', '\n', ['case',
-                ['>', ['get', 'distance_m'], 0],
-                ['concat', ['to-string', ['round', ['/', ['get', 'distance_m'], 1000]]], ' km'],
+                ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
+                ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
               ]],
               textSize: 13,
@@ -450,7 +450,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
               textHaloColor: '#1a1a2e',
               textHaloWidth: 2,
               textColor: '#ffffff',
-              textAllowOverlap: false,
+              textAllowOverlap: true,
               iconAllowOverlap: true,
             }}
           />
