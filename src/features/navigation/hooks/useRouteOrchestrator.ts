@@ -91,8 +91,15 @@ export function useRouteOrchestrator({
   const profileRerouteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navStartRef = useRef<number>(0);
   const navInitDurationRef = useRef<number>(0);
+  const poisFetchedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => { destinationRef.current = destination; }, [destination]);
+  useEffect(() => {
+    if (destinationRef.current !== destination) {
+      poisFetchedRef.current = false;
+    }
+    destinationRef.current = destination;
+  }, [destination]);
   useEffect(() => { destinationNameRef.current = destinationName; }, [destinationName]);
   useEffect(() => { departAtRef.current = departAt; }, [departAt]);
   useEffect(() => { avoidUnpavedRef.current = avoidUnpaved; }, [avoidUnpaved]);
@@ -119,6 +126,13 @@ export function useRouteOrchestrator({
   // All data read via refs → deps:[] → stable identity across renders.
   // isMountedRef guard prevents setState after component unmounts.
   const navigateTo = useCallback(async (dest: Coords, name: string, waypointsArg?: Coords[], autoStart = false) => {
+    // Cancel previous POI fetches if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const { signal } = abortControllerRef.current;
+
     setDestination(dest);
     setDestinationName(name);
     setRoute(null);
@@ -180,20 +194,29 @@ export function useRouteOrchestrator({
         const routeCoords = result.geometry.coordinates as [number, number][];
 
         // ── Auto-fetch essentials along route ──
-        // 1. Cameras (safety)
-        fetchCamerasAlongRoute(routeCoords)
-          .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
-          .catch(() => {});
+        if (!poisFetchedRef.current) {
+          poisFetchedRef.current = true;
+          // 1. Cameras (safety)
+          fetchCamerasAlongRoute(routeCoords, signal)
+            .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
+            .catch((err) => { 
+              if (err.name !== 'AbortError') poisFetchedRef.current = false; 
+            });
 
-        // 2. Truck Parking (TomTom GO Expert style auto-discovery)
-        fetchPOIsAlongRoute(routeCoords, 'truck_stop')
-          .then(pois => { if (isMountedRef.current) setParkingResults(pois); })
-          .catch(() => {});
+          // 2. Truck Parking (TomTom GO Expert style auto-discovery)
+          fetchPOIsAlongRoute(routeCoords, 'truck_stop', signal)
+            .then(pois => { if (isMountedRef.current) setParkingResults(pois); })
+            .catch((err) => {
+              if (err.name !== 'AbortError') poisFetchedRef.current = false;
+            });
 
-        // 3. Fuel Stations
-        fetchPOIsAlongRoute(routeCoords, 'fuel')
-          .then(pois => { if (isMountedRef.current) setFuelResults(pois); })
-          .catch(() => {});
+          // 3. Fuel Stations
+          fetchPOIsAlongRoute(routeCoords, 'fuel', signal)
+            .then(pois => { if (isMountedRef.current) setFuelResults(pois); })
+            .catch((err) => {
+              if (err.name !== 'AbortError') poisFetchedRef.current = false;
+            });
+        }
 
         const coords = result.geometry.coordinates;
         let minLng = coords[0][0], maxLng = coords[0][0];

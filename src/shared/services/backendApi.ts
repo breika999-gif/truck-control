@@ -485,6 +485,7 @@ export async function fetchProximityAlerts(
 
 export async function fetchCamerasAlongRoute(
   coords: [number, number][],
+  signal?: AbortSignal,
 ): Promise<POICard[]> {
   try {
     const { BACKEND_URL } = await import('../constants/config');
@@ -492,10 +493,12 @@ export async function fetchCamerasAlongRoute(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ coords }),
+      signal,
     });
     const data = await res.json();
     return (data.cameras ?? []) as POICard[];
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     return [];
   }
 }
@@ -503,6 +506,7 @@ export async function fetchCamerasAlongRoute(
 export async function fetchPOIsAlongRoute(
   coords: [number, number][],
   category: 'truck_stop' | 'fuel',
+  signal?: AbortSignal,
 ): Promise<POICard[]> {
   try {
     const { BACKEND_URL } = await import('../constants/config');
@@ -510,10 +514,12 @@ export async function fetchPOIsAlongRoute(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ coords, category }),
+      signal,
     });
     const data = await res.json();
     return (data.pois ?? []) as POICard[];
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     return [];
   }
 }

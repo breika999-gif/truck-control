@@ -2074,20 +2074,43 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Chat FAB — hidden when route active ── */}
+      {/* ── Chat FABs — hidden when route active ── */}
       {!route && (
-        <TouchableOpacity
-          style={[
-            styles.geminiFab,
-            { left: spacing.md, bottom: insets.bottom + spacing.xl },
-            backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
-          ]}
-          onPress={() => setGeminiChatOpen(v => !v)}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
-          <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
-        </TouchableOpacity>
+        <>
+          {/* Gemini Chat FAB (bottom-left) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { left: spacing.md, bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGeminiChatOpen(v => !v);
+              setGptChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
+
+          {/* GPT-4o FAB (bottom-right) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGptChatOpen(v => !v);
+              setGeminiChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
+        </>
       )}
 
       {/* ── Chat Panels (GPT + Gemini) ── */}
