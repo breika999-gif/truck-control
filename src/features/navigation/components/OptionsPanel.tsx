@@ -197,8 +197,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconColor={C_ACT}
               />
               <Row
-                icon="antenna"
-                label="Тахограф 📡"
+                icon="bluetooth"
+                label="Свържи тахограф 📡"
                 onPress={() => { navigation.navigate('Tacho'); close(); }}
                 iconBg="rgba(76,175,80,0.15)"
                 iconColor="#4CAF50"
