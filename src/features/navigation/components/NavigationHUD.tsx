@@ -224,15 +224,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
         </View>
       )}
 
-      {/* ── Maneuver panel (turn arrow + instruction + distance) ── */}
-      {navigating && route && distToTurn != null && currentStep < route.steps.length && (
-        <ManeuverPanel
-          step={route.steps[currentStep]}
-          nextStep={route.steps[currentStep + 1] ?? null}
-          distToTurn={distToTurn}
-          bottom={240 + insets.bottom}
-        />
-      )}
+      {/* ManeuverPanel removed — pawan-pk native overlay already shows turn instructions at top */}
 
       {/* ── Bottom panel (swipeable sheet) ── */}
       {route && !loadingRoute && (
