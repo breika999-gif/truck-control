@@ -2331,7 +2331,7 @@ def gemini_chat():
             contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
             api_key = os.getenv("GEMINI_API_KEY", "")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
             payload = {
                 "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM + _build_tacho_context_block()}]},
                 "contents": contents,

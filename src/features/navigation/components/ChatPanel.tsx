@@ -61,9 +61,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
   const loading = gptChatOpen ? gptLoading : geminiLoading;
   const scrollRef = gptChatOpen ? gptScrollRef : geminiScrollRef;
   const inputRef = useRef<TextInput>(null);
-  const placeholder = gptChatOpen
-    ? 'Навигация: маршрути, паркинг, горива, камери...'
-    : "Питай Gemini или кажи 'отвори YouTube'...";
+  const placeholder = "Питай за маршрут, паркинг или кажи 'отвори YouTube'...";
 
   // ── Pulsing Mic Animation ──
   const micScale = useRef(new Animated.Value(1)).current;

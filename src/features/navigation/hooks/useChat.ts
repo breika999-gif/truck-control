@@ -68,6 +68,55 @@ export function useChat({
     if (!voiceMutedRef.current) { Tts.stop(); try { Tts.speak(text); } catch {} }
   }, []);
 
+  // ── Action Processor ──────────────────────────────────────────────────────
+  const processAction = useCallback((act: any, newHistory: ChatMessage[], setHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>, response?: any) => {
+    const displayText =
+      act.action === 'message'
+        ? (act.text ?? '')
+        : (act.message || response?.reply || '');
+    
+    if (displayText) {
+      setHistory([...newHistory, { role: 'model', text: displayText }]);
+      speak(displayText);
+    } else {
+      setHistory([...newHistory, { role: 'model', text: 'Заявката е изпълнена.' }]);
+    }
+
+    if (act.action === 'route') {
+      navigateTo(act.coords, act.destination, act.waypoints, true);
+    } else if (act.action === 'add_waypoint') {
+      addWaypoint(act.coords, act.name);
+    } else if (act.action === 'show_pois') {
+      if (act.category === 'truck_stop') {
+        setParkingResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 5));
+        setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
+      } else if (act.category === 'fuel') {
+        setFuelResults(act.cards.slice(0, 4));
+        setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
+      } else if (act.category === 'speed_camera') {
+        setCameraResults(act.cards);
+        setParkingResults([]); setFuelResults([]); setBusinessResults([]);
+      } else if (act.category === 'business') {
+        setBusinessResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 6));
+        setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
+      }
+    } else if (act.action === 'show_routes') {
+      setRouteOptions(act.options);
+      setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
+      setRoute(null);
+      setDestination(null);
+    } else if (act.action === 'tachograph') {
+      setTachographResult({
+        drivenHours:    act.driven_hours,
+        remainingHours: act.remaining_hours,
+        breakNeeded:    act.break_needed ?? false,
+        suggestedStop:  act.suggested_stop,
+      });
+    }
+  }, [navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults, 
+      setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination, 
+      setTachographResult, speak]);
+
   // ── GPT-4o logic ──────────────────────────────────────────────────────────
   const sendGptText = useCallback(async (text: string) => {
     if (!text || gptLoading) return;
@@ -95,63 +144,18 @@ export function useChat({
       return;
     }
 
-    const act = response.action;
-    if (!act) {
+    if (response.action) {
+      processAction(response.action, newHistory, setGptHistory, response);
+    } else {
       const replyText = (response.reply ?? '').trim();
       if (replyText) {
         setGptHistory([...newHistory, { role: 'model', text: replyText }]);
         speak(replyText);
       }
-      setGptLoading(false);
-      return;
-    }
-
-    // Process action...
-    // (Ideally move action processing to a separate helper or keep here if complex)
-    const displayText =
-      act.action === 'message'
-        ? (act.text ?? '')
-        : ('message' in act ? (act as { message?: string }).message : undefined) ?? '';
-    
-    // Simple bubble text parser could be imported
-    const cleanText = displayText; // Simplified for hook extraction
-    setGptHistory([...newHistory, { role: 'model', text: cleanText || 'Action executed' }]);
-    
-    // Action handling
-    if (act.action === 'route') {
-      navigateTo(act.coords, act.destination, act.waypoints, true);
-    } else if (act.action === 'add_waypoint') {
-      addWaypoint(act.coords, act.name);
-    } else if (act.action === 'show_pois') {
-       if (act.category === 'truck_stop') {
-        setParkingResults(act.cards.filter(c => c.lat && c.lng).slice(0, 5));
-        setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
-      } else if (act.category === 'fuel') {
-        setFuelResults(act.cards.slice(0, 4));
-        setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
-      } else if (act.category === 'speed_camera') {
-        setCameraResults(act.cards);
-        setParkingResults([]); setFuelResults([]); setBusinessResults([]);
-      } else if (act.category === 'business') {
-        setBusinessResults(act.cards.filter(c => c.lat && c.lng).slice(0, 6));
-        setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
-      }
-    } else if (act.action === 'show_routes') {
-      setRouteOptions(act.options);
-      setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
-      setRoute(null);
-      setDestination(null);
-    } else if (act.action === 'tachograph') {
-      setTachographResult({
-        drivenHours:    act.driven_hours,
-        remainingHours: act.remaining_hours,
-        breakNeeded:    act.break_needed ?? false,
-        suggestedStop:  act.suggested_stop,
-      });
     }
 
     setGptLoading(false);
-  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, navigateTo, addWaypoint]);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, speak, processAction]);
 
   // ── Gemini logic ──────────────────────────────────────────────────────────
   const sendGeminiText = useCallback(async (text: string) => {
@@ -185,49 +189,10 @@ export function useChat({
       return;
     }
 
-    const act = response.action;
-
-    // If backend forwarded nav intent to GPT-4o and returned a map action — execute it
-    if (act && act.action !== 'message') {
-      const displayText = (act as any).message || response.reply || '';
-      if (displayText) {
-        setGeminiHistory([...newHistory, { role: 'model', text: displayText }]);
-        speak(displayText);
-      }
-      if (act.action === 'route') {
-        navigateTo(act.coords, act.destination, act.waypoints, true);
-      } else if (act.action === 'add_waypoint') {
-        addWaypoint(act.coords, act.name);
-      } else if (act.action === 'show_pois') {
-        if (act.category === 'truck_stop') {
-          setParkingResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 5));
-          setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
-        } else if (act.category === 'fuel') {
-          setFuelResults(act.cards.slice(0, 4));
-          setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
-        } else if (act.category === 'speed_camera') {
-          setCameraResults(act.cards);
-          setParkingResults([]); setFuelResults([]); setBusinessResults([]);
-        } else if (act.category === 'business') {
-          setBusinessResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 6));
-          setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
-        }
-      } else if (act.action === 'show_routes') {
-        setRouteOptions(act.options);
-        setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
-        setRoute(null);
-        setDestination(null);
-      } else if (act.action === 'tachograph') {
-        setTachographResult({
-          drivenHours:    act.driven_hours,
-          remainingHours: act.remaining_hours,
-          breakNeeded:    act.break_needed ?? false,
-          suggestedStop:  act.suggested_stop,
-        });
-      }
+    if (response.action && response.action.action !== 'message') {
+      processAction(response.action, newHistory, setGeminiHistory, response);
     } else {
-      // Normal Gemini reply (no nav action)
-      const replyText = (act?.action === 'message' ? act.text : response.reply ?? '').trim();
+      const replyText = (response.action?.action === 'message' ? response.action.text : response.reply ?? '').trim();
       if (replyText) {
         setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
         speak(replyText);
@@ -238,9 +203,7 @@ export function useChat({
 
     setGeminiLoading(false);
   }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, googleUser,
-      navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults,
-      setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination,
-      setTachographResult, handleAppIntent]);
+      handleAppIntent, speak, processAction]);
 
   return {
     gptLoading,
