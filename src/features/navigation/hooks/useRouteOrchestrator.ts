@@ -11,6 +11,8 @@ import {
   type RouteResult,
 } from '../api/directions';
 import type { NavPhase } from './useNavigationState';
+import { fetchCamerasAlongRoute, fetchPOIsAlongRoute } from '../../../shared/services/backendApi';
+import type { POICard } from '../../../shared/services/backendApi';
 
 type Coords = [number, number];
 
@@ -29,6 +31,9 @@ type UseRouteOrchestratorArgs = {
   waypoints: Coords[];
   waypointNames: string[];
   buildRoutePOIScan: (r: RouteResult) => void;
+  setCameraResults: (cameras: POICard[]) => void;
+  setParkingResults: (pois: POICard[]) => void;
+  setFuelResults: (pois: POICard[]) => void;
   setRoute: (route: RouteResult | null) => void;
   setDestination: (dest: Coords | null) => void;
   setDestinationName: (name: string) => void;
@@ -58,6 +63,9 @@ export function useRouteOrchestrator({
   waypoints,
   waypointNames,
   buildRoutePOIScan,
+  setCameraResults,
+  setParkingResults,
+  setFuelResults,
   setRoute,
   setDestination,
   setDestinationName,
@@ -169,6 +177,24 @@ export function useRouteOrchestrator({
 
       if (result) {
         buildRoutePOIScan(result);
+        const routeCoords = result.geometry.coordinates as [number, number][];
+
+        // ── Auto-fetch essentials along route ──
+        // 1. Cameras (safety)
+        fetchCamerasAlongRoute(routeCoords)
+          .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
+          .catch(() => {});
+
+        // 2. Truck Parking (TomTom GO Expert style auto-discovery)
+        fetchPOIsAlongRoute(routeCoords, 'truck_stop')
+          .then(pois => { if (isMountedRef.current) setParkingResults(pois); })
+          .catch(() => {});
+
+        // 3. Fuel Stations
+        fetchPOIsAlongRoute(routeCoords, 'fuel')
+          .then(pois => { if (isMountedRef.current) setFuelResults(pois); })
+          .catch(() => {});
+
         const coords = result.geometry.coordinates;
         let minLng = coords[0][0], maxLng = coords[0][0];
         let minLat = coords[0][1], maxLat = coords[0][1];

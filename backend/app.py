@@ -84,36 +84,17 @@ except ImportError:
     _gemini_ready = False
 
 _GEMINI_SYSTEM = (
-    "Ти си Gemini — AI асистент на TruckAI Pro за КАМИОНИ.\n"
-    "Говориш с КАМИОНЕН ШОФЬОР по време на шофиране.\n\n"
-    "ПРАВИЛА:\n"
-    "1. Говори САМО на БЪЛГАРСКИ. Бъди КРАТЪК (1-2 изречения). Адресирай шофьора като 'Колега'.\n"
-    "2. Помагаш с: общи въпроси, метео, музика (YouTube/Spotify), почивки, товари, регулации, отваряне на приложения.\n"
-    "3. За навигация потребителят има отделен GPT-4o навигационен асистент.\n"
-    "4. ТАХОГРАФ (EU 561/2006) — в контекста получаваш:\n"
-    "   [ТАХОГРАФ: непрекъснато Xч/4.5ч; днес Xч/9ч;\n"
-    "    седмично Xч/56ч; двуседмично Xч/90ч]\n"
-    "   ПРАВИЛА:\n"
-    "   - MAX 4.5ч непрекъснато → задължителна 45-мин почивка (или 15+30)\n"
-    "   - MAX 9ч дневно (10ч два пъти седмично)\n"
-    "   - MAX 56ч седмично; MAX 90ч общо за 2 седмици\n"
-    "   - Ако остават < 30 мин до някой лимит → предупреди проактивно\n"
-    "5. КАМИОННА СПЕЦИФИКА — когато е релевантно споменавай:\n"
-    "   - Ограничения за тегло/височина/ширина при мостове, тунели, центрове\n"
-    "   - Места за почивка и паркинг за тежкотоварни (не обичайни паркинги)\n"
-    "   - Времеви ограничения за камиони (почивни дни, нощни забрани)\n"
-    "   - Безопасно разстояние и скорост за товарен автомобил\n"
-    "   - Зареждане с AdBlue + дизел при ниски запаси\n"
-    "6. Предупреждавай проактивно: 'Колега, след 4ч ти трябва 45-мин почивка.'\n\n"
-    "📱 ПРИЛОЖЕНИЯ — добавяй в КРАЯ при нужда:\n"
-    "[APP:{\"app\":\"<app_name>\",\"query\":\"<опционална заявка>\"}]\n"
-    "app_name: youtube, spotify, whatsapp, telegram, viber, maps, "
-    "settings, phone, camera, calculator, chrome, facebook, instagram\n\n"
-    "ПРИМЕРИ:\n"
-    "- 'пусни сръбско в YouTube' → [APP:{\"app\":\"youtube\",\"query\":\"сръбско\"}]\n"
-    "- 'колко часа имам днес?' → прочети от [ТАХОГРАФ:...] и отговори\n"
-    "- 'ще има ли проблем с тунела?' → 'Колега, стандартните тунели позволяват до 4.2м. "
-    "Ако твоят камион е над 4м, провери ограниченията предварително.'\n"
+    "Gemini — AI асистент в TruckAI Pro. Говориш с КАМИОНЕН ШОФЬОР. "
+    "САМО БЪЛГАРСКИ. Кратко и ясно. Обръщай се 'Колега'.\n\n"
+    "ТАХОГРАФ (EU 561/2006):\n"
+    "- Дневно: 9ч (10ч → макс 2×/седм)\n"
+    "- Дневна почивка: 11ч редовна / 9ч намалена (макс 3× между седм. почивки)\n"
+    "- Седмична: 45ч редовна / 24ч намалена (компенсация до 3-та седм.)\n"
+    "- Лимити: 56ч/седм, 90ч/2седм. Пауза: 45мин след 4.5ч (или 15+30)\n"
+    "- При <30мин до лимит → предупреди веднага.\n"
+    "- Контекст: [ТАХОГРАФ: днес Xч/9ч; седм Xч/56ч; 2седм Xч/90ч; почивки_9ч X/3; дълг Xч]\n\n"
+    "📱 ПРИЛОЖЕНИЯ — добавяй в края:\n"
+    "[APP:{\"app\":\"<name>\",\"query\":\"<опц>\"}]\n"
 )
 
 _NAV_RE = re.compile(r'\[NAV:\s*(\{.*?\})\s*\]', re.DOTALL)
@@ -260,41 +241,6 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "find_truck_parking",
-            "description": (
-                "Find truck stops and HGV parking near a location. "
-                "Use driver GPS when near current position; use city coords from knowledge for named cities."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "lat":      {"type": "number"},
-                    "lng":      {"type": "number"},
-                    "radius_m": {"type": "integer", "default": 5000},
-                },
-                "required": ["lat", "lng"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_speed_cameras",
-            "description": "Find speed cameras near a position.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "lat":      {"type": "number"},
-                    "lng":      {"type": "number"},
-                    "radius_m": {"type": "integer", "default": 10000},
-                },
-                "required": ["lat", "lng"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "calculate_hos_reach",
             "description": "Calculate remaining drive time before mandatory 45-min break (EU 4.5h rule).",
             "parameters": {
@@ -363,25 +309,6 @@ _TOOLS = [
                     "lng":   {"type": "number"},
                 },
                 "required": ["query", "lat", "lng"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_fuel_stations",
-            "description": (
-                "Find fuel/diesel stations near a destination city. "
-                "Use destination city coords from knowledge, not driver GPS."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "dest_lat": {"type": "number"},
-                    "dest_lng": {"type": "number"},
-                    "radius_m": {"type": "integer", "default": 50000},
-                },
-                "required": ["dest_lat", "dest_lng"],
             },
         },
     },
@@ -2933,6 +2860,116 @@ def google_sync():
                     imported_count += 1
             conn.commit()
         return jsonify({"ok": True, "imported": imported_count})
+
+
+def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit: int = 10) -> list:
+    """Find POIs along a route using TomTom Along Route Search."""
+    if not _tomtom_ready or not coords or len(coords) < 2:
+        return []
+    
+    # Downsample coords to ~150 points for TomTom efficiency
+    MAX_PTS = 150
+    sampled = coords
+    if len(coords) > MAX_PTS:
+        step = len(coords) // MAX_PTS
+        sampled = coords[::step]
+    
+    try:
+        url = f"https://api.tomtom.com/search/2/alongRouteSearch/{requests.utils.quote(query)}.json"
+        params = {
+            "key":           _TOMTOM_KEY,
+            "maxDetourTime": max_detour_s,
+            "limit":         limit,
+            "vehicleType":   "Truck",
+            "language":      "bg-BG",
+            "spreadingMode": "auto",
+        }
+        body = {
+            "route": {
+                "points": [{"lat": c[1], "lon": c[0]} for c in sampled]
+            }
+        }
+        r = requests.post(url, params=params, json=body, timeout=12)
+        r.raise_for_status()
+        
+        results = []
+        for item in r.json().get("results", []):
+            pos = item.get("position", {})
+            lat, lng = pos.get("lat"), pos.get("lon")
+            if lat is None: continue
+            
+            poi_data = item.get("poi") or {}
+            name = poi_data.get("name") or item.get("address", {}).get("freeformAddress", "Обект")
+            brand = (poi_data.get("brands") or [{}])[0].get("name")
+            
+            results.append({
+                "name":       name,
+                "lat":        lat,
+                "lng":        lng,
+                "distance_m": 0, # TomTom doesn't give distance from start here, only detour time
+                "brand":      brand,
+                "info":       item.get("address", {}).get("freeformAddress"),
+                "voice_desc": f"Намерих {name} по маршрута.",
+            })
+        return results
+    except Exception:
+        return []
+
+
+@app.post("/api/poi-along-route")
+def poi_along_route():
+    """Fetch truck parking or fuel along a route. Called when route is established."""
+    data = request.get_json(silent=True) or {}
+    coords = data.get("coords", [])
+    category = data.get("category", "truck_stop") # truck_stop, fuel
+    
+    if not coords or len(coords) < 2:
+        return jsonify({"pois": []})
+
+    query = "truck stop" if category == "truck_stop" else "petrol station"
+    results = _tomtom_along_route(coords, query, limit=12)
+    
+    # Add category tag
+    for r in results:
+        r["category"] = category
+        
+    return jsonify({"pois": results})
+
+
+@app.post("/api/cameras-along-route")
+def cameras_along_route():
+    """Fetch speed cameras within bounding box of route. Called once when route is set."""
+    data = request.get_json(silent=True) or {}
+    coords = data.get("coords", [])  # [[lng, lat], ...]
+    if not coords or len(coords) < 2:
+        return jsonify({"cameras": []})
+
+    lats = [c[1] for c in coords]
+    lngs = [c[0] for c in coords]
+    pad = 0.008  # ~800m padding
+    bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
+
+    query = f'[out:json][timeout:20];node["highway"="speed_camera"]({bbox});out body;'
+    try:
+        resp = requests.post(
+            "https://overpass-api.de/api/interpreter",
+            data=query, timeout=18,
+        )
+        elements = resp.json().get("elements", [])
+    except Exception:
+        return jsonify({"cameras": []})
+
+    cameras = []
+    for el in elements:
+        tags = el.get("tags", {})
+        speed = tags.get("maxspeed", "")
+        name = f"📷 Радар {speed} км/ч" if speed else "📷 Радар"
+        cameras.append({
+            "lat": el["lat"], "lng": el["lon"],
+            "name": name, "maxspeed": speed, "distance_m": 0,
+            "category": "speed_camera",
+        })
+    return jsonify({"cameras": cameras})
 
 
 @app.get("/api/proximity-alerts")

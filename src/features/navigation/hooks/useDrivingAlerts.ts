@@ -30,22 +30,29 @@ export function useDrivingAlerts({
   const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
 
   const cameraFlashAnim    = useRef(new Animated.Value(0)).current;
+  const speedingFlash      = useRef(new Animated.Value(0)).current;
   const laneGlowAnim       = useRef(new Animated.Value(0)).current;
   const laneGlowLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const lastCameraWarnRef  = useRef<number>(0);
   const lastSpeedAlarmRef  = useRef<number>(0);
 
-  // ── Speed limit TTS alarm — fires once per 30 s when exceeding the limit ──
+  // в”Ђв”Ђ Speed limit TTS alarm вЂ” fires once per 30 s when exceeding the limit в”Ђв”Ђ
   useEffect(() => {
     if (!navigating || speedLimit == null || speed <= speedLimit) return;
     const now = Date.now();
     if (now - lastSpeedAlarmRef.current < 30_000) return;
     lastSpeedAlarmRef.current = now;
     playSpeedAlert();
-    if (!voiceMutedRef.current) ttsSpeak(`Лимит ${speedLimit} км/ч.`);
-  }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert]);
+    Animated.sequence([
+      Animated.timing(speedingFlash, { toValue: 1, duration: 150, useNativeDriver: false }),
+      Animated.timing(speedingFlash, { toValue: 0, duration: 150, useNativeDriver: false }),
+      Animated.timing(speedingFlash, { toValue: 1, duration: 150, useNativeDriver: false }),
+      Animated.timing(speedingFlash, { toValue: 0, duration: 300, useNativeDriver: false }),
+    ]).start();
+    if (!voiceMutedRef.current) ttsSpeak(`Р›РёРјРёС‚ ${speedLimit} РєРј/С‡.`);
+  }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert, speedingFlash]);
 
-  // ── Speed camera proximity alert — TTS + flash every 10 s when < 600 m ──
+  // в”Ђв”Ђ Speed camera proximity alert вЂ” TTS + flash every 10 s when < 600 m в”Ђв”Ђ
   useEffect(() => {
     if (!navigating || !userCoords || cameraResults.length === 0) {
       setCameraAlert(null);
@@ -61,7 +68,7 @@ export function useDrivingAlerts({
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
       playCameraAlert();
-      if (!voiceMutedRef.current) ttsSpeak(`Камера на ${Math.round(nearest.dist)} метра.`);
+      if (!voiceMutedRef.current) ttsSpeak(`РљР°РјРµСЂР° РЅР° ${Math.round(nearest.dist)} РјРµС‚СЂР°.`);
       Animated.sequence([
         Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
         Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
@@ -72,7 +79,7 @@ export function useDrivingAlerts({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userCoords, navigating, cameraResults, playCameraAlert, voiceMutedRef]);
 
-  // ── Lane glow pulse — starts/stops based on lanePulseOn ──
+  // в”Ђв”Ђ Lane glow pulse вЂ” starts/stops based on lanePulseOn в”Ђв”Ђ
   useEffect(() => {
     if (lanePulseOn) {
       laneGlowLoop.current?.stop();
@@ -109,6 +116,7 @@ export function useDrivingAlerts({
     tunnelWarning,
     setTunnelWarning,
     cameraFlashAnim,
+    speedingFlash,
     laneGlowBg,
     laneGlowShadow,
     speedingBg,

@@ -4,15 +4,19 @@ import {
   Text,
   TouchableOpacity,
   Share,
+  ScrollView,
+  Modal,
+  SafeAreaView,
+  StyleSheet,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
-import { styles } from '../screens/MapScreen.styles';
 import { POI_META, type POICategory } from '../api/poi';
 import { POI_CATEGORIES } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode } from '../hooks/useMapUIState';
+import { styles as mapStyles } from '../screens/MapScreen.styles';
 
 interface OptionsPanelProps {
   optionsOpen: boolean;
@@ -58,14 +62,46 @@ interface OptionsPanelProps {
   setMapIsLoaded: (loaded: boolean) => void;
   userCoords: [number, number] | null;
   onReportCamera: () => void;
+  onOpenPoiHistory: () => void;
 }
 
-// Icon color constants
-const C_ON  = '#FFFFFF';
-const C_OFF = '#4A5568';
+const ICON_SIZE = 26;
 const C_ACT = '#00BFFF';
-const C_RED = '#FF4444';
-const ICON_SIZE = 22;
+const C_OFF = '#4A5568';
+
+// A single large list row (TomTom style)
+const Row = ({
+  icon,
+  label,
+  onPress,
+  iconColor = '#FFFFFF',
+  iconBg = 'rgba(0,191,255,0.15)',
+  active = false,
+  rightEl,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+  iconColor?: string;
+  iconBg?: string;
+  active?: boolean;
+  rightEl?: React.ReactNode;
+}) => (
+  <TouchableOpacity style={[s.row, active && s.rowActive]} onPress={onPress} activeOpacity={0.7}>
+    <View style={[s.iconCircle, { backgroundColor: iconBg }]}>
+      <Icon name={icon} size={ICON_SIZE} color={iconColor} />
+    </View>
+    <Text style={s.rowLabel}>{label}</Text>
+    {rightEl ?? <Icon name="chevron-right" size={20} color="rgba(255,255,255,0.25)" />}
+  </TouchableOpacity>
+);
+
+// Section header
+const SectionHeader = ({ title }: { title: string }) => (
+  <Text style={s.sectionHeader}>{title}</Text>
+);
+
+const Divider = () => <View style={s.divider} />;
 
 const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   optionsOpen,
@@ -101,7 +137,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   handleSARSearch,
   googleUser,
   setShowAccountModal,
-  starredPOIs,
   navigation,
   setBorderCrossings,
   setShowBorderPanel,
@@ -111,277 +146,427 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setMapIsLoaded,
   userCoords,
   onReportCamera,
+  onOpenPoiHistory,
 }) => {
+  const close = () => setOptionsOpen(false);
+  const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : mapMode === 'hybrid' ? 'Хибридна карта' : 'Сателитна карта';
   const mapModeIcon = mapMode === 'vector' ? 'earth' : mapMode === 'hybrid' ? 'layers' : 'satellite-variant';
 
   return (
-    <View style={[styles.optionsContainer, { top: searchTop }]}>
-      <TouchableOpacity
-        style={styles.mapBtn}
-        onPress={() => setOptionsOpen(v => !v)}
+    <>
+      {/* Toggle button on map */}
+      <View style={[mapStyles.optionsContainer, { top: searchTop }]}>
+        <TouchableOpacity
+          style={mapStyles.mapBtn}
+          onPress={() => setOptionsOpen(v => !v)}
+        >
+          <Icon name={optionsOpen ? 'close' : 'tune-variant'} size={22} color="#FFFFFF" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Full-screen TomTom-style drawer */}
+      <Modal
+        visible={optionsOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={close}
       >
-        <Icon name={optionsOpen ? 'close' : 'tune-variant'} size={ICON_SIZE} color={C_ON} />
-      </TouchableOpacity>
+        <View style={s.backdrop}>
+          <View style={s.drawer}>
+            {/* Header */}
+            <View style={s.header}>
+              <Text style={s.headerTitle}>Меню</Text>
+              <TouchableOpacity onPress={close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                <Icon name="close" size={26} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
 
-      {optionsOpen && (
-        <View style={styles.optionsPanel}>
-
-          {/* ── Ред 1: Маршрут ── */}
-          <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => { navigation.navigate('VehicleProfile'); setOptionsOpen(false); }}
+            <ScrollView
+              style={s.scroll}
+              contentContainerStyle={s.scrollContent}
+              showsVerticalScrollIndicator={false}
             >
-              <Icon name="truck" size={ICON_SIZE} color={C_ON} />
-            </TouchableOpacity>
+              {/* ПРОФИЛ */}
+              <SectionHeader title="КАМИОН" />
+              <Row
+                icon="truck"
+                label="Профил на камиона"
+                onPress={() => { navigation.navigate('VehicleProfile'); close(); }}
+                iconBg="rgba(0,191,255,0.2)"
+                iconColor={C_ACT}
+              />
 
-            <TouchableOpacity
-              style={[styles.optionBtn, !showTraffic && styles.optionBtnOff]}
-              onPress={() => setShowTraffic(v => !v)}
-            >
-              <Icon name="traffic-light" size={ICON_SIZE} color={showTraffic ? C_ON : C_OFF} />
-            </TouchableOpacity>
+              {/* КАРТА */}
+              <Divider />
+              <SectionHeader title="КАРТА" />
+              <Row
+                icon={mapModeIcon}
+                label={mapModeLabel}
+                onPress={() => {
+                  setMapMode(prev => {
+                    const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
+                    if (!navigating) setMapIsLoaded(false);
+                    return next;
+                  });
+                  close();
+                }}
+                iconColor={C_ACT}
+                iconBg="rgba(0,191,255,0.15)"
+              />
+              <Row
+                icon={lightMode ? 'weather-night' : 'weather-sunny'}
+                label={lightMode ? 'Нощен режим' : 'Дневен режим'}
+                onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); close(); }}
+                iconColor={lightMode ? '#A78BFA' : '#FCD34D'}
+                iconBg={lightMode ? 'rgba(167,139,250,0.15)' : 'rgba(252,211,77,0.15)'}
+              />
+              <Row
+                icon="terrain"
+                label="Релеф (контури)"
+                onPress={() => setShowContours(v => !v)}
+                iconColor={showContours ? '#FFFFFF' : C_OFF}
+                active={showContours}
+                rightEl={
+                  <View style={[s.toggle, showContours && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{showContours ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
 
-            <TouchableOpacity
-              style={[styles.optionBtn, !showRestrictions && styles.optionBtnOff]}
-              onPress={() => setShowRestrictions(v => !v)}
-            >
-              <Icon name="truck-alert" size={ICON_SIZE} color={showRestrictions ? C_ON : C_OFF} />
-            </TouchableOpacity>
+              {/* ТРАФИК */}
+              <Divider />
+              <SectionHeader title="ТРАФИК" />
+              <Row
+                icon="traffic-light"
+                label="Трафик на картата"
+                onPress={() => setShowTraffic(v => !v)}
+                iconColor={showTraffic ? '#FFFFFF' : C_OFF}
+                active={showTraffic}
+                rightEl={
+                  <View style={[s.toggle, showTraffic && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{showTraffic ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
+              <Row
+                icon="alert-octagon"
+                label="Инциденти"
+                onPress={() => setShowIncidents(v => !v)}
+                iconColor={showIncidents ? '#FFBC40' : C_OFF}
+                active={showIncidents}
+                rightEl={
+                  <View style={[s.toggle, showIncidents && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{showIncidents ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
 
-            <TouchableOpacity
-              style={[styles.optionBtn, !showStarredLayer && styles.optionBtnOff]}
-              onPress={() => setShowStarredLayer(v => !v)}
-            >
-              <Icon name="star" size={ICON_SIZE} color={showStarredLayer ? '#FFD700' : C_OFF} />
-            </TouchableOpacity>
+              {/* КАМИОН */}
+              <Divider />
+              <SectionHeader title="ОГРАНИЧЕНИЯ" />
+              <Row
+                icon="truck-alert"
+                label="Ограничения за камион"
+                onPress={() => setShowRestrictions(v => !v)}
+                iconColor={showRestrictions ? '#FF6B6B' : C_OFF}
+                active={showRestrictions}
+                rightEl={
+                  <View style={[s.toggle, showRestrictions && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{showRestrictions ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
+              <Row
+                icon="road-variant"
+                label="Само асфалт"
+                onPress={() => setAvoidUnpaved(v => !v)}
+                iconColor={avoidUnpaved ? C_ACT : C_OFF}
+                active={avoidUnpaved}
+                rightEl={
+                  <View style={[s.toggle, avoidUnpaved && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{avoidUnpaved ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
+              <Row
+                icon="star"
+                label="Любими места"
+                onPress={() => setShowStarredLayer(v => !v)}
+                iconColor={showStarredLayer ? '#FFD700' : C_OFF}
+                active={showStarredLayer}
+                rightEl={
+                  <View style={[s.toggle, showStarredLayer && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{showStarredLayer ? 'ВКЛ' : 'ИЗК'}</Text>
+                  </View>
+                }
+              />
+
+              {/* НАВИГАЦИЯ */}
+              <Divider />
+              <SectionHeader title="НАВИГАЦИЯ" />
+              <Row
+                icon={voiceMuted ? 'volume-off' : 'volume-high'}
+                label={voiceMuted ? 'Гласови указания: ИЗК' : 'Гласови указания: ВКЛ'}
+                onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
+                iconColor={voiceMuted ? C_OFF : '#FFFFFF'}
+                rightEl={
+                  <View style={[s.toggle, !voiceMuted && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{voiceMuted ? 'ИЗК' : 'ВКЛ'}</Text>
+                  </View>
+                }
+              />
+              <Row
+                icon="passport"
+                label="Гранични пунктове"
+                onPress={() => {
+                  close();
+                  setBorderCrossings([
+                    { name: 'Капитан Андреево', flag: 'BG-TR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                    { name: 'Кулата', flag: 'BG-GR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                    { name: 'Дунав мост 2', flag: 'BG-RO', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                    { name: 'Дунав мост 1', flag: 'BG-RO', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                    { name: 'Малко Търново', flag: 'BG-TR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                    { name: 'Гюешево', flag: 'BG-MK', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
+                  ]);
+                  setShowBorderPanel(true);
+                }}
+                iconColor="#FFFFFF"
+              />
+
+              {/* POI / SAR */}
+              {!navigating && !route && (
+                <>
+                  <Divider />
+                  <SectionHeader title="НАБЛИЗО" />
+                  {POI_CATEGORIES.filter(c => c !== 'rest_area').map(cat => (
+                    <Row
+                      key={cat}
+                      icon={POI_META[cat].iconName ?? 'map-marker'}
+                      label={POI_META[cat].label ?? cat}
+                      onPress={() => { handlePOISearch(cat); close(); }}
+                      iconColor={!sarMode && poiCategory === cat ? C_ACT : '#FFFFFF'}
+                      active={!sarMode && poiCategory === cat}
+                    />
+                  ))}
+                  <Row
+                    icon="map-marker-multiple"
+                    label="История на POI"
+                    onPress={() => { onOpenPoiHistory(); close(); }}
+                    iconColor={C_ACT}
+                  />
+                </>
+              )}
+
+              {route && (
+                <>
+                  <Divider />
+                  <SectionHeader title="ПО МАРШРУТА (SAR)" />
+                  {POI_CATEGORIES.filter(c => c !== 'rest_area').map(cat => (
+                    <Row
+                      key={cat}
+                      icon={POI_META[cat].iconName ?? 'map-marker'}
+                      label={POI_META[cat].label ?? cat}
+                      onPress={() => { handleSARSearch(cat); close(); }}
+                      iconColor={sarMode && poiCategory === cat ? C_ACT : '#FFFFFF'}
+                      active={sarMode && poiCategory === cat}
+                    />
+                  ))}
+                  <Row
+                    icon="map-marker-multiple"
+                    label="История на POI"
+                    onPress={() => { onOpenPoiHistory(); close(); }}
+                    iconColor={C_ACT}
+                  />
+                </>
+              )}
+
+              {navigating && (
+                <>
+                  <Divider />
+                  <SectionHeader title="ПО ПЪТЯ" />
+                  <Row
+                    icon={isSearchingAlongRoute ? 'timer-sand' : 'map-search'}
+                    label="Търси по маршрута"
+                    onPress={() => { close(); handleSearchAlongRoute(); }}
+                    iconColor="#FFFFFF"
+                  />
+                </>
+              )}
+
+              {/* АКАУНТ */}
+              <Divider />
+              <SectionHeader title="АКАУНТ" />
+              <Row
+                icon="google"
+                label={googleUser ? googleUser.email : 'Google акаунт'}
+                onPress={() => { setShowAccountModal(true); close(); }}
+                iconColor="#EA4335"
+                iconBg="rgba(234,67,53,0.12)"
+              />
+              {userCoords && (
+                <Row
+                  icon="map-marker-radius"
+                  label="Сподели позиция"
+                  onPress={() => {
+                    close();
+                    Share.share({
+                      message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
+                    });
+                  }}
+                  iconColor={C_ACT}
+                />
+              )}
+
+              {/* DEV */}
+              {route && (
+                <>
+                  <Divider />
+                  <SectionHeader title="DEV" />
+                  <Row
+                    icon={simulating ? 'stop' : 'play'}
+                    label={simulating ? 'Спри симулация' : 'Симулация'}
+                    onPress={() => { simulating ? stopSim() : startSim(); close(); }}
+                    iconColor={simulating ? '#FF4444' : '#4CAF50'}
+                    iconBg={simulating ? 'rgba(255,68,68,0.15)' : 'rgba(76,175,80,0.15)'}
+                  />
+                  <Row
+                    icon="bug"
+                    label="Debug overlay"
+                    onPress={() => setDebugMode(v => !v)}
+                    iconColor={debugMode ? '#FF9100' : C_OFF}
+                    active={debugMode}
+                    rightEl={
+                      <View style={[s.toggle, debugMode && s.toggleOn]}>
+                        <Text style={s.toggleTxt}>{debugMode ? 'ВКЛ' : 'ИЗК'}</Text>
+                      </View>
+                    }
+                  />
+                </>
+              )}
+
+              {/* ДОКЛАДВАЙ КАМЕРА */}
+              <Divider />
+              <TouchableOpacity style={s.reportBtn} onPress={() => { onReportCamera(); close(); }} activeOpacity={0.8}>
+                <Icon name="speed-camera" size={22} color="#FFFFFF" />
+                <Text style={s.reportBtnTxt}>ДОКЛАДВАЙ КАМЕРА</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 24 }} />
+            </ScrollView>
           </View>
-
-          <View style={styles.optionsDivider} />
-
-          {/* ── Ред 2: Слоеве ── */}
-          <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => {
-                setMapMode(prev => {
-                  const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
-                  if (!navigating) setMapIsLoaded(false);
-                  return next;
-                });
-              }}
-            >
-              <Icon name={mapModeIcon} size={ICON_SIZE} color={C_ACT} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.optionBtn, !showIncidents && styles.optionBtnOff]}
-              onPress={() => setShowIncidents(v => !v)}
-            >
-              <Icon name="alert-octagon" size={ICON_SIZE} color={showIncidents ? '#FFBC40' : C_OFF} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.optionBtn, !showContours && styles.optionBtnOff]}
-              onPress={() => setShowContours(v => !v)}
-            >
-              <Icon name="terrain" size={ICON_SIZE} color={showContours ? C_ON : C_OFF} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.optionsDivider} />
-
-          {/* ── Ред 3: Система ── */}
-          <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => {
-                setOptionsOpen(false);
-                setBorderCrossings([
-                  { name: 'Капитан Андреево', flag: '🇧🇬🇹🇷', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  { name: 'Кулата', flag: '🇧🇬🇬🇷', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  { name: 'Дунав мост 2', flag: '🇧🇬🇷🇴', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  { name: 'Дунав мост 1', flag: '🇧🇬🇷🇴', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  { name: 'Малко Търново', flag: '🇧🇬🇹🇷', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  { name: 'Гюешево', flag: '🇧🇬🇲🇰', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                ]);
-                setShowBorderPanel(true);
-              }}
-            >
-              <Icon name="passport" size={ICON_SIZE} color={C_ON} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.optionBtn, voiceMuted && styles.optionBtnOff]}
-              onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
-            >
-              <Icon name={voiceMuted ? 'volume-off' : 'volume-high'} size={ICON_SIZE} color={voiceMuted ? C_OFF : C_ON} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.optionBtn}
-              onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); }}
-            >
-              <Icon name={lightMode ? 'weather-night' : 'weather-sunny'} size={ICON_SIZE} color={lightMode ? '#A78BFA' : '#FCD34D'} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.optionsDivider} />
-
-          {/* ── Avoid unpaved ── */}
-          <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
-            <TouchableOpacity
-              style={[styles.optionBtn, !avoidUnpaved && styles.optionBtnOff, avoidUnpaved && styles.optionBtnActive]}
-              onPress={() => setAvoidUnpaved(v => !v)}
-            >
-              <Icon name="road-variant" size={ICON_SIZE} color={avoidUnpaved ? C_ACT : C_OFF} />
-            </TouchableOpacity>
-            <Text style={styles.devRowLabel}>АСФАЛТ</Text>
-          </View>
-
-          <View style={styles.optionsDivider} />
-
-          {/* ── Search along route (само при навигация) ── */}
-          {navigating && (
-            <>
-              <View style={[styles.optionsRow, { justifyContent: 'flex-start' }]}>
-                <TouchableOpacity
-                  style={[styles.optionBtn, isSearchingAlongRoute && { borderColor: '#fff' }]}
-                  onPress={() => { setOptionsOpen(false); handleSearchAlongRoute(); }}
-                  disabled={isSearchingAlongRoute}
-                >
-                  <Icon name={isSearchingAlongRoute ? 'timer-sand' : 'map-search'} size={ICON_SIZE} color={C_ON} />
-                </TouchableOpacity>
-                <Text style={styles.devRowLabel}>ПО ПЪТЯ</Text>
-              </View>
-              <View style={styles.optionsDivider} />
-            </>
-          )}
-
-          {/* ── POI nearby (само без маршрут) ── */}
-          {!navigating && !route && (
-            <>
-              <View style={styles.optionsRow}>
-                {POI_CATEGORIES.map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[styles.optionBtn, !sarMode && poiCategory === cat && styles.optionBtnActive]}
-                    onPress={() => { handlePOISearch(cat); setOptionsOpen(false); }}
-                  >
-                    <Text style={styles.mapBtnText}>{POI_META[cat].emoji}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <View style={styles.optionsDivider} />
-            </>
-          )}
-
-          {/* ── SAR (само с маршрут) ── */}
-          {route && (
-            <>
-              <View style={styles.optionsRow}>
-                <Text style={styles.sarRowLabel}>SAR</Text>
-                {POI_CATEGORIES.map((cat) => (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[styles.optionBtn, sarMode && poiCategory === cat && styles.sarBtnActive]}
-                    onPress={() => { handleSARSearch(cat); setOptionsOpen(false); }}
-                  >
-                    <Text style={styles.mapBtnText}>{POI_META[cat].emoji}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <View style={styles.optionsDivider} />
-            </>
-          )}
-
-          {/* ── Google акаунт ── */}
-          <TouchableOpacity
-            style={styles.geminiConnectBtn}
-            onPress={() => { setShowAccountModal(true); setOptionsOpen(false); }}
-          >
-            <Text style={styles.geminiConnectEmoji}>G</Text>
-            <Text style={styles.geminiConnectLabel} numberOfLines={1}>
-              {googleUser ? googleUser.email : 'Google акаунт'}
-            </Text>
-            {googleUser && <View style={styles.geminiDot} />}
-          </TouchableOpacity>
-
-          {/* ── История ── */}
-          <TouchableOpacity
-            style={styles.geminiConnectBtn}
-            onPress={() => { setOptionsOpen(false); navigation.navigate('POIList'); }}
-          >
-            <Icon name="history" size={18} color={C_ACT} style={{ marginRight: 8 }} />
-            <Text style={styles.geminiConnectLabel}>
-              ИСТОРИЯ {starredPOIs.length > 0 ? `(${starredPOIs.length})` : ''}
-            </Text>
-          </TouchableOpacity>
-
-          {/* ── Сподели позиция ── */}
-          {userCoords && (
-            <TouchableOpacity
-              style={styles.geminiConnectBtn}
-              onPress={() => {
-                setOptionsOpen(false);
-                Share.share({
-                  message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
-                });
-              }}
-            >
-              <Icon name="map-marker-radius" size={18} color={C_ACT} style={{ marginRight: 8 }} />
-              <Text style={styles.geminiConnectLabel}>СПОДЕЛИ ПОЗИЦИЯ</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* ── DEV: симулация ── */}
-          {route && (
-            <>
-              <View style={styles.optionsDivider} />
-              <View style={styles.optionsRow}>
-                <TouchableOpacity
-                  style={[styles.optionBtn, simulating && styles.simBtnActive]}
-                  onPress={() => { simulating ? stopSim() : startSim(); setOptionsOpen(false); }}
-                >
-                  <Icon name={simulating ? 'stop' : 'play'} size={ICON_SIZE} color={simulating ? C_RED : '#4CAF50'} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.optionBtn, debugMode && styles.simBtnDebug]}
-                  onPress={() => setDebugMode(v => !v)}
-                >
-                  <Icon name="bug" size={ICON_SIZE} color={debugMode ? '#FF9100' : C_OFF} />
-                </TouchableOpacity>
-                <Text style={styles.devRowLabel}>DEV</Text>
-              </View>
-            </>
-          )}
-
-          {/* ── Докладвай камера ── */}
-          <View style={styles.optionsDivider} />
-          <TouchableOpacity
-            style={{
-              width: '100%',
-              borderRadius: 14,
-              backgroundColor: '#D0021B',
-              paddingVertical: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-            }}
-            onPress={() => { onReportCamera(); setOptionsOpen(false); }}
-          >
-            <Icon name="speed-camera" size={18} color="#FFFFFF" />
-            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '900' }}>
-              ДОКЛАДВАЙ КАМЕРА
-            </Text>
-          </TouchableOpacity>
-
         </View>
-      )}
-    </View>
+      </Modal>
+    </>
   );
+});
+
+const s = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  drawer: {
+    backgroundColor: '#0A0E1A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '85%',
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.07)',
+  },
+  headerTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 8 },
+  sectionHeader: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginTop: 16,
+    marginBottom: 4,
+    marginLeft: 4,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    gap: 16,
+    borderRadius: 14,
+  },
+  rowActive: {
+    backgroundColor: 'rgba(0,191,255,0.07)',
+  },
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowLabel: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  toggle: {
+    backgroundColor: 'rgba(220, 38, 38, 0.25)', // Reddish when OFF
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    minWidth: 44,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(220, 38, 38, 0.4)',
+  },
+  toggleOn: {
+    backgroundColor: 'rgba(0,191,255,0.25)',
+    borderColor: 'rgba(0,191,255,0.5)',
+  },
+  toggleTxt: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginVertical: 4,
+    marginHorizontal: 4,
+  },
+  reportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: '#C0021A',
+    borderRadius: 14,
+    paddingVertical: 14,
+    marginTop: 8,
+  },
+  reportBtnTxt: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
 });
 
 export default OptionsPanel;

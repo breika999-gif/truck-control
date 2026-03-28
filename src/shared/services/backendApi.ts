@@ -483,3 +483,38 @@ export async function fetchProximityAlerts(
   }
 }
 
+export async function fetchCamerasAlongRoute(
+  coords: [number, number][],
+): Promise<POICard[]> {
+  try {
+    const { BACKEND_URL } = await import('../constants/config');
+    const res = await fetch(`${BACKEND_URL}/api/cameras-along-route`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coords }),
+    });
+    const data = await res.json();
+    return (data.cameras ?? []) as POICard[];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchPOIsAlongRoute(
+  coords: [number, number][],
+  category: 'truck_stop' | 'fuel',
+): Promise<POICard[]> {
+  try {
+    const { BACKEND_URL } = await import('../constants/config');
+    const res = await fetch(`${BACKEND_URL}/api/poi-along-route`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coords, category }),
+    });
+    const data = await res.json();
+    return (data.pois ?? []) as POICard[];
+  } catch {
+    return [];
+  }
+}
+

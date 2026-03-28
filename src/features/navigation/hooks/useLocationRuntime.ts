@@ -119,7 +119,7 @@ export const useLocationRuntime = ({
           if (kmh < 2) {
             if (stoppedSinceRef.current === null) stoppedSinceRef.current = tqNow;
             const stoppedMs = tqNow - stoppedSinceRef.current;
-            if (stoppedMs >= 20_000 && tqNow - lastParkingRef.current >= 120_000) {
+            if (navigatingRef.current && stoppedMs >= 20_000 && tqNow - lastParkingRef.current >= 120_000) {
               lastParkingRef.current = tqNow;
               fetchNearbyParking(tqLng, tqLat, 1000).then(spots => {
                 if (isMountedRef.current && spots.length > 0) setAutoParking(spots);

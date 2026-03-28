@@ -2,8 +2,8 @@ import { StyleSheet, Platform } from 'react-native';
 import { colors, radius, spacing, typography } from '../../../shared/constants/theme';
 
 // ── Neon Blue theme ──────────────────────────────────────────────────────────
-export const NEON = '#00bfff'; // neon blue
-export const NEON_DIM = 'rgba(0,191,255,0.10)'; // very light tinted bg
+export const NEON = '#00f7ff'; // light neon blue (cyan)
+export const NEON_DIM = 'rgba(0,247,255,0.15)'; // light tinted bg for buttons
 
 export const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
@@ -705,18 +705,18 @@ export const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   startBtn: {
-    backgroundColor: NEON_DIM,
-    borderRadius: 50,
-    borderWidth: 1.5,
-    borderColor: NEON,
-    paddingVertical: spacing.md,
+    backgroundColor: 'rgba(120,0,0,0.18)',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E53E3E',
+    paddingVertical: 9,
     alignItems: 'center',
     marginBottom: spacing.xs,
-    elevation: 12,
-    shadowColor: NEON,
+    elevation: 8,
+    shadowColor: '#E53E3E',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.85,
-    shadowRadius: 10,
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
   },
   startBtnActive:   { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: colors.error, shadowColor: colors.error },
   startBtnDisabled: { backgroundColor: 'rgba(22,33,62,0.5)', borderColor: colors.border, opacity: 0.6 },
@@ -818,7 +818,8 @@ export const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 8,
+    elevation: 12,
+    zIndex: 60,
     borderWidth: 1.5,
   },
 
@@ -831,7 +832,8 @@ export const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 8,
+    elevation: 12,
+    zIndex: 60,
     borderWidth: 1.5,
   },
   geminiFabOnline:  { backgroundColor: NEON_DIM, borderColor: NEON, shadowColor: NEON, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.85, shadowRadius: 8 },
@@ -972,6 +974,24 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 12,
   },
+  fuelCardBtns: {
+    flexDirection: 'row',
+    gap: 4,
+    marginTop: 6,
+  },
+  fuelWpBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,191,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 6,
+    paddingVertical: 5,
+  },
+  fuelWpBtnTxt: { color: NEON, fontWeight: '700', fontSize: 10 },
   fuelCard: {
     backgroundColor: 'rgba(0,60,20,0.22)',
     borderRadius: radius.md,
@@ -1824,6 +1844,19 @@ export const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   parkingBubbleWebBtnTxt: { color: NEON, fontWeight: '700', fontSize: 12 },
+  parkingBubbleWpBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,191,255,0.12)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 8,
+    paddingVertical: 8,
+  },
+  parkingBubbleWpBtnTxt: { color: NEON, fontWeight: '700', fontSize: 13 },
   parkingBubbleTtsBtn: {
     width: 36,
     height: 36,
@@ -1851,6 +1884,19 @@ export const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   parkingGoBtnTxt2: { color: '#0a0c1c', fontWeight: '800', fontSize: 10 },
+  parkingWpBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,191,255,0.10)',
+    borderWidth: 1.5,
+    borderColor: NEON,
+    borderRadius: 6,
+    paddingVertical: 5,
+  },
+  parkingWpBtnTxt: { color: NEON, fontWeight: '700', fontSize: 10 },
   parkingWebBtn: {
     flex: 1,
     flexDirection: 'row',

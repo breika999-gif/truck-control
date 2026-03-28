@@ -11,6 +11,8 @@ import type { POICategory } from '../api/poi';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const NAV_ARROW = require('../../../shared/assets/nav_arrow.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+export const NAV_GLOW  = require('../../../shared/assets/nav_glow.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 export const SIGN_CLOSED  = require('../../../shared/assets/sign_closed.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const SIGN_DANGER0 = require('../../../shared/assets/sign_danger_0.png') as number;

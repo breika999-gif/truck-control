@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+﻿import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -171,6 +171,7 @@ const MapScreen: React.FC = () => {
     selectedRouteIdx, setSelectedRouteIdx,
     departAt, setDepartAt,
     mapPitch, setMapPitch,
+    mapZoom, setMapZoom,
     waypoints, setWaypoints,
     waypointNames, setWaypointNames,
     restrictionChecking, setRestrictionChecking,
@@ -230,6 +231,9 @@ const MapScreen: React.FC = () => {
     waypoints,
     waypointNames,
     buildRoutePOIScan: (r) => buildRoutePOIScanRef.current(r),
+    setCameraResults,
+    setParkingResults,
+    setFuelResults,
     setRoute,
     setDestination,
     setDestinationName,
@@ -1151,6 +1155,19 @@ const MapScreen: React.FC = () => {
               <Icon name="navigation-variant" size={16} color="#0a0c1c" />
               <Text style={styles.parkingBubbleNavBtnTxt}>Навигация</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.parkingBubbleWpBtn}
+              activeOpacity={0.8}
+              onPress={() => {
+                const p = selectedParking;
+                setSelectedParking(null);
+                setParkingResults([]);
+                addWaypoint([p.lng, p.lat], p.name);
+              }}
+            >
+              <Icon name="map-marker-plus" size={16} color={NEON} />
+              <Text style={styles.parkingBubbleWpBtnTxt}>+ Спирка</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.parkingBubbleWebBtn}
@@ -1569,6 +1586,18 @@ const MapScreen: React.FC = () => {
                     <Icon name="navigation-variant" size={12} color="#0a0c1c" />
                     <Text style={styles.parkingGoBtnTxt2}>Маршрут</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.parkingWpBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setParkingResults([]);
+                      setSelectedParking(null);
+                      addWaypoint([p.lng, p.lat], p.name);
+                    }}
+                  >
+                    <Icon name="map-marker-plus" size={12} color={NEON} />
+                    <Text style={styles.parkingWpBtnTxt}>+ Спирка</Text>
+                  </TouchableOpacity>
 
                   <TouchableOpacity
                     style={styles.parkingWebBtn}
@@ -1619,15 +1648,7 @@ const MapScreen: React.FC = () => {
             contentContainerStyle={styles.parkingListContent}
           >
             {fuelResults.map((f, i) => (
-              <TouchableOpacity
-                key={i}
-                style={styles.fuelCard}
-                activeOpacity={0.75}
-                onPress={() => {
-                  setFuelResults([]);
-                  if (f.lat && f.lng) navigateTo([f.lng, f.lat], f.name);
-                }}
-              >
+              <View key={i} style={styles.fuelCard}>
                 <Text style={styles.fuelCardName} numberOfLines={2}>{f.name}</Text>
                 {f.brand ? <Text style={styles.fuelCardBrand}>{f.brand}</Text> : null}
                 <Text style={styles.fuelCardDist}>{fmtDistance(f.distance_m)}</Text>
@@ -1644,11 +1665,25 @@ const MapScreen: React.FC = () => {
                 {f.opening_hours ? (
                   <Text style={styles.fuelHours} numberOfLines={1}>{f.opening_hours}</Text>
                 ) : null}
-                <View style={[styles.goBtn, styles.goBtnFuel]}>
-                  <Icon name="gas-station" size={14} color="#0a0c1c" />
-                  <Text style={styles.goBtnTxt}>Маршрут</Text>
+                <View style={styles.fuelCardBtns}>
+                  <TouchableOpacity
+                    style={[styles.goBtn, styles.goBtnFuel]}
+                    activeOpacity={0.75}
+                    onPress={() => { setFuelResults([]); if (f.lat && f.lng) navigateTo([f.lng, f.lat], f.name); }}
+                  >
+                    <Icon name="gas-station" size={14} color="#0a0c1c" />
+                    <Text style={styles.goBtnTxt}>Маршрут</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.fuelWpBtn}
+                    activeOpacity={0.75}
+                    onPress={() => { setFuelResults([]); if (f.lat && f.lng) addWaypoint([f.lng, f.lat], f.name); }}
+                  >
+                    <Icon name="map-marker-plus" size={14} color={NEON} />
+                    <Text style={styles.fuelWpBtnTxt}>+ Спирка</Text>
+                  </TouchableOpacity>
                 </View>
-              </TouchableOpacity>
+              </View>
             ))}
           </ScrollView>
         </View>
@@ -1812,8 +1847,8 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Route options panel from GPT-4o show_routes ── */}
-      {routeOptions.length > 0 && !route && (
+      {/* ── Route options panel — shown at ROUTE_PREVIEW ── */}
+      {routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW' && (
         <RouteOptionsPanel
           routeOptions={routeOptions}
           selectedRouteIdx={selectedRouteIdx}
@@ -1936,7 +1971,7 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Tilt controls (bottom-right, browse mode only) ── */}
+      {/* ── Tilt controls (3D pitch) ── */}
       {!navigating && (
         <View style={[styles.tiltBtnCol, { bottom: insets.bottom + 100 }]}>
           <TouchableOpacity
@@ -1948,7 +1983,7 @@ const MapScreen: React.FC = () => {
               cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
             }}
           >
-            <Text style={styles.tiltBtnTxt}>⛰️</Text>
+            <Icon name="plus" size={20} color={NEON} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.tiltBtn}
@@ -1959,7 +1994,7 @@ const MapScreen: React.FC = () => {
               cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
             }}
           >
-            <Text style={styles.tiltBtnTxt}>🗺️</Text>
+            <Icon name="minus" size={20} color={NEON} />
           </TouchableOpacity>
         </View>
       )}
@@ -1996,41 +2031,44 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Gemini Chat FAB (bottom-left) — assistant ── */}
-      <TouchableOpacity
-        style={[
-          styles.geminiFab,
-          { left: spacing.md, bottom: insets.bottom + spacing.xl },
-          backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
-        ]}
-        onPress={() => {
-          setGeminiChatOpen(v => !v);
-          setGptChatOpen(false);
-        }}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
-        {/* Online dot */}
-        <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
-      </TouchableOpacity>
+      {/* ── Chat FABs — hidden when route active ── */}
+      {!route && (
+        <>
+          {/* Gemini Chat FAB (bottom-left) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { left: spacing.md, bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGeminiChatOpen(v => !v);
+              setGptChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
 
-      {/* ── GPT-4o FAB (bottom-right) — navigation ── */}
-      <TouchableOpacity
-        style={[
-          styles.geminiFab,
-          { bottom: insets.bottom + spacing.xl },
-          backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
-        ]}
-        onPress={() => {
-          setGptChatOpen(v => !v);
-          setGeminiChatOpen(false);
-        }}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
-        {/* Online dot */}
-        <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
-      </TouchableOpacity>
+          {/* GPT-4o FAB (bottom-right) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGptChatOpen(v => !v);
+              setGeminiChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
+        </>
+      )}
 
       {/* ── Chat Panels (GPT + Gemini) ── */}
       <ChatPanel
@@ -2052,6 +2090,7 @@ const MapScreen: React.FC = () => {
         googleUser={googleUser}
         insets={insets}
         micLoading={micLoading}
+        onClose={() => { setGptChatOpen(false); setGeminiChatOpen(false); }}
       />
 
       {/* ── Google Account Modal ── */}

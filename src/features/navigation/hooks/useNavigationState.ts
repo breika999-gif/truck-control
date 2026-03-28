@@ -32,6 +32,7 @@ export const useNavigationState = () => {
   const [selectedRouteIdx, setSelectedRouteIdx] = useState<number | null>(null);
   const [departAt, setDepartAt]               = useState<string | null>(null);
   const [mapPitch, setMapPitch]               = useState(0);
+  const [mapZoom, setMapZoom]                 = useState(15);
   const [waypoints, setWaypoints]             = useState<[number, number][]>([]);
   const [waypointNames, setWaypointNames]     = useState<string[]>([]);
   const [restrictionChecking, setRestrictionChecking] = useState(false);
@@ -62,6 +63,7 @@ export const useNavigationState = () => {
     selectedRouteIdx, setSelectedRouteIdx,
     departAt, setDepartAt,
     mapPitch, setMapPitch,
+    mapZoom, setMapZoom,
     waypoints, setWaypoints,
     waypointNames, setWaypointNames,
     restrictionChecking, setRestrictionChecking,

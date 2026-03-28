@@ -1,11 +1,11 @@
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View,
   Animated,
   PanResponder,
   StyleSheet,
   Dimensions,
-  TouchableOpacity,
+  Keyboard,
 } from 'react-native';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -14,7 +14,9 @@ const HANDLE_H = 48;
 interface BottomSheetProps {
   children: React.ReactNode;
   visible: boolean;
-  snapHeight: number; // expanded height
+  snapHeight: number;
+  initialHeight?: number;
+  kbHeight?: number; // Pass from parent for better sync
   onClose?: () => void;
 }
 
@@ -22,53 +24,90 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   children,
   visible,
   snapHeight,
+  initialHeight,
+  kbHeight = 0,
   onClose,
 }) => {
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const expandedRef = useRef(false);
+  const bottomOffset = useRef(new Animated.Value(0)).current;
+  
+  // Dynamic maxHeight to stay within screen when keyboard is up
+  const maxHeight = SCREEN_HEIGHT * 0.85;
+  const availableHeight = SCREEN_HEIGHT - (kbHeight > 0 ? kbHeight + 60 : 80);
+  const actualMaxHeight = Math.min(maxHeight, availableHeight);
 
-  const snapTo = useCallback((expanded: boolean) => {
-    const collapsedValue = snapHeight - HANDLE_H;
-    Animated.spring(translateY, {
-      toValue: expanded ? 0 : collapsedValue,
-      useNativeDriver: true,
-      damping: 22,
-      stiffness: 220,
-    }).start();
-    expandedRef.current = expanded;
-  }, [snapHeight, translateY]);
+  const [currentHeight, setCurrentHeight] = useState(Math.min(initialHeight ?? snapHeight, actualMaxHeight));
+  const dragStartHeightRef = useRef(currentHeight);
 
+  // Sync bottomOffset with kbHeight from props
   useEffect(() => {
+    Animated.timing(bottomOffset, {
+      toValue: kbHeight > 0 ? kbHeight + 5 : 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+
+    // Adjust height if it exceeds available space with keyboard
+    if (kbHeight > 0 && currentHeight > actualMaxHeight) {
+      setCurrentHeight(actualMaxHeight);
+    }
+  }, [kbHeight, bottomOffset, actualMaxHeight, currentHeight]);
+
+  const prevVisibleRef = useRef(visible);
+  useEffect(() => {
+    const wasVisible = prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+
     if (visible) {
-      // Initial animation from bottom
-      translateY.setValue(snapHeight);
-      snapTo(false); // start collapsed
+      const nextHeight = Math.min(initialHeight ?? snapHeight, actualMaxHeight);
+      setCurrentHeight(nextHeight);
+      dragStartHeightRef.current = nextHeight;
+      translateY.setValue(SCREEN_HEIGHT);
+      Animated.spring(translateY, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 22,
+        stiffness: 220,
+      }).start();
     } else {
+      // Only dismiss keyboard when sheet is actually closing (true → false)
+      if (wasVisible) Keyboard.dismiss();
       Animated.timing(translateY, {
         toValue: SCREEN_HEIGHT,
-        duration: 250,
+        duration: 220,
         useNativeDriver: true,
       }).start();
     }
-  }, [visible, snapHeight, snapTo, translateY]);
+  }, [visible, translateY, initialHeight, snapHeight, actualMaxHeight]);
+
+  const currentHeightRef = useRef(currentHeight);
+  useEffect(() => { currentHeightRef.current = currentHeight; }, [currentHeight]);
 
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, gs) =>
         Math.abs(gs.dy) > 8 && Math.abs(gs.dy) > Math.abs(gs.dx),
+      onPanResponderGrant: () => {
+        dragStartHeightRef.current = currentHeightRef.current;
+      },
       onPanResponderMove: (_, gs) => {
-        const base = expandedRef.current ? 0 : snapHeight - HANDLE_H;
-        const next = Math.max(0, Math.min(snapHeight - HANDLE_H, base + gs.dy));
-        translateY.setValue(next);
+        const nextHeight = Math.min(actualMaxHeight, Math.max(120, dragStartHeightRef.current - gs.dy));
+        setCurrentHeight(nextHeight);
       },
       onPanResponderRelease: (_, gs) => {
-        if (gs.vy < -0.3 || gs.dy < -40) {
-          snapTo(true);
-        } else if (gs.vy > 0.3 || gs.dy > 40) {
-          snapTo(false);
-        } else {
-          snapTo(expandedRef.current);
+        const releasedHeight = dragStartHeightRef.current - gs.dy;
+        if ((gs.dy > 80 && releasedHeight <= 180) || releasedHeight < 180) {
+          onClose?.();
+          return;
         }
+
+        setCurrentHeight(Math.min(actualMaxHeight, Math.max(180, releasedHeight)));
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          damping: 22,
+          stiffness: 220,
+        }).start();
       },
     })
   ).current;
@@ -76,43 +115,37 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   if (!visible) return null;
 
   return (
-    <Animated.View
-      style={[
-        styles.container,
-        { height: snapHeight, transform: [{ translateY }] },
-      ]}
-    >
-      {/* Handle / Pan Area */}
-      <View {...panResponder.panHandlers} style={styles.handleArea}>
-        <View style={styles.handle} />
-      </View>
+    <Animated.View style={[styles.outer, { bottom: bottomOffset }]}>
+      <Animated.View
+        style={[styles.container, { height: currentHeight, transform: [{ translateY }] }]}
+      >
+        <View {...panResponder.panHandlers} style={styles.handleArea}>
+          <View style={styles.handle} />
+        </View>
 
-      {/* Content */}
-      <View style={styles.content}>
-        {children}
-      </View>
-
-      {/* Close button (optional, for explicit close) */}
-      {onClose && (
-        <TouchableOpacity style={styles.closeBtn} onPress={onClose} />
-      )}
+        <View style={styles.content}>
+          {children}
+        </View>
+      </Animated.View>
     </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  outer: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
+    bottom: 0,
+    zIndex: 100,
+    elevation: 20,
+  },
+  container: {
     backgroundColor: 'rgba(10, 12, 28, 0.95)',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    overflow: 'hidden',
-    zIndex: 1000,
   },
   handleArea: {
     width: '100%',
@@ -128,13 +161,6 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-  },
-  closeBtn: {
-    position: 'absolute',
-    top: 12,
-    right: 16,
-    width: 24,
-    height: 24,
   },
 });
 

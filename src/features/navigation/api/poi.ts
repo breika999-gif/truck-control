@@ -11,11 +11,11 @@ export interface TruckPOI {
   brand?: string;
 }
 
-export const POI_META: Record<POICategory, { emoji: string; label: string }> = {
-  gas_station: { emoji: '⛽', label: 'Горива' },
-  parking:     { emoji: '🅿️', label: 'Паркинг' },
-  rest_area:   { emoji: '🛏️', label: 'Почивка' },
-  truck_stop:  { emoji: '🚛', label: 'Камион' },
+export const POI_META: Record<POICategory, { emoji: string; label: string; iconName: string }> = {
+  gas_station: { emoji: '⛽', label: 'Горива',   iconName: 'gas-station' },
+  parking:     { emoji: '🅿️', label: 'Паркинг',  iconName: 'parking' },
+  rest_area:   { emoji: '🛏️', label: 'Почивка',  iconName: 'bed' },
+  truck_stop:  { emoji: '🚛', label: 'Камион',   iconName: 'truck' },
 };
 
 // TomTom search query per category
