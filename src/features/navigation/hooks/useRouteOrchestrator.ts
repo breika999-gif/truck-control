@@ -14,7 +14,7 @@ import type { NavPhase } from './useNavigationState';
 import { fetchCamerasAlongRoute, fetchPOIsAlongRoute } from '../../../shared/services/backendApi';
 import type { POICard } from '../../../shared/services/backendApi';
 
-type Coords = [number, number];
+export type Coords = [number, number];
 
 type UseRouteOrchestratorArgs = {
   isMountedRef: MutableRefObject<boolean>;

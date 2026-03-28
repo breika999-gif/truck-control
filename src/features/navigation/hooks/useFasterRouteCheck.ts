@@ -3,8 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { RouteResult } from '../api/directions';
 import { fetchRoute, adrToExclude } from '../api/directions';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
-
-type Coords = [number, number];
+import type { Coords } from './useRouteOrchestrator';
 
 export interface FasterRouteOffer {
   route: RouteResult;

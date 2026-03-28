@@ -11,17 +11,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { BACKEND_URL } from '../../../shared/constants/config';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
-
-type SavedPOI = {
-  id: number;
-  name: string;
-  lat: number;
-  lng: number;
-  category?: string | null;
-  notes?: string | null;
-  starred?: boolean;
-  created_at?: string;
-};
+import type { SavedPOI } from '../../../shared/services/backendApi';
 
 interface Props {
   visible: boolean;
