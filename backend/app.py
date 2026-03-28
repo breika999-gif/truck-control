@@ -2010,11 +2010,6 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
 
     reply = " ".join(accumulated_content).strip()
 
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-
-    reply = (last_msg.content or "") if last_msg else ""
-
     # For non-message actions, generate clean Bulgarian display text instead of
     # forwarding GPT-4o's raw JSON reply (which may contain {"action":"route",...}).
     if action is not None:
