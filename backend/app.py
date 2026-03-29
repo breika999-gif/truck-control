@@ -1752,6 +1752,47 @@ def health():
     })
 
 
+@app.post("/api/poi-along-route")
+def poi_along_route_v2():
+    """Fetch truck parking or fuel along a route."""
+    data = _get_body()
+    coords = data.get("coords", [])
+    category = data.get("category", "truck_stop")
+    if not coords or len(coords) < 2:
+        return jsonify({"pois": []})
+    query = "truck stop" if category == "truck_stop" else "petrol station"
+    results = _tomtom_along_route(coords, query, limit=12)
+    for r in results:
+        r["category"] = category
+    return jsonify({"pois": results})
+
+
+@app.post("/api/cameras-along-route")
+def cameras_along_route_v2():
+    """Fetch speed cameras within bounding box of route."""
+    data = _get_body()
+    coords = data.get("coords", [])
+    if not coords or len(coords) < 2:
+        return jsonify({"cameras": []})
+    lats = [c[1] for c in coords]
+    lngs = [c[0] for c in coords]
+    pad = 0.008
+    bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
+    query = f'[out:json][timeout:20];node["highway"="speed_camera"]({bbox});out body;'
+    try:
+        resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=18)
+        elements = resp.json().get("elements", [])
+    except Exception:
+        return jsonify({"cameras": []})
+    cameras = []
+    for el in elements:
+        tags = el.get("tags", {})
+        speed = tags.get("maxspeed", "")
+        name = f"📷 Радар {speed} км/ч" if speed else "📷 Радар"
+        cameras.append({"lat": el["lat"], "lng": el["lon"], "name": name, "maxspeed": speed, "distance_m": 0, "category": "speed_camera"})
+    return jsonify({"cameras": cameras})
+
+
 @app.route('/api/tacho/live_update', methods=['POST'])
 def tacho_live_update():
     """
@@ -2827,60 +2868,6 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
         return []
 
 
-@app.post("/api/poi-along-route")
-def poi_along_route():
-    """Fetch truck parking or fuel along a route. Called when route is established."""
-    data = _get_body()
-    coords = data.get("coords", [])
-    category = data.get("category", "truck_stop") # truck_stop, fuel
-    
-    if not coords or len(coords) < 2:
-        return jsonify({"pois": []})
-
-    query = "truck stop" if category == "truck_stop" else "petrol station"
-    results = _tomtom_along_route(coords, query, limit=12)
-    
-    # Add category tag
-    for r in results:
-        r["category"] = category
-        
-    return jsonify({"pois": results})
-
-
-@app.post("/api/cameras-along-route")
-def cameras_along_route():
-    """Fetch speed cameras within bounding box of route. Called once when route is set."""
-    data = _get_body()
-    coords = data.get("coords", [])  # [[lng, lat], ...]
-    if not coords or len(coords) < 2:
-        return jsonify({"cameras": []})
-
-    lats = [c[1] for c in coords]
-    lngs = [c[0] for c in coords]
-    pad = 0.008  # ~800m padding
-    bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
-
-    query = f'[out:json][timeout:20];node["highway"="speed_camera"]({bbox});out body;'
-    try:
-        resp = requests.post(
-            "https://overpass-api.de/api/interpreter",
-            data=query, timeout=18,
-        )
-        elements = resp.json().get("elements", [])
-    except Exception:
-        return jsonify({"cameras": []})
-
-    cameras = []
-    for el in elements:
-        tags = el.get("tags", {})
-        speed = tags.get("maxspeed", "")
-        name = f"📷 Радар {speed} км/ч" if speed else "📷 Радар"
-        cameras.append({
-            "lat": el["lat"], "lng": el["lon"],
-            "name": name, "maxspeed": speed, "distance_m": 0,
-            "category": "speed_camera",
-        })
-    return jsonify({"cameras": cameras})
 
 
 @app.get("/api/proximity-alerts")
