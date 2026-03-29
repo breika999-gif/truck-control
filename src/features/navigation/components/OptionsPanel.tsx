@@ -152,8 +152,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   backendOnline,
 }) => {
   const close = () => setOptionsOpen(false);
-  const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : mapMode === 'hybrid' ? 'Хибридна карта' : 'Сателитна карта';
-  const mapModeIcon = mapMode === 'vector' ? 'earth' : mapMode === 'hybrid' ? 'layers' : 'satellite-variant';
+  const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
+  const mapModeIcon = mapMode === 'vector' ? 'earth' : 'layers';
 
   return (
     <>
@@ -214,7 +214,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 label={mapModeLabel}
                 onPress={() => {
                   setMapMode(prev => {
-                    const next: MapMode = prev === 'vector' ? 'hybrid' : prev === 'hybrid' ? 'satellite' : 'vector';
+                    const next: MapMode = prev === 'vector' ? 'hybrid' : 'vector';
                     if (!navigating) setMapIsLoaded(false);
                     return next;
                   });
