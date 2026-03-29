@@ -1751,10 +1751,6 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
-@app.get("/api/ping-v31")
-def ping_v31():
-    return jsonify({"pong": "3.1-REACH-TRANSPARKING"})
-
 @app.get("/api/health")
 def health():
     return jsonify({
