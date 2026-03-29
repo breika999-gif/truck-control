@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export type MapMode = 'vector' | 'hybrid' | 'satellite';
+export type MapMode = 'vector' | 'hybrid';
 
 export const useMapUIState = () => {
   const [mapLoaded, setMapLoaded] = useState(false);

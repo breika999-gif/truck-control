@@ -909,8 +909,7 @@ const MapScreen: React.FC = () => {
     : '#0A84FF';
 
   const mapStyleURL: string =
-    mapMode === 'satellite' ? 'mapbox://styles/mapbox/satellite-v9'          :
-    mapMode === 'hybrid'    ? 'mapbox://styles/mapbox/satellite-streets-v12' :
+    mapMode === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' :
     JSON.stringify({
       version: 8,
       imports: [{ id: 'basemap', url: 'mapbox://styles/mapbox/standard', config: {
