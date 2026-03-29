@@ -252,7 +252,7 @@ export function useRouteOrchestrator({
     } finally {
       // REROUTING → NAVIGATING; SEARCHING → ROUTE_PREVIEW
       if (isMountedRef.current) {
-        setNavPhase(navigatingRef.current ? 'NAVIGATING' : 'ROUTE_PREVIEW');
+        setNavPhase((navigatingRef.current || autoStart) ? 'NAVIGATING' : 'ROUTE_PREVIEW');
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -100,12 +100,18 @@ export function buildCongestionGeoJSON(
     };
   }
   const features: GeoJSON.Feature[] = [];
-  for (let i = 0; i < congestion.length && i + 1 < coords.length; i++) {
-    features.push({
-      type: 'Feature',
-      properties: { congestion: congestion[i] || 'unknown' },
-      geometry: { type: 'LineString', coordinates: [coords[i], coords[i + 1]] },
-    });
+  let segStart = 0;
+  for (let i = 1; i <= congestion.length && i + 1 <= coords.length; i++) {
+    const isLast = i === congestion.length || i + 1 === coords.length;
+    const changed = !isLast && (congestion[i] || 'unknown') !== (congestion[segStart] || 'unknown');
+    if (changed || isLast) {
+      features.push({
+        type: 'Feature',
+        properties: { congestion: congestion[segStart] || 'unknown' },
+        geometry: { type: 'LineString', coordinates: coords.slice(segStart, i + 1) },
+      });
+      segStart = i;
+    }
   }
   return { type: 'FeatureCollection', features };
 }
@@ -144,10 +150,13 @@ export async function fetchRoute(
   departAt?: string,
   waypoints?: [number, number][],
 ): Promise<RouteResult | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
   try {
     const res = await fetch(`${BACKEND_URL}/api/routes/calculate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         origin,
         destination,
@@ -158,6 +167,7 @@ export async function fetchRoute(
         depart_at: departAt ?? null,
       }),
     });
+    clearTimeout(timeoutId);
     if (!res.ok) return null;
     const data = await res.json();
     if (data.error) return null;
