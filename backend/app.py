@@ -1838,6 +1838,9 @@ import time as _cache_time
 _gpt_cache: dict[str, tuple[dict, float]] = {}   # key → (result, expires_at)
 _GPT_CACHE_TTL = 600  # 10 minutes
 
+_route_cache: dict[str, tuple[dict, float]] = {}   # key → (result, expires_at)
+_ROUTE_CACHE_TTL = 300  # 5 minutes
+
 _poi_cache: dict[str, tuple[list, float]] = {}   # POI results cache
 _POI_CACHE_TTL = 600  # 10 minutes
 
@@ -2372,6 +2375,29 @@ def calculate_route():
     if not _tomtom_ready:
         return jsonify({"error": "TomTom API key not configured"}), 503
 
+    # Build avoid list early for cache key
+    avoid_parts = []
+    if adr_tunnel_code in ("D", "E"):
+        avoid_parts.append("tunnels")
+    elif adr_tunnel_code == "C":
+        avoid_parts.append("ferries")
+    if truck.get("avoid_unpaved"):
+        avoid_parts.append("unpavedRoads")
+
+    # ── Cache Check ──
+    o_lat, o_lng = round(origin[1], 3), round(origin[0], 3)
+    d_lat, d_lng = round(destination[1], 3), round(destination[0], 3)
+    avoid_key = ",".join(sorted(avoid_parts))
+    # Include truck dimensions in cache key for correctness
+    truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
+    cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{avoid_key}:{str(waypoints)}:{truck_key}"
+
+    now = _cache_time.time()
+    if cache_key in _route_cache:
+        cached_res, expires_at = _route_cache[cache_key]
+        if now < expires_at:
+            return jsonify(cached_res)
+
     all_points = [origin] + waypoints + [destination]
     locations  = ":".join(f"{p[1]},{p[0]}" for p in all_points)
     url        = f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json"
@@ -2397,14 +2423,6 @@ def calculate_route():
     if code:
         params["vehicleAdrTunnelRestrictionCode"] = code
 
-    # Build avoid list — combine ADR tunnel restriction with unpaved roads
-    avoid_parts = []
-    if adr_tunnel_code in ("D", "E"):
-        avoid_parts.append("tunnels")
-    elif adr_tunnel_code == "C":
-        avoid_parts.append("ferries")
-    if truck.get("avoid_unpaved"):
-        avoid_parts.append("unpavedRoads")
     if avoid_parts:
         params["avoid"] = ",".join(avoid_parts)
     if depart_at:
@@ -2466,7 +2484,7 @@ def calculate_route():
                 "congestion_geojson": _tomtom_congestion_geojson(alt_rt, alt_geom),
             })
 
-        return jsonify({
+        final_res = {
             "geometry":          geometry,
             "distance":          summary.get("lengthInMeters", 0),
             "duration":          summary.get("travelTimeInSeconds", 0),
@@ -2477,7 +2495,12 @@ def calculate_route():
             "traffic_alerts":    _tomtom_traffic_alerts(rt, geometry),
             "restrictions":      _extract_route_restrictions(geometry),
             "alternatives":      alternatives,
-        })
+        }
+        
+        # Store in cache
+        _route_cache[cache_key] = (final_res, _cache_time.time() + _ROUTE_CACHE_TTL)
+        
+        return jsonify(final_res)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
