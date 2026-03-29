@@ -124,6 +124,13 @@ _GEMINI_SYSTEM = (
     "- Седмична: 45ч редовна / 24ч намалена (компенсация до 3-та седм.)\n"
     "- Лимити: 56ч/седм, 90ч/2седм. Пауза: 45мин след 4.5ч (или 15+30)\n"
     "- При <30мин до лимит → предупреди веднага.\n\n"
+    "МОЖЕ ЛИ ДА СТИГНА: При въпрос 'Мога ли да стигна до X?' изчисли:\n"
+    "  1. Оцени разстоянието в км до X от текущата GPS позиция на шофьора.\n"
+    "  2. Изчисли времето: разстояние / 80 км/ч = часове.\n"
+    "  3. Сравни с 'ефективно-остава' от тахографа.\n"
+    "  4. Ако може → 'Да, колега! ~X км / ~Y ч. Имаш Z ч оставащи.' "
+    "  5. Ако не може → 'Не, колега. X ч до дестинацията, но имаш само Y ч. "
+    "Трябва почивка след ~K км. Предлагам спирка при...'\n\n"
     "📱 ПРИЛОЖЕНИЯ — добавяй в края:\n"
     "[APP:{\"app\":\"<name>\",\"query\":\"<опц>\"}]\n"
 )
@@ -2203,11 +2210,14 @@ def gemini_chat():
                 ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
             
             tacho = _tacho_summary(user_email)
+            min_remaining_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
+            est_km = round(min_remaining_h * 80)
             ctx_note += (
-                f" [ТАХОГРАФ: непрекъснато {tacho['continuous_driven_h']}ч/4.5ч; "
-                f"днес {tacho['daily_driven_h']}ч/9ч; "
+                f" [ТАХОГРАФ: "
+                f"шофирано-непрекъснато {tacho['continuous_driven_h']}ч/4.5ч (остава {tacho['continuous_remaining_h']}ч); "
+                f"шофирано-днес {tacho['daily_driven_h']}ч/9ч (остава {tacho['daily_remaining_h']}ч); "
                 f"седмично {tacho['weekly_driven_h']}ч/56ч; "
-                f"двуседмично {tacho['biweekly_driven_h']}ч/90ч]"
+                f"ефективно-остава {min_remaining_h}ч ≈ {est_km}км при 80км/ч]"
             )
             contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
@@ -2804,11 +2814,16 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
         step = len(coords) // MAX_PTS
         sampled = coords[::step]
     
+    # Ensure end point is included if downsampled
+    if sampled[-1] != coords[-1]:
+        sampled.append(coords[-1])
+    
     try:
         # Pre-calculate cumulative distances for sampled route points
-        route_dists = [0.0] * len(sampled)
+        n_pts = len(sampled)
+        route_dists = [0.0] * n_pts
         curr_total = 0.0
-        for i in range(1, len(sampled)):
+        for i in range(1, n_pts):
             curr_total += _haversine_m(sampled[i-1][1], sampled[i-1][0], sampled[i][1], sampled[i][0])
             route_dists[i] = curr_total
 
