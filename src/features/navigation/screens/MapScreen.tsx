@@ -664,6 +664,13 @@ const MapScreen: React.FC = () => {
 
   // ── App deep-link handler ──────────────────────────────────────────────────
   const handleAppIntent = useCallback((intent: AppIntent) => {
+    // 1. Direct URL priority (e.g. from Gemini TransParking intent)
+    if (intent.url) {
+      Linking.openURL(intent.url).catch(() => null);
+      return;
+    }
+
+    // 2. Named app logic via APP_URL_MAP
     const builder = APP_URL_MAP[intent.app.toLowerCase()];
     const url = builder ? builder(intent.query) : null;
     if (!url) return;

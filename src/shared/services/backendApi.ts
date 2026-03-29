@@ -104,6 +104,7 @@ export type MapAction =
 export interface AppIntent {
   app: string;    // 'youtube' | 'spotify' | 'whatsapp' | 'maps' | ...
   query?: string; // optional search/navigation query
+  url?: string;   // optional direct deep-link or web URL
 }
 
 export interface ChatResponse {
