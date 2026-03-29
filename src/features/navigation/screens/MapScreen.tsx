@@ -492,6 +492,14 @@ const MapScreen: React.FC = () => {
   // Convenience alias — JSX uses mapIsLoaded for readability
   const mapIsLoaded = mapLoaded;
 
+  // ── Auto Day/Night Theme based on hour ────────────────────────────────────
+  useEffect(() => {
+    const hour = new Date().getHours();
+    const isDay = hour >= 7 && hour < 19;
+    console.log(`[MapScreen] Auto-theme: ${isDay ? 'Day' : 'Night'} mode (hour: ${hour})`);
+    setLightMode(isDay);
+  }, [setLightMode]);
+
   // ── Load Google account + starred POIs + tacho summary on mount ──────────
 
   // ── HOS timer & warnings handled by useTacho hook ────────────────────────
