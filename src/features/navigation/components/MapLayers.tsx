@@ -193,6 +193,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.CircleLayer
             id="restriction-circles"
             slot="top"
+            minZoomLevel={11}
             style={{
               circleRadius: 18,
               circleColor: '#FFFFFF',
@@ -204,6 +205,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="restriction-signs"
             slot="top"
+            minZoomLevel={11}
             style={{
               textField: [
                 'concat',
@@ -401,14 +403,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
           }}
         >
           <Mapbox.SymbolLayer
-            id="parking-symbols" slot="top" minZoomLevel={7}
+            id="parking-symbols" slot="top" minZoomLevel={10}
             style={{
-              textField: ['concat', 'P', '\n', ['case',
+              textField: ['step', ['zoom'], 'P', 12, ['concat', 'P', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
                 ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
-              ]],
-              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 10, 12, 14, 18],
+              ]]],
+              textSize: ['interpolate', ['linear'], ['zoom'], 10, 10, 12, 14, 18, 18],
               textColor: '#ffffff',
               textHaloColor: '#00f7ff',
               textHaloWidth: 1.8,
@@ -437,14 +439,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
           }}
         >
           <Mapbox.SymbolLayer
-            id="fuel-symbols" slot="top"
+            id="fuel-symbols" slot="top" minZoomLevel={10}
             style={{
-              textField: ['concat', '⛽', '\n', ['case',
+              textField: ['step', ['zoom'], '⛽', 12, ['concat', '⛽', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
                 ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
-              ]],
-              textSize: 13,
+              ]]],
+              textSize: ['interpolate', ['linear'], ['zoom'], 10, 10, 12, 13],
               textAnchor: 'top',
               textOffset: [0, 0.5],
               textHaloColor: '#1a1a2e',
@@ -477,10 +479,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {mapIsLoaded && cameraResults.length > 0 && (
         <Mapbox.ShapeSource id="camera-source" shape={cameraGeoJSON}>
           <Mapbox.SymbolLayer
-            id="camera-emoji" slot="top" minZoomLevel={7}
+            id="camera-emoji" slot="top" minZoomLevel={12}
             style={{
               textField: '📷',
-              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 12, 16, 14, 22],
+              textSize: ['interpolate', ['linear'], ['zoom'], 12, 12, 14, 18, 16, 22],
               textHaloColor: '#ff3b30',
               textHaloWidth: 1.5,
               textAnchor: 'bottom',
