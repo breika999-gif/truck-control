@@ -1755,7 +1755,7 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 def health():
     return jsonify({
         "status":        "ok",
-        "version":       "3.0-POI",
+        "version":       "3.1-REACH-TRANSPARKING",
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
         "db":            DB_PATH,
