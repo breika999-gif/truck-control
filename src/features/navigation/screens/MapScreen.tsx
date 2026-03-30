@@ -1026,8 +1026,8 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
-        onCameraChanged={() => {
-          if (navigating && isTracking) {
+        onRegionWillChange={(_feature: any, isUserInteraction: boolean) => {
+          if (navigating && isTracking && isUserInteraction) {
             setIsTracking(false);
           }
         }}
