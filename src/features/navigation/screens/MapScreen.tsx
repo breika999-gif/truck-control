@@ -2001,6 +2001,11 @@ const MapScreen: React.FC = () => {
                     }
                   }}
                 >
+                  {b.source === 'google' && (
+                    <View style={styles.sourceBadge}>
+                      <Text style={styles.sourceBadgeTxt}>Google</Text>
+                    </View>
+                  )}
                   {b.photo_url ? (
                     <Image source={{ uri: b.photo_url }} style={styles.bizCardPhoto} />
                   ) : null}

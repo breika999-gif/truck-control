@@ -1355,6 +1355,21 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 3,
   },
+  sourceBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    zIndex: 10,
+  },
+  sourceBadgeTxt: {
+    color: '#4285F4', // Google Blue
+    fontSize: 9,
+    fontWeight: '800',
+  },
   bizCardDist: {
     color: '#00e5ff',
     fontSize: 13,

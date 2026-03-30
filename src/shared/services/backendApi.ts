@@ -58,6 +58,7 @@ export interface POICard {
   business_status?: string;
   open_now?: boolean | null;
   needs_confirm?: boolean;
+  source?: 'google' | 'tomtom' | 'osm';
 }
 
 /** One traffic alert bubble on the route map */

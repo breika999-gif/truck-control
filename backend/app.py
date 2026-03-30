@@ -1639,20 +1639,66 @@ def _tool_calculate_hos_reach(driven_seconds: int, speed_kmh: float, user_email:
 
 
 def _google_places_fallback(query: str, lat: float, lng: float) -> list:
-    """Replaced by TomTom Search — kept for backward compatibility."""
-    return _tomtom_search(query, lat, lng)
+    """Real Google Places fallback if TomTom fails."""
+    if not _places_ready:
+        return []
+    try:
+        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+        params = {
+            "query":    query,
+            "key":      _GOOGLE_PLACES_KEY,
+            "language": "bg",
+        }
+        if lat and lng:
+            params["location"] = f"{lat},{lng}"
+            params["radius"]   = 50000
+        
+        r = requests.get(url, params=params, timeout=8)
+        r.raise_for_status()
+        
+        results = []
+        for item in r.json().get("results", []):
+            loc      = item.get("geometry", {}).get("location", {})
+            item_lat = loc.get("lat")
+            item_lng = loc.get("lng")
+            if item_lat is None:
+                continue
+            
+            name    = item.get("name")
+            address = item.get("formatted_address", "")
+            dist    = round(_haversine_m(lat, lng, item_lat, item_lng)) if lat else 0
+            
+            results.append({
+                "name":       name,
+                "address":    address,
+                "lat":        item_lat,
+                "lng":        item_lng,
+                "distance_m": dist,
+                "source":     "google",
+            })
+        return results
+    except Exception:
+        return []
 
 
 def _tool_search_business(query: str, city: str, lat: float, lng: float) -> list:
-    """Search for any business/address/POI using TomTom Fuzzy Search."""
+    """Search for any business/address/POI using TomTom with Google fallback."""
     q = f"{query} {city}".strip()
     _ck = f"biz:{q.lower()}:{round(lat, 2)}:{round(lng, 2)}"
     _cached = _poi_cache_get(_ck)
     if _cached is not None:
         return _cached
+    
+    # 1. Try TomTom
     results = _tomtom_search(q, lat, lng, limit=6)
+    
+    # 2. Fallback to Google if TomTom found nothing
+    if not results:
+        results = _google_places_fallback(q, lat, lng)
+        
     if not results:
         return [{"error": f"Не намерих '{q}'"}]
+    
     _poi_cache_set(_ck, results)
     return results
 
