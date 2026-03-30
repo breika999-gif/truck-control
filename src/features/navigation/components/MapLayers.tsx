@@ -289,7 +289,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       {/* ── Route ── */}
       {mapIsLoaded && routeShape && (
-        <Mapbox.ShapeSource id="route-source" shape={routeShape}>
+        <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
           <Mapbox.LineLayer id="route-casing" slot="middle" style={{ lineColor: '#0a0a1a', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
           <Mapbox.LineLayer
             id="route-line"
