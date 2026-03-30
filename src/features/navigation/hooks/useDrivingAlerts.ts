@@ -50,10 +50,10 @@ export function useDrivingAlerts({
       Animated.timing(speedingFlash, { toValue: 0, duration: 300, useNativeDriver: false }),
     ]).start();
     if (!voiceMutedRef.current) ttsSpeak(`Надвишихте разрешената скорост. Лимит ${speedLimit} км/ч.`);
-  }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert, speedingFlash]);
+    }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert, speedingFlash]);
 
-  // в”Ђв”Ђ Speed camera proximity alert вЂ” TTS + flash every 10 s when < 600 m в”Ђв”Ђ
-  useEffect(() => {
+    // ── Speed camera proximity alert — TTS + flash every 10 s when < 600 m ──
+    useEffect(() => {
     if (!navigating || !userCoords || cameraResults.length === 0) {
       setCameraAlert(null);
       return;
