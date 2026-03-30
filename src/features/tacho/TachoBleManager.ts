@@ -8,13 +8,11 @@ export class TachoBleManager {
 
   // 1. Търсене на тахограф
   public async scan() {
-    console.log('[Tacho] Сканиране за Bluetooth тахографи...');
     // Тук ще използваме react-native-ble-manager за филтриране по SERVICE_UUID
   }
 
   // 2. Свързване и абониране за нотификации
   public async connect(deviceId: string) {
-    console.log(`[Tacho] Свързване с ${deviceId}...`);
     // След свързване, веднага се абонираме за CHARACTERISTICS.ACTIVITY
     // Така тахографът сам ни праща данни при всяка промяна (например тръгване)
   }
@@ -33,6 +31,5 @@ export class TachoBleManager {
     };
     
     // 3. Пращаме към бекенда, за да може Gemini да го "види" в контекста на чата
-    console.log('[Tacho] Данните са изпратени към AI:', payload);
   }
 }

@@ -301,7 +301,7 @@ const MapScreen: React.FC = () => {
   const setTachoSummaryRef = useRef<(summary: TachoSummary) => void>(() => {});
 
   const {
-    backendOnline,
+    backendOnline: _bootstrapOnline,
     googleUser,
     setGoogleUser,
     googleUserRef,
@@ -488,6 +488,8 @@ const MapScreen: React.FC = () => {
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
   const [customOriginName, setCustomOriginName] = useState('');
   const [isTracking, setIsTracking] = useState(true);
+  const [backendOnline, setBackendOnline] = useState(true);
+  const backendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
   const offRouteCountRef   = useRef(0);
@@ -581,6 +583,7 @@ const MapScreen: React.FC = () => {
       if (now - lastRerouteTimeRef.current < 45_000) return; // 45s cooldown
       offRouteCountRef.current = 0;
       lastRerouteTimeRef.current = now;
+      if (!voiceMutedRef.current) { ttsSpeak('Отклонение! Преизчислявам маршрута.'); }
       navigateTo(destination, destinationName, waypoints, true);
     }
   }, [userCoords, userHeading, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, getBearingAtNearest, navigateTo]);
@@ -597,7 +600,14 @@ const MapScreen: React.FC = () => {
 
   // ── Wake up Render on app start (free tier sleeps after 15 min) ──────────────
   useEffect(() => {
-    fetch('https://truckexpoai.onrender.com/api/health', { method: 'GET' }).catch(() => {});
+    const checkBackend = () => {
+      fetch('https://truckexpoai.onrender.com/api/health', { method: 'GET' })
+        .then(r => { if (r.ok) setBackendOnline(true); else setBackendOnline(false); })
+        .catch(() => setBackendOnline(false));
+    };
+    checkBackend();
+    backendPollRef.current = setInterval(checkBackend, 30_000);
+    return () => { if (backendPollRef.current) clearInterval(backendPollRef.current); };
   }, []);
 
   // ── Load Google account + starred POIs + tacho summary on mount ──────────
@@ -1115,6 +1125,11 @@ const MapScreen: React.FC = () => {
 
   return (
     <View style={styles.container}>
+      {!backendOnline && (
+        <View style={styles.noInternetBanner} pointerEvents="none">
+          <Text style={styles.noInternetText}>⚠️ Сървърът не отговаря — AI функциите са изключени</Text>
+        </View>
+      )}
 
       {/* ── Map ── */}
       <Mapbox.MapView

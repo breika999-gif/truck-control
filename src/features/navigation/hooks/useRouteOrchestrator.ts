@@ -97,7 +97,6 @@ export function useRouteOrchestrator({
   useEffect(() => {
     const isNew = destinationRef.current?.[0] !== destination?.[0] || destinationRef.current?.[1] !== destination?.[1];
     if (isNew) {
-      console.log('[Orchestrator] Destination changed, resetting poisFetchedRef');
       poisFetchedRef.current = false;
     }
     destinationRef.current = destination;

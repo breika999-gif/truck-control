@@ -9,6 +9,23 @@ export const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   map: { flex: 1 },
 
+  noInternetBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(255,60,0,0.85)',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    zIndex: 9999,
+    alignItems: 'center',
+  },
+  noInternetText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
   searchContainer: {
     position: 'absolute',
     left: spacing.md,
