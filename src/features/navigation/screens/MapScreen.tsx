@@ -259,6 +259,7 @@ const MapScreen: React.FC = () => {
     userCoords,
     userCoordsRef,
     setUserCoords,
+    userHeading,
     gpsReady,
     setGpsReady,
     speed,
@@ -527,6 +528,26 @@ const MapScreen: React.FC = () => {
     return minD;
   }, []);
 
+  const getBearingAtNearest = useCallback((pos: [number, number], routeObj: RouteResult): number => {
+    const coords = routeObj.geometry.coordinates;
+    let nearestIdx = 0;
+    let nearestD = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = haversineMeters(pos, [coords[i][0], coords[i][1]]);
+      if (d < nearestD) { nearestD = d; nearestIdx = i; }
+    }
+    const i = Math.min(nearestIdx, coords.length - 2);
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const dLon = (p2[0] - p1[0]) * Math.PI / 180;
+    const lat1 = p1[1] * Math.PI / 180;
+    const lat2 = p2[1] * Math.PI / 180;
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    const brng = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    return brng;
+  }, []);
+
   // ── Auto-reroute detection ────────────────────────────────────────────────
   useEffect(() => {
     if (!navigating || !route || !destination || !userCoords) {
@@ -537,6 +558,18 @@ const MapScreen: React.FC = () => {
     if (navPhase === 'REROUTING' || navPhase === 'SEARCHING') return;
 
     const dist = getDistToRoute(userCoords, route);
+
+    // Bearing check: if GPS heading differs >90° from route direction → parallel street, not off-route
+    if (dist > 80 && userHeading !== null) {
+      const routeBearing = getBearingAtNearest(userCoords, route);
+      const diff = Math.abs(((userHeading - routeBearing) + 360) % 360);
+      const angleDiff = diff > 180 ? 360 - diff : diff;
+      if (angleDiff > 90) {
+        // Heading away from route direction — likely parallel street, skip
+        return;
+      }
+    }
+
     if (dist > 80) {
       offRouteCountRef.current += 1;
     } else {
@@ -550,7 +583,7 @@ const MapScreen: React.FC = () => {
       lastRerouteTimeRef.current = now;
       navigateTo(destination, destinationName, waypoints, true);
     }
-  }, [userCoords, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, navigateTo]);
+  }, [userCoords, userHeading, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, getBearingAtNearest, navigateTo]);
 
   // Convenience alias — JSX uses mapIsLoaded for readability
   const mapIsLoaded = mapLoaded;

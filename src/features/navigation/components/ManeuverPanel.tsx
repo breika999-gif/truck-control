@@ -86,6 +86,19 @@ function progressColor(ratio: number): string {
   return '#F44336';                  // red — close
 }
 
+function resolveInstruction(type: string, modifier: string | undefined, original: string): string {
+  // Fork/merge: slight deviation = keep current lane, no lane change needed
+  if ((type === 'fork' || type === 'merge') &&
+      (modifier === 'slight left' || modifier === 'slight right')) {
+    return 'Остани в текущата лента';
+  }
+  // On-ramp with straight = stay on current road, not taking ramp
+  if (type === 'on ramp' && modifier === 'straight') {
+    return 'Остани в текущата лента';
+  }
+  return original;
+}
+
 const ManeuverPanel: React.FC<ManeuverPanelProps> = ({
   step,
   nextStep,
@@ -163,7 +176,7 @@ const ManeuverPanel: React.FC<ManeuverPanelProps> = ({
         />
         <View style={s.textCol}>
           <Text style={s.instruction} numberOfLines={2}>
-            {step.maneuver.instruction}
+            {resolveInstruction(step.maneuver.type, step.maneuver.modifier, step.maneuver.instruction)}
           </Text>
           <Text style={s.distance}>{fmtDistance(distToTurn)}</Text>
         </View>

@@ -76,6 +76,30 @@ _tomtom_ready = bool(_TOMTOM_KEY)
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-04-17")
 
+# EU truck speed limits (km/h) by country ISO code: [urban, rural, motorway]
+_TRUCK_SPEED_LIMITS: dict[str, tuple[int, int, int]] = {
+    "BG": (50, 80, 100),
+    "DE": (50, 60, 80),
+    "AT": (50, 70, 80),
+    "RO": (50, 80, 110),
+    "HU": (50, 80, 80),
+    "HR": (50, 80, 90),
+    "RS": (50, 70, 80),
+    "GR": (50, 80, 90),
+    "TR": (50, 80, 90),
+    "PL": (50, 70, 80),
+    "CZ": (50, 80, 80),
+    "SK": (50, 80, 80),
+    "SI": (50, 80, 80),
+    "IT": (50, 70, 80),
+    "FR": (50, 80, 90),
+    "ES": (50, 80, 90),
+    "NL": (50, 80, 90),
+    "BE": (50, 70, 90),
+    "CH": (50, 80, 80),
+    "GB": (48, 60, 60),
+}
+
 try:
     from google import genai as _google_genai
     _gemini_client = _google_genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
@@ -1919,6 +1943,13 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
             f"{prof.get('length_m', 12)}m length, {prof.get('axle_count', 3)} axles, "
             f"hazmat={prof.get('hazmat_class', 'none')}."
         )
+        # Inject country speed limits into GPT-4o system context
+        _sl_lines = "\n".join(
+            f"  {cc}: urban {u}km/h, rural {r}km/h, motorway {m}km/h"
+            for cc, (u, r, m) in _TRUCK_SPEED_LIMITS.items()
+        )
+        system_txt += f"\n\nTruck speed limits by country (for ETA calculations):\n{_sl_lines}"
+
 
     messages = [{"role": "system", "content": system_txt}]
     for h in history:

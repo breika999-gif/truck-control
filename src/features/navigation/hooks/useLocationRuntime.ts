@@ -67,6 +67,7 @@ export const useLocationRuntime = ({
   navigating,
 }: UseLocationRuntimeProps) => {
   const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
+  const [userHeading, setUserHeading] = useState<number | null>(null);
   const userCoordsRef = useRef<[number, number] | null>(null);
   const [gpsReady, setGpsReady] = useState(false);
   const [speed, setSpeed] = useState(0);
@@ -111,6 +112,8 @@ export const useLocationRuntime = ({
           const spd = pos.coords.speed ?? -1;
           const kmh = spd > 0 ? spd * 3.6 : 0;
           setSpeed(Math.round(kmh));
+          const hdg = pos.coords.heading ?? -1;
+          setUserHeading(hdg >= 0 ? hdg : null);
           isDrivingRef.current = kmh > 3;
 
           const tqNow = Date.now();
@@ -250,6 +253,7 @@ export const useLocationRuntime = ({
     userCoords,
     userCoordsRef,
     setUserCoords,
+    userHeading,
     gpsReady,
     setGpsReady,
     speed,

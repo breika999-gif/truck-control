@@ -172,7 +172,7 @@ const TachoScreen: React.FC = () => {
           <Icon name="information-outline" size={20} color={colors.textMuted} />
           <Text style={styles.infoText}>
             За свързване се уверете, че тахографът е в режим "Pairing" 
-            от менюто Settings -> Bluetooth.
+            от менюто Settings {'->'} Bluetooth.
           </Text>
         </View>
       </ScrollView>
