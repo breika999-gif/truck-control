@@ -76,28 +76,36 @@ _tomtom_ready = bool(_TOMTOM_KEY)
 # ── Gemini setup ───────────────────────────────────────────────────────────────
 _GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-04-17")
 
-# EU truck speed limits (km/h) by country ISO code: [urban, rural, motorway]
+# EU/Balkans truck speed limits (km/h) by ISO-3166-1 alpha-2 country code
+# Source: Sygic CountriesInfo.json (_TR_SL_Rural_Areas + _TR_SL_Highways)
+# Format: (urban, rural, motorway)
 _TRUCK_SPEED_LIMITS: dict[str, tuple[int, int, int]] = {
-    "BG": (50, 80, 100),
-    "DE": (50, 60, 80),
-    "AT": (50, 70, 80),
-    "RO": (50, 80, 110),
-    "HU": (50, 80, 80),
-    "HR": (50, 80, 90),
-    "RS": (50, 70, 80),
-    "GR": (50, 80, 90),
-    "TR": (50, 80, 90),
-    "PL": (50, 70, 80),
-    "CZ": (50, 80, 80),
-    "SK": (50, 80, 80),
-    "SI": (50, 80, 80),
-    "IT": (50, 70, 80),
-    "FR": (50, 80, 90),
-    "ES": (50, 80, 90),
-    "NL": (50, 80, 90),
-    "BE": (50, 70, 90),
-    "CH": (50, 80, 80),
-    "GB": (48, 60, 60),
+    "BG": (50, 80, 100),   # Bulgaria
+    "DE": (50, 80,  80),   # Germany       ← rural corrected from 60 to 80
+    "AT": (50, 70,  80),   # Austria
+    "RO": (50, 80, 110),   # Romania
+    "HU": (50, 70,  80),   # Hungary       ← rural corrected from 80 to 70
+    "HR": (50, 80,  90),   # Croatia
+    "RS": (50, 70, 100),   # Serbia        ← motorway corrected from 80 to 100
+    "GR": (50, 80,  85),   # Greece        ← motorway corrected from 90 to 85
+    "TR": (50, 70,  90),   # Turkey        ← rural corrected from 80 to 70
+    "PL": (50, 70,  80),   # Poland
+    "CZ": (50, 80,  80),   # Czechia
+    "SK": (50, 90,  90),   # Slovakia      ← both corrected from 80 to 90
+    "SI": (50, 80,  90),   # Slovenia
+    "IT": (50, 80, 100),   # Italy         ← both corrected (70/80 → 80/100)
+    "FR": (50, 80,  90),   # France
+    "ES": (50, 80,  90),   # Spain
+    "NL": (50, 80,  80),   # Netherlands   ← motorway corrected from 90 to 80
+    "BE": (50, 90,  90),   # Belgium       ← rural corrected from 70 to 90
+    "CH": (50, 80,  80),   # Switzerland
+    "GB": (48, 50,  70),   # UK (mph-based: 30/50/60 mph)
+    "UA": (50, 80,  90),   # Ukraine
+    "MK": (50, 80,  80),   # North Macedonia
+    "AL": (50, 80,  90),   # Albania
+    "BA": (50, 80,  80),   # Bosnia & Herzegovina
+    "ME": (50, 80,  80),   # Montenegro
+    "MD": (50, 80,  90),   # Moldova
 }
 
 try:

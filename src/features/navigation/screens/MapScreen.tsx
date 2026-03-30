@@ -659,7 +659,7 @@ const MapScreen: React.FC = () => {
     setNavPhase('NAVIGATING');
     if (!voiceMutedRef.current) {
       Tts.stop();
-      ttsSpeak('Навигацията е стартирана');
+      ttsSpeak('Следвайте маршрута.');
     }
   }, [mapMode, resetSession]);
   handleStartRef.current = handleStart; // keep ref fresh each render

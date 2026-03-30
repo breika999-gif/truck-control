@@ -49,7 +49,7 @@ export function useDrivingAlerts({
       Animated.timing(speedingFlash, { toValue: 1, duration: 150, useNativeDriver: false }),
       Animated.timing(speedingFlash, { toValue: 0, duration: 300, useNativeDriver: false }),
     ]).start();
-    if (!voiceMutedRef.current) ttsSpeak(`Р›РёРјРёС‚ ${speedLimit} РєРј/С‡.`);
+    if (!voiceMutedRef.current) ttsSpeak(`Надвишихте разрешената скорост. Лимит ${speedLimit} км/ч.`);
   }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert, speedingFlash]);
 
   // в”Ђв”Ђ Speed camera proximity alert вЂ” TTS + flash every 10 s when < 600 m в”Ђв”Ђ
@@ -68,7 +68,7 @@ export function useDrivingAlerts({
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
       playCameraAlert();
-      if (!voiceMutedRef.current) ttsSpeak(`РљР°РјРµСЂР° РЅР° ${Math.round(nearest.dist)} РјРµС‚СЂР°.`);
+      if (!voiceMutedRef.current) ttsSpeak(`Наближавате радар за скорост. ${Math.round(nearest.dist)} метра.`);
       Animated.sequence([
         Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
         Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
