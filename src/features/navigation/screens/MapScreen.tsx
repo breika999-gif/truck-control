@@ -497,9 +497,13 @@ const MapScreen: React.FC = () => {
   useEffect(() => {
     const hour = new Date().getHours();
     const isDay = hour >= 7 && hour < 19;
-    console.log(`[MapScreen] Auto-theme: ${isDay ? 'Day' : 'Night'} mode (hour: ${hour})`);
     setLightMode(isDay);
   }, [setLightMode]);
+
+  // ── Wake up Render on app start (free tier sleeps after 15 min) ──────────────
+  useEffect(() => {
+    fetch('https://truckexpoai.onrender.com/api/health', { method: 'GET' }).catch(() => {});
+  }, []);
 
   // ── Load Google account + starred POIs + tacho summary on mount ──────────
 
