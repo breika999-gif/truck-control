@@ -490,6 +490,7 @@ const MapScreen: React.FC = () => {
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
   const offRouteCountRef   = useRef(0);
+  const lastRerouteTimeRef = useRef(0); // cooldown — min 45s between reroutes
 
   // ── Helper: Point-to-polyline distance (meters) ───────────────────────────
   const getDistToRoute = useCallback((pos: [number, number], routeObj: RouteResult) => {
@@ -543,7 +544,10 @@ const MapScreen: React.FC = () => {
     }
 
     if (offRouteCountRef.current >= 3) {
+      const now = Date.now();
+      if (now - lastRerouteTimeRef.current < 45_000) return; // 45s cooldown
       offRouteCountRef.current = 0;
+      lastRerouteTimeRef.current = now;
       navigateTo(destination, destinationName, waypoints, true);
     }
   }, [userCoords, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, navigateTo]);
