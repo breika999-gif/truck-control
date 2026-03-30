@@ -489,6 +489,59 @@ const MapScreen: React.FC = () => {
   const [isTracking, setIsTracking] = useState(true);
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
+  const offRouteCountRef   = useRef(0);
+
+  // ── Helper: Point-to-polyline distance (meters) ───────────────────────────
+  const getDistToRoute = useCallback((pos: [number, number], routeObj: RouteResult) => {
+    const coords = routeObj.geometry.coordinates;
+    if (!coords || coords.length < 2) return Infinity;
+
+    // Only check the first 50 segments for performance
+    const maxIdx = Math.min(coords.length - 1, 50);
+    let minD = Infinity;
+
+    for (let i = 0; i < maxIdx; i++) {
+      const p1 = coords[i];
+      const p2 = coords[i + 1];
+      
+      // Perpendicular distance to segment
+      // Haversine distance from point to line segment is complex, 
+      // so we use a simpler approach: check distance to start/end/mid points of segment.
+      // For 80m threshold, this is usually accurate enough on highway/city streets.
+      const d1 = haversineMeters(pos, [p1[0], p1[1]]);
+      const d2 = haversineMeters(pos, [p2[0], p2[1]]);
+      const mid: [number, number] = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+      const dMid = haversineMeters(pos, mid);
+      
+      const dSegment = Math.min(d1, d2, dMid);
+      if (dSegment < minD) minD = dSegment;
+    }
+    return minD;
+  }, []);
+
+  // ── Auto-reroute detection ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!navigating || !route || !destination || !userCoords) {
+      offRouteCountRef.current = 0;
+      return;
+    }
+    // Don't check during active transitions
+    if (navPhase === 'REROUTING' || navPhase === 'SEARCHING') return;
+
+    const dist = getDistToRoute(userCoords, route);
+    if (dist > 80) {
+      offRouteCountRef.current += 1;
+      console.log(`[OffRoute] Detected deviation: ${Math.round(dist)}m. Count: ${offRouteCountRef.current}/3`);
+    } else {
+      offRouteCountRef.current = 0;
+    }
+
+    if (offRouteCountRef.current >= 3) {
+      console.log('[OffRoute] Triggering automatic reroute');
+      offRouteCountRef.current = 0;
+      navigateTo(destination, destinationName, waypoints, true);
+    }
+  }, [userCoords, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, navigateTo]);
 
   // Convenience alias — JSX uses mapIsLoaded for readability
   const mapIsLoaded = mapLoaded;
