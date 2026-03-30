@@ -241,23 +241,40 @@ interface StableCameraProps {
   cameraRef: React.RefObject<Mapbox.Camera | null>;
   navigating: boolean;
   mapLoaded: boolean;
+  speed?: number;
+  isTracking?: boolean;
 }
 
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded }: StableCameraProps) => (
-    <Mapbox.Camera
-      ref={cameraRef}
-      defaultSettings={{
-        centerCoordinate: [MAP_CENTER.longitude, MAP_CENTER.latitude],
-        zoomLevel: MAP_CENTER.zoomLevel,
-      }}
-      followUserLocation={navigating && mapLoaded}
-      followUserMode={Mapbox.UserTrackingMode.FollowWithCourse}
-      followZoomLevel={17}
-      followPitch={navigating ? 60 : 0}
-      followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
-    />
-  ),
+  ({ cameraRef, navigating, mapLoaded, speed, isTracking }: StableCameraProps) => {
+    // Issue 1: Speed-based zoom level
+    let targetZoom = 17;
+    if (speed !== undefined && speed > 0) {
+      if (speed < 30) targetZoom = 17;
+      else if (speed < 70) targetZoom = 16;
+      else if (speed < 110) targetZoom = 15;
+      else targetZoom = 14;
+    }
+
+    return (
+      <Mapbox.Camera
+        ref={cameraRef}
+        defaultSettings={{
+          centerCoordinate: [MAP_CENTER.longitude, MAP_CENTER.latitude],
+          zoomLevel: MAP_CENTER.zoomLevel,
+        }}
+        // Issue 2/3: Pause follow if not tracking
+        followUserLocation={navigating && mapLoaded && isTracking !== false}
+        followUserMode={Mapbox.UserTrackingMode.FollowWithCourse}
+        followZoomLevel={targetZoom}
+        followPitch={navigating ? 60 : 0}
+        followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
+      />
+    );
+  },
   (prev, next) =>
-    prev.navigating === next.navigating && prev.mapLoaded === next.mapLoaded,
+    prev.navigating === next.navigating &&
+    prev.mapLoaded === next.mapLoaded &&
+    prev.speed === next.speed &&
+    prev.isTracking === next.isTracking,
 );

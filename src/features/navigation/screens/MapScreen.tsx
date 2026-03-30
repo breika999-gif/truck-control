@@ -486,6 +486,7 @@ const MapScreen: React.FC = () => {
 
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
   const [customOriginName, setCustomOriginName] = useState('');
+  const [isTracking, setIsTracking] = useState(true);
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
 
@@ -1025,6 +1026,11 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
+        onCameraChanged={() => {
+          if (navigating && isTracking) {
+            setIsTracking(false);
+          }
+        }}
         onPress={() => {
           if (gptChatOpen) setGptChatOpen(false);
           if (geminiChatOpen) setGeminiChatOpen(false);
@@ -1056,7 +1062,13 @@ const MapScreen: React.FC = () => {
             Mapbox creates an Animated node for every prop it first receives.
             If a prop appears later its Animated.Value starts as undefined →
             "Animated.timing called on undefined". */}
-        <StableCamera cameraRef={cameraRef} navigating={navigating} mapLoaded={mapIsLoaded} />
+        <StableCamera 
+          cameraRef={cameraRef} 
+          navigating={navigating} 
+          mapLoaded={mapIsLoaded} 
+          speed={speed}
+          isTracking={isTracking}
+        />
 
         {/* UserLocation: GPS data only — no visual puck (LocationPuck handles rendering).
             minDisplacement={0} delivers every position update without threshold filtering.
@@ -2140,6 +2152,27 @@ const MapScreen: React.FC = () => {
             <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
           </TouchableOpacity>
         </>
+      )}
+
+      {/* ── Recenter button — shows when user pans map during navigation ── */}
+      {navigating && !isTracking && (
+        <TouchableOpacity
+          style={[
+            styles.geminiFab,
+            { right: spacing.md, bottom: insets.bottom + 100, backgroundColor: 'rgba(10,12,30,0.92)' },
+          ]}
+          activeOpacity={0.8}
+          onPress={() => {
+            setIsTracking(true);
+            cameraRef.current?.setCamera({
+              followUserMode: Mapbox.UserTrackingMode.FollowWithCourse,
+              followZoomLevel: 15,
+              animationDuration: 800,
+            });
+          }}
+        >
+          <Icon name="crosshairs-gps" size={22} color="#fff" />
+        </TouchableOpacity>
       )}
 
       {/* ── Chat Panels (GPT + Gemini) ── */}
