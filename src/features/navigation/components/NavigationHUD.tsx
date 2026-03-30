@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   ScrollView,
   Share,
-  ActivityIndicator,
   Animated,
   PanResponder,
 } from 'react-native';
@@ -14,7 +13,6 @@ const HANDLE_H = 92; // handle + infoRow + destName always visible when collapse
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles, NEON } from '../screens/MapScreen.styles';
-import ManeuverPanel from './ManeuverPanel';
 import { colors, spacing } from '../../../shared/constants/theme';
 import {
   fmtDistance,

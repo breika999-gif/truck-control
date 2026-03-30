@@ -2,7 +2,6 @@ import React, { memo } from 'react';
 import Mapbox from '@rnmapbox/maps';
 import type * as GeoJSON from 'geojson';
 import { RouteResult } from '../api/directions';
-import { TruckPOI } from '../api/poi';
 import { RouteOption, POICard } from '../../../shared/services/backendApi';
 
 interface MapLayersProps {

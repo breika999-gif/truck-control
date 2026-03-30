@@ -1863,15 +1863,6 @@ export const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 22,
   },
-  fuelBadge: {
-    backgroundColor: 'rgba(245,158,11,0.15)',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(245,158,11,0.4)',
-  },
-  fuelBadgeTxt: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
   parkingBubbleBtns: {
     flexDirection: 'row',

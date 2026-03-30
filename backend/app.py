@@ -16,7 +16,6 @@ import os
 import re
 import sqlite3
 import time
-import urllib.parse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone

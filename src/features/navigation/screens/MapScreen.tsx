@@ -13,7 +13,6 @@ import {
   Image,
   Animated,
   Linking,
-  Share,
 } from 'react-native';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';

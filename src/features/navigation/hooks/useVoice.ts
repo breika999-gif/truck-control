@@ -1,11 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Tts from 'react-native-tts';
 import { RouteStep, bgInstruction } from '../api/directions';
-
-/** Safe TTS speak — swallows errors when TTS engine is not ready. */
-function ttsSpeak(text: string): void {
-  try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
-}
+import { ttsSpeak } from '../utils/mapUtils';
 
 export function useVoice(navigating: boolean, currentStep: number, route?: { steps: RouteStep[] } | null) {
   const [voiceMuted, setVoiceMuted] = useState(false);
