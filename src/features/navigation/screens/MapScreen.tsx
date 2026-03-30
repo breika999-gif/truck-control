@@ -496,11 +496,18 @@ const MapScreen: React.FC = () => {
     const coords = routeObj.geometry.coordinates;
     if (!coords || coords.length < 2) return Infinity;
 
-    // Only check the first 50 segments for performance
-    const maxIdx = Math.min(coords.length - 1, 50);
+    // Find nearest point first, then check ±30 segments around it
+    let nearestIdx = 0;
+    let nearestD = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = haversineMeters(pos, [coords[i][0], coords[i][1]]);
+      if (d < nearestD) { nearestD = d; nearestIdx = i; }
+    }
+    const fromIdx = Math.max(0, nearestIdx - 1);
+    const maxIdx = Math.min(coords.length - 1, nearestIdx + 30);
     let minD = Infinity;
 
-    for (let i = 0; i < maxIdx; i++) {
+    for (let i = fromIdx; i < maxIdx; i++) {
       const p1 = coords[i];
       const p2 = coords[i + 1];
       
@@ -531,13 +538,11 @@ const MapScreen: React.FC = () => {
     const dist = getDistToRoute(userCoords, route);
     if (dist > 80) {
       offRouteCountRef.current += 1;
-      console.log(`[OffRoute] Detected deviation: ${Math.round(dist)}m. Count: ${offRouteCountRef.current}/3`);
     } else {
       offRouteCountRef.current = 0;
     }
 
     if (offRouteCountRef.current >= 3) {
-      console.log('[OffRoute] Triggering automatic reroute');
       offRouteCountRef.current = 0;
       navigateTo(destination, destinationName, waypoints, true);
     }
