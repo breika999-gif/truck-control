@@ -405,7 +405,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="parking-symbols" slot="top" minZoomLevel={10}
             style={{
-              textField: ['step', ['zoom'], 'P', 12, ['concat', 'P', '\n', ['case',
+              textField: ['step', ['zoom'], 'P', 14, ['concat', 'P', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
                 ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
@@ -441,7 +441,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="fuel-symbols" slot="top" minZoomLevel={10}
             style={{
-              textField: ['step', ['zoom'], '⛽', 12, ['concat', '⛽', '\n', ['case',
+              textField: ['step', ['zoom'], '⛽', 14, ['concat', '⛽', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
                 ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''

@@ -134,10 +134,10 @@ export const useLocationRuntime = ({
           if (!isNav || !cur) return;
 
           const profR = profileRef.current;
-          const restrictInterval = kmh < 50 ? 60_000 : 3_600_000;
+          const restrictInterval = kmh < 50 ? 45_000 : kmh < 100 ? 30_000 : 20_000;
           if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
             lastRestrictionRef.current = tqNow;
-            fetchNearbyRestrictions(tqLng, tqLat, 400).then(r => {
+            fetchNearbyRestrictions(tqLng, tqLat, 800).then(r => {
               if (!isMountedRef.current) return;
               if (r.hasTunnel) {
                 const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';

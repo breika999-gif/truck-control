@@ -256,6 +256,8 @@ export const StableCamera = React.memo(
       else targetZoom = 14;
     }
 
+    const adaptivePitch = !navigating ? 0 : (speed ?? 0) >= 80 ? 30 : (speed ?? 0) >= 50 ? 45 : 60;
+
     return (
       <Mapbox.Camera
         ref={cameraRef}
@@ -267,7 +269,7 @@ export const StableCamera = React.memo(
         followUserLocation={navigating && mapLoaded && isTracking !== false}
         followUserMode={Mapbox.UserTrackingMode.FollowWithCourse}
         followZoomLevel={targetZoom}
-        followPitch={navigating ? 60 : 0}
+        followPitch={adaptivePitch}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
       />
     );
