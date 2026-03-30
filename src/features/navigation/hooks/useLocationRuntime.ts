@@ -32,7 +32,8 @@ interface UseLocationRuntimeProps {
   stoppedSinceRef: MutableRefObject<number | null>;
   lastParkingRef: MutableRefObject<number>;
   lastRestrictionRef: MutableRefObject<number>;
-  
+  avoidUnpavedRef: MutableRefObject<boolean>;
+
   setAutoParking: (spots: ParkingSpot[]) => void;
   setTunnelWarning: (msg: string | null) => void;
   setSpeedLimit: (limit: number | null) => void;
@@ -56,6 +57,7 @@ export const useLocationRuntime = ({
   stoppedSinceRef,
   lastParkingRef,
   lastRestrictionRef,
+  avoidUnpavedRef,
   setAutoParking,
   setTunnelWarning,
   setSpeedLimit,
@@ -185,7 +187,8 @@ export const useLocationRuntime = ({
             ? { max_height: prof.height_m, max_width: prof.width_m,
                 max_weight: prof.weight_t, max_length: prof.length_m,
                 exclude: adrToExclude(prof.hazmat_class ?? 'none'),
-                adr_tunnel: prof.adr_tunnel ?? 'none' }
+                adr_tunnel: prof.adr_tunnel ?? 'none',
+                avoidUnpaved: avoidUnpavedRef.current }
             : undefined;
 
           fetchRoute(coords, dest, truck, undefined, waypointsRef.current)

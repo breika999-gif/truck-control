@@ -2466,7 +2466,12 @@ def calculate_route():
         avoid_parts.append("tunnels")
     elif adr_tunnel_code == "C":
         avoid_parts.append("ferries")
-    if truck.get("avoid_unpaved"):
+    avoid_unpaved_flag = (
+        data.get("avoid_unpaved", False) or
+        truck.get("avoidUnpaved", False) or
+        truck.get("avoid_unpaved", False)
+    )
+    if avoid_unpaved_flag:
         avoid_parts.append("unpavedRoads")
 
     # ── Cache Check ──

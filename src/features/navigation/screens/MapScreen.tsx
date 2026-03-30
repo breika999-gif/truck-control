@@ -279,6 +279,7 @@ const MapScreen: React.FC = () => {
     stoppedSinceRef,
     lastParkingRef,
     lastRestrictionRef,
+    avoidUnpavedRef,
     setAutoParking,
     setTunnelWarning: (msg) => setTunnelWarningRef.current(msg),
     setSpeedLimit,
