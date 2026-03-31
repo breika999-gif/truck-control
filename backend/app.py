@@ -2651,8 +2651,8 @@ def calculate_route():
     if depart_at:
         params["departAt"] = depart_at
 
-    # Request up to 3 alternatives (2 extra)
-    params["maxAlternatives"] = 2
+    # Request 1 alternative only (reduces Map Matching load)
+    params["maxAlternatives"] = 1
 
     try:
         r = requests.get(url, params=params, timeout=15)
@@ -2694,13 +2694,9 @@ def calculate_route():
         alt_routes_data = routes_data[1:3]
         alt_geoms_raw = [_tomtom_route_to_geojson(ar) for ar in alt_routes_data]
 
-        # ── Map Matching: snap all geometries to Mapbox road network ──
-        all_raw_coords = [geometry["coordinates"]] + [g["coordinates"] for g in alt_geoms_raw]
-        with ThreadPoolExecutor(max_workers=len(all_raw_coords)) as _mm_ex:
-            all_snapped = list(_mm_ex.map(_mapbox_map_match, all_raw_coords))
-        geometry["coordinates"] = all_snapped[0]
-        for idx_g, ag in enumerate(alt_geoms_raw):
-            ag["coordinates"] = all_snapped[idx_g + 1]
+        # ── Map Matching: snap ONLY main route to Mapbox road network ──
+        # Alternatives keep raw TomTom coords (saves ~60% time, avoids timeout)
+        geometry["coordinates"] = _mapbox_map_match(geometry["coordinates"])
 
         alternatives = []
         for idx, alt_rt in enumerate(alt_routes_data):
