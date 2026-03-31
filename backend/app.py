@@ -623,7 +623,7 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
     return {"type": "LineString", "coordinates": coords}
 
 
-def _mapbox_map_match(coords: list, max_points: int = 800) -> list:
+def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
     """Snap TomTom route coordinates to the Mapbox road network with caching.
 
     - Uses SQLite persistent cache (TTL 7 days).
@@ -1996,9 +1996,17 @@ def cameras_along_route_v2():
     lngs = [c[0] for c in coords]
     pad = 0.008
     bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
-    query = f'[out:json][timeout:20];node["highway"="speed_camera"]({bbox});out body;'
+    query = (
+        f'[out:json][timeout:25];'
+        f'('
+        f'node["highway"="speed_camera"]({bbox});'
+        f'node["enforcement"="speed"]({bbox});'
+        f'node["man_made"="surveillance"]["surveillance:type"="camera"]({bbox});'
+        f');'
+        f'out body;'
+    )
     try:
-        resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=18)
+        resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=22)
         elements = resp.json().get("elements", [])
     except Exception:
         return jsonify({"cameras": []})
@@ -2226,7 +2234,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                     tool_act = {"action": "show_pois", "category": "truck_stop", "cards": cards}
                 elif fn == "find_speed_cameras":
                     res = _tool_find_speed_cameras(args["lat"], args["lng"], args.get("radius_m", 10000))
-                    cards = [{"name": f"📷 Камера {f'{cam['maxspeed']} км/ч' if cam.get('maxspeed') else 'неизвестна скорост'}", "lat": cam["lat"], "lng": cam["lng"], "distance_m": cam["distance_m"], "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
+                    cards = [{"name": "📷 Камера {} км/ч".format(cam["maxspeed"]) if cam.get("maxspeed") else "📷 Камера неизвестна скорост", "lat": cam["lat"], "lng": cam["lng"], "distance_m": cam["distance_m"], "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
                     tool_act = {"action": "show_pois", "category": "speed_camera", "cards": cards, "nearest_m": res.get("nearest_m", -1)}
                 elif fn == "calculate_hos_reach":
                     res = _tool_calculate_hos_reach(args["driven_seconds"], args["speed_kmh"])
