@@ -46,6 +46,7 @@ type UseRouteOrchestratorProps = {
   setWaypointNames: (names: string[]) => void;
   setRouteOptions: (opts: import('../../../shared/services/backendApi').RouteOption[]) => void;
   setRouteOptDest: (dest: import('../hooks/useNavigationState').RouteOptDest | null) => void;
+  setBackendOnline: (online: boolean) => void;
 };
 
 export function useRouteOrchestrator({
@@ -78,7 +79,7 @@ export function useRouteOrchestrator({
   setWaypointNames,
   setRouteOptions,
   setRouteOptDest,
-  setBackendOffline,
+  setBackendOnline,
   }: UseRouteOrchestratorProps) => {
   const customOriginRef = useRef<Coords | null>(null);
   const handleStartRef = useRef<() => void>(() => {});
@@ -169,11 +170,7 @@ export function useRouteOrchestrator({
       const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg);
       if (!isMountedRef.current) return; // unmount guard
 
-      if (result) {
-        setBackendOffline(false);
-      } else {
-        setBackendOffline(true);
-      }
+      setBackendOnline(!!result);
 
       setRoute(result);
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)

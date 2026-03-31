@@ -42,6 +42,7 @@ interface UseLocationRuntimeProps {
   setNavPhase: (phase: NavPhase) => void;
   setRoute: (route: RouteResult | null) => void;
   setNavCongestionGeoJSON: (geojson: GeoJSON.FeatureCollection | null) => void;
+  setBackendOnline?: (online: boolean) => void;
   navigating: boolean;
 }
 
@@ -66,6 +67,7 @@ export const useLocationRuntime = ({
   setNavPhase,
   setRoute,
   setNavCongestionGeoJSON,
+  setBackendOnline,
   navigating,
 }: UseLocationRuntimeProps) => {
   const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
@@ -194,16 +196,16 @@ export const useLocationRuntime = ({
           fetchRoute(coords, dest, truck, undefined, waypointsRef.current)
             .then(result => {
               if (result) {
-                setBackendOffline?.(false);
+                setBackendOnline?.(true);
                 routeRef.current = result;
                 setRoute(result);
                 setNavCongestionGeoJSON(result.congestionGeoJSON);
               } else {
-                setBackendOffline?.(true);
+                setBackendOnline?.(false);
               }
             })
             .catch(() => {
-              setBackendOffline?.(true);
+              setBackendOnline?.(false);
             })
             .finally(() => { if (isMountedRef.current) setNavPhase('NAVIGATING'); });
         },
