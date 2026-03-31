@@ -16,7 +16,7 @@ import type { POICard } from '../../../shared/services/backendApi';
 
 export type Coords = [number, number];
 
-type UseRouteOrchestratorArgs = {
+type UseRouteOrchestratorProps = {
   isMountedRef: MutableRefObject<boolean>;
   navigatingRef: MutableRefObject<boolean>;
   routeRef: MutableRefObject<RouteResult | null>;
@@ -78,7 +78,8 @@ export function useRouteOrchestrator({
   setWaypointNames,
   setRouteOptions,
   setRouteOptDest,
-}: UseRouteOrchestratorArgs) {
+  setBackendOffline,
+  }: UseRouteOrchestratorProps) => {
   const customOriginRef = useRef<Coords | null>(null);
   const handleStartRef = useRef<() => void>(() => {});
   const destinationRef = useRef<Coords | null>(null);
@@ -167,6 +168,12 @@ export function useRouteOrchestrator({
 
       const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg);
       if (!isMountedRef.current) return; // unmount guard
+
+      if (result) {
+        setBackendOffline(false);
+      } else {
+        setBackendOffline(true);
+      }
 
       setRoute(result);
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)

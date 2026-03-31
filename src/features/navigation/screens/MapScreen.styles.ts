@@ -541,6 +541,7 @@ export const styles = StyleSheet.create({
     elevation: 6,
   },
   speedValue: { fontSize: 36, fontWeight: '800', color: colors.text },
+  speedValueOverLimit: { color: '#FF3B30' },
   speedUnit:  { ...typography.label, color: colors.textSecondary },
 
   signColumn: {

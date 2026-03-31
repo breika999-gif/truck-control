@@ -251,6 +251,7 @@ const MapScreen: React.FC = () => {
     setWaypointNames,
     setRouteOptions,
     setRouteOptDest,
+    setBackendOffline,
   });
 
   // ── States & Refs from useLocationRuntime ──────────────────────────────────
@@ -288,6 +289,7 @@ const MapScreen: React.FC = () => {
     setNavPhase,
     setRoute,
     setNavCongestionGeoJSON,
+    setBackendOffline,
     navigating,
   });
   // Sync GPS userCoordsRef → orchestratorUserCoordsRef so navigateTo uses real position
@@ -489,6 +491,7 @@ const MapScreen: React.FC = () => {
   const [customOriginName, setCustomOriginName] = useState('');
   const [isTracking, setIsTracking] = useState(true);
   const [backendOnline, setBackendOnline] = useState(true);
+  const [backendOffline, setBackendOffline] = useState(false);
   const backendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
@@ -1128,6 +1131,16 @@ const MapScreen: React.FC = () => {
       {!backendOnline && (
         <View style={styles.noInternetBanner} pointerEvents="none">
           <Text style={styles.noInternetText}>⚠️ Сървърът не отговаря — AI функциите са изключени</Text>
+        </View>
+      )}
+
+      {backendOffline && (
+        <View style={{
+          position: 'absolute', top: 40, alignSelf: 'center', zIndex: 10000,
+          backgroundColor: '#F5A623', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 6,
+          flexDirection: 'row', alignItems: 'center', gap: 8,
+        }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>⚠️ Няма връзка със сървъра</Text>
         </View>
       )}
 

@@ -201,7 +201,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 ? styles.speedRingYellow
                 : styles.speedRingGreen,
             ]}>
-              <Text style={[styles.speedValue, speedLimit != null && speed > speedLimit && { color: '#ff1744' }]}>
+              <Text style={[
+                styles.speedValue,
+                speedLimit != null && speed > speedLimit && styles.speedValueOverLimit
+              ]}>
                 {speed}
               </Text>
               <Text style={styles.speedUnit}>км/ч</Text>

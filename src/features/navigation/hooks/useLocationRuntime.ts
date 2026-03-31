@@ -194,12 +194,17 @@ export const useLocationRuntime = ({
           fetchRoute(coords, dest, truck, undefined, waypointsRef.current)
             .then(result => {
               if (result) {
+                setBackendOffline?.(false);
                 routeRef.current = result;
                 setRoute(result);
                 setNavCongestionGeoJSON(result.congestionGeoJSON);
+              } else {
+                setBackendOffline?.(true);
               }
             })
-            .catch(() => {})
+            .catch(() => {
+              setBackendOffline?.(true);
+            })
             .finally(() => { if (isMountedRef.current) setNavPhase('NAVIGATING'); });
         },
         () => {},
