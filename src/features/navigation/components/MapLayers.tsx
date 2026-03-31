@@ -518,7 +518,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         
         return (
           <React.Fragment key={`route-opt-${i}`}>
-            <Mapbox.ShapeSource id={`route-opt-src-${i}`} shape={(opt.congestion_geojson as unknown as GeoJSON.FeatureCollection) || { type: 'Feature', properties: {}, geometry: opt.geometry }} onPress={() => handleSelectRouteOption(i)}>
+            <Mapbox.ShapeSource id={`route-opt-src-${i}`} shape={(opt.congestion_geojson as unknown as GeoJSON.FeatureCollection) || { type: 'Feature', properties: {}, geometry: opt.geometry }} tolerance={0} onPress={() => handleSelectRouteOption(i)}>
               <Mapbox.LineLayer
                 id={`route-opt-line-${i}`} slot={isSelected ? 'middle' : 'bottom'}
                 style={{ 
