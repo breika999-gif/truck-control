@@ -204,6 +204,8 @@ const MapScreen: React.FC = () => {
   const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
   const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
   const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
+  // Declared early — passed to useRouteOrchestrator / useLocationRuntime
+  const [backendOnline, setBackendOnline] = useState(true);
 
   useEffect(() => { profileRef.current         = profile;          }, [profile]);
 
@@ -490,7 +492,6 @@ const MapScreen: React.FC = () => {
   const [longPressCoord, setLongPressCoord] = useState<[number, number] | null>(null);
   const [customOriginName, setCustomOriginName] = useState('');
   const [isTracking, setIsTracking] = useState(true);
-  const [backendOnline, setBackendOnline] = useState(true);
   const backendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);

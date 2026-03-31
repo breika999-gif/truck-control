@@ -80,7 +80,7 @@ export function useRouteOrchestrator({
   setRouteOptions,
   setRouteOptDest,
   setBackendOnline,
-  }: UseRouteOrchestratorProps) => {
+}: UseRouteOrchestratorProps) {
   const customOriginRef = useRef<Coords | null>(null);
   const handleStartRef = useRef<() => void>(() => {});
   const destinationRef = useRef<Coords | null>(null);
