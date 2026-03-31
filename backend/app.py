@@ -1945,6 +1945,7 @@ def health():
         "version":       "3.4-MAP-MATCH-CACHE",
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
+        "tomtom_ready":  _tomtom_ready,
         "db":            DB_PATH,
         "timestamp":     now_iso(),
     })
