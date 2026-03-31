@@ -10,6 +10,7 @@ Run:
   python app.py
 """
 
+import hashlib
 import json
 import math
 import os
@@ -511,6 +512,15 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS map_match_cache (
+                route_hash TEXT PRIMARY KEY,
+                coords_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
     # Migration: add user_email and type columns if they do not exist yet
     try:
@@ -613,17 +623,39 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
     return {"type": "LineString", "coordinates": coords}
 
 
-def _mapbox_map_match(coords: list) -> list:
-    """Snap TomTom route coordinates to the Mapbox road network.
+def _mapbox_map_match(coords: list, max_points: int = 800) -> list:
+    """Snap TomTom route coordinates to the Mapbox road network with caching.
 
-    Splits into chunks of ≤100 points (API limit), calls Map Matching in
-    parallel, reassembles in order. Falls back to original coords on error.
+    - Uses SQLite persistent cache (TTL 7 days).
+    - If coords > max_points, only matches the first window, appends rest raw.
     """
     if not _MAPBOX_TOKEN or len(coords) < 2:
         return coords
 
+    # ── 1. Cache Check ──
+    # Hash of first 5, last 5, and total length
+    route_sig = coords[:5] + coords[-5:] + [len(coords)]
+    route_hash = hashlib.sha256(json.dumps(route_sig).encode()).hexdigest()
+
+    try:
+        with get_db() as db:
+            row = db.execute(
+                "SELECT coords_json, created_at FROM map_match_cache WHERE route_hash=?",
+                (route_hash,)
+            ).fetchone()
+            if row:
+                created = datetime.fromisoformat(row["created_at"])
+                if (datetime.now(timezone.utc) - created.replace(tzinfo=timezone.utc)).days < 7:
+                    return json.loads(row["coords_json"])
+    except Exception:
+        pass
+
+    # ── 2. Windowed Matching ──
+    to_match = coords[:max_points]
+    tail     = coords[max_points:]
+
     CHUNK = 100
-    chunks = [coords[i:i + CHUNK] for i in range(0, len(coords), CHUNK)]
+    chunks = [to_match[i:i + CHUNK] for i in range(0, len(to_match), CHUNK)]
 
     def _match_one(chunk: list) -> list:
         coord_str = ";".join(f"{lng},{lat}" for lng, lat in chunk)
@@ -648,7 +680,7 @@ def _mapbox_map_match(coords: list) -> list:
                     return pts
         except Exception:
             pass
-        return chunk  # fallback: keep original
+        return chunk  # fallback
 
     with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as ex:
         results = list(ex.map(_match_one, chunks))
@@ -656,7 +688,25 @@ def _mapbox_map_match(coords: list) -> list:
     snapped: list = []
     for pts in results:
         snapped.extend(pts)
-    return snapped if snapped else coords
+    
+    final_coords = snapped + tail if snapped else coords
+
+    # ── 3. Save to Cache & Cleanup ──
+    try:
+        with get_db() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO map_match_cache (route_hash, coords_json, created_at) VALUES (?, ?, ?)",
+                (route_hash, json.dumps(final_coords), now_iso())
+            )
+            # TTL Cleanup (older than 7 days)
+            db.execute(
+                "DELETE FROM map_match_cache WHERE datetime(created_at) < datetime('now', '-7 days')"
+            )
+            db.commit()
+    except Exception:
+        pass
+
+    return final_coords
 
 
 def _tomtom_speed_limits(route: dict) -> list:
@@ -1892,12 +1942,32 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 def health():
     return jsonify({
         "status":        "ok",
-        "version":       "3.3-MAP-MATCH",
+        "version":       "3.4-MAP-MATCH-CACHE",
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
         "db":            DB_PATH,
         "timestamp":     now_iso(),
     })
+
+
+@app.post("/api/routes/match-window")
+def match_window():
+    """
+    Perform windowed map matching for a specific segment of the route.
+    Body: { "coords": [[lng,lat], ...], "from_index": int }
+    """
+    data = _get_body()
+    coords = data.get("coords", [])
+    from_idx = data.get("from_index", 0)
+    
+    if not coords or from_idx >= len(coords):
+        return jsonify({"coords": []})
+    
+    # Take window starting from from_idx
+    window = coords[from_idx : from_idx + 800]
+    matched = _mapbox_map_match(window, max_points=800)
+    
+    return jsonify({"coords": matched})
 
 
 @app.post("/api/poi-along-route")
