@@ -201,26 +201,20 @@ export function useRouteOrchestrator({
         // ── Auto-fetch essentials along route ──
         if (!poisFetchedRef.current) {
           poisFetchedRef.current = true;
-          // 1. Cameras (safety)
-          fetchCamerasAlongRoute(routeCoords, signal)
+          // 1. Cameras (safety) — no signal, must not be aborted by camera pan
+          fetchCamerasAlongRoute(routeCoords)
             .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
-            .catch((err) => { 
-              if (err.name !== 'AbortError') poisFetchedRef.current = false; 
-            });
+            .catch(() => { poisFetchedRef.current = false; });
 
-          // 2. Truck Parking (TomTom GO Expert style auto-discovery)
-          fetchPOIsAlongRoute(routeCoords, 'truck_stop', signal)
+          // 2. Truck Parking — no signal
+          fetchPOIsAlongRoute(routeCoords, 'truck_stop')
             .then(pois => { if (isMountedRef.current) setParkingResults(pois); })
-            .catch((err) => {
-              if (err.name !== 'AbortError') poisFetchedRef.current = false;
-            });
+            .catch(() => { poisFetchedRef.current = false; });
 
-          // 3. Fuel Stations
-          fetchPOIsAlongRoute(routeCoords, 'fuel', signal)
+          // 3. Fuel Stations — no signal
+          fetchPOIsAlongRoute(routeCoords, 'fuel')
             .then(pois => { if (isMountedRef.current) setFuelResults(pois); })
-            .catch((err) => {
-              if (err.name !== 'AbortError') poisFetchedRef.current = false;
-            });
+            .catch(() => { poisFetchedRef.current = false; });
         }
 
         const coords = result.geometry.coordinates;

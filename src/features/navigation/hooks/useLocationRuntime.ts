@@ -3,10 +3,8 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import { locationManager } from '@rnmapbox/maps';
 import {
-  fetchNearbyParking,
   fetchNearbyRestrictions,
   fetchSpeedLimitAtPoint,
-  type ParkingSpot,
 } from '../api/tilequery';
 import {
   fetchRoute,
@@ -30,11 +28,9 @@ interface UseLocationRuntimeProps {
   waypointsRef: MutableRefObject<[number, number][]>;
   lastRerouteRef: MutableRefObject<number>;
   stoppedSinceRef: MutableRefObject<number | null>;
-  lastParkingRef: MutableRefObject<number>;
   lastRestrictionRef: MutableRefObject<number>;
   avoidUnpavedRef: MutableRefObject<boolean>;
 
-  setAutoParking: (spots: ParkingSpot[]) => void;
   setTunnelWarning: (msg: string | null) => void;
   setSpeedLimit: (limit: number | null) => void;
   setCurrentStep: (step: number) => void;
@@ -56,10 +52,8 @@ export const useLocationRuntime = ({
   waypointsRef,
   lastRerouteRef,
   stoppedSinceRef,
-  lastParkingRef,
   lastRestrictionRef,
   avoidUnpavedRef,
-  setAutoParking,
   setTunnelWarning,
   setSpeedLimit,
   setCurrentStep,
@@ -123,16 +117,7 @@ export const useLocationRuntime = ({
           const tqNow = Date.now();
           const [tqLng, tqLat] = coords;
 
-          if (kmh < 2) {
-            if (stoppedSinceRef.current === null) stoppedSinceRef.current = tqNow;
-            const stoppedMs = tqNow - stoppedSinceRef.current;
-            if (navigatingRef.current && stoppedMs >= 20_000 && tqNow - lastParkingRef.current >= 120_000) {
-              lastParkingRef.current = tqNow;
-              fetchNearbyParking(tqLng, tqLat, 1000).then(spots => {
-                if (isMountedRef.current && spots.length > 0) setAutoParking(spots);
-              });
-            }
-          } else {
+          if (kmh >= 2) {
             stoppedSinceRef.current = null;
           }
 
@@ -167,47 +152,6 @@ export const useLocationRuntime = ({
 
           const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
           setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
-
-          const now = Date.now();
-          if (now - lastRerouteRef.current < 30_000) return;
-
-          let minDist = Infinity;
-          const routeCoords = cur.geometry.coordinates;
-          for (let i = 0; i < routeCoords.length; i++) {
-            const d = haversineMeters(coords, routeCoords[i] as [number, number]);
-            if (d < minDist) minDist = d;
-            if (minDist < 50) return;
-          }
-
-          const dest = destinationRef.current;
-          if (!dest) return;
-
-          lastRerouteRef.current = now;
-          setNavPhase('REROUTING');
-          const prof = profileRef.current;
-          const truck = prof
-            ? { max_height: prof.height_m, max_width: prof.width_m,
-                max_weight: prof.weight_t, max_length: prof.length_m,
-                exclude: adrToExclude(prof.hazmat_class ?? 'none'),
-                adr_tunnel: prof.adr_tunnel ?? 'none',
-                avoidUnpaved: avoidUnpavedRef.current }
-            : undefined;
-
-          fetchRoute(coords, dest, truck, undefined, waypointsRef.current)
-            .then(result => {
-              if (result) {
-                setBackendOnline?.(true);
-                routeRef.current = result;
-                setRoute(result);
-                setNavCongestionGeoJSON(result.congestionGeoJSON);
-              } else {
-                setBackendOnline?.(false);
-              }
-            })
-            .catch(() => {
-              setBackendOnline?.(false);
-            })
-            .finally(() => { if (isMountedRef.current) setNavPhase('NAVIGATING'); });
         },
         () => {},
         {
@@ -241,6 +185,7 @@ export const useLocationRuntime = ({
 
     return () => {
       if (watchId !== null) Geolocation.clearWatch(watchId);
+      locationManager.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

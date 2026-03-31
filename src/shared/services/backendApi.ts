@@ -137,6 +137,7 @@ export interface SavedPOI {
   lng: number;
   notes: string;
   created_at: string;
+  starred?: boolean;
 }
 
 export interface POIPayload {

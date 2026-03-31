@@ -280,10 +280,8 @@ const MapScreen: React.FC = () => {
     waypointsRef,
     lastRerouteRef,
     stoppedSinceRef,
-    lastParkingRef,
     lastRestrictionRef,
     avoidUnpavedRef,
-    setAutoParking,
     setTunnelWarning: (msg) => setTunnelWarningRef.current(msg),
     setSpeedLimit,
     setCurrentStep,
@@ -1144,8 +1142,8 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
-        onRegionWillChange={(_feature: any, isUserInteraction: boolean) => {
-          if (navigating && isTracking && isUserInteraction) {
+        onRegionWillChange={(feature: any) => {
+          if (navigating && isTracking && feature?.properties?.isUserInteraction) {
             setIsTracking(false);
           }
         }}
@@ -2156,27 +2154,6 @@ const MapScreen: React.FC = () => {
         </Animated.View>
       )}
 
-      {/* ── Auto-parking toast — appears after 20 s stationary, shows closest spots ── */}
-      {autoParking.length > 0 && (
-        <View style={[styles.autoParkToast, { bottom: insets.bottom + 210 }]}>
-          <View style={styles.autoParkHeader}>
-            <Text style={styles.autoParkTitle}>🅿️ Паркинги наблизо</Text>
-            <TouchableOpacity onPress={() => setAutoParking([])}>
-              <Text style={styles.autoParkClose}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          {autoParking.slice(0, 3).map((p, i) => (
-            <TouchableOpacity
-              key={i}
-              style={styles.autoParkItem}
-              onPress={() => { setAutoParking([]); navigateTo([p.lng, p.lat], p.name); }}
-            >
-              <Text style={styles.autoParkName} numberOfLines={1}>{p.name}</Text>
-              <Text style={styles.autoParkDist}>{fmtDistance(p.distance)} →</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
 
       {/* ── Tilt controls (3D pitch) ── */}
       {!navigating && (
@@ -2288,10 +2265,9 @@ const MapScreen: React.FC = () => {
           onPress={() => {
             setIsTracking(true);
             cameraRef.current?.setCamera({
-              followUserMode: Mapbox.UserTrackingMode.FollowWithCourse,
-              followZoomLevel: 15,
+              zoomLevel: 15,
               animationDuration: 800,
-            });
+            } as any);
           }}
         >
           <Icon name="crosshairs-gps" size={22} color="#fff" />

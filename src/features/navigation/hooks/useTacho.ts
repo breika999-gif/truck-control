@@ -107,7 +107,10 @@ export function useTacho(
   const resetSession = useCallback(() => {
     setDrivingSeconds(0);
     sessionStartRef.current = new Date().toISOString();
-    hosWarningRef.current = { w30: false, w10: false, limit: false };
+    hosWarningRef.current = { 
+      w30: false, w10: false, limit: false,
+      daily9h: false, daily10h: false, weekly56h: false 
+    };
   }, []);
 
   const saveSession = useCallback(() => {

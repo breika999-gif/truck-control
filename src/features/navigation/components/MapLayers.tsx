@@ -195,9 +195,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
             minZoomLevel={11}
             style={{
               circleRadius: 18,
-              circleColor: '#FFFFFF',
+              circleColor: lightMode ? '#FFFFFF' : '#FFFDE7',
+              circleOpacity: 1.0,
               circleStrokeWidth: 3,
-              circleStrokeColor: '#D0021B',
+              circleStrokeColor: lightMode ? '#D0021B' : '#FF1744',
+              circleStrokeOpacity: 1.0,
               circlePitchAlignment: 'viewport',
             }}
           />
@@ -213,8 +215,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
               ],
               textSize: 14,
               textColor: '#1A1A1A',
-              textHaloColor: '#FFFFFF',
-              textHaloWidth: 2,
+              textHaloColor: lightMode ? '#FFFFFF' : '#FFFDE7',
+              textHaloWidth: 2.5,
               textAnchor: 'center',
               textAllowOverlap: true,
               textIgnorePlacement: true,
@@ -290,13 +292,13 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {/* ── Route ── */}
       {mapIsLoaded && routeShape && (
         <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
-          <Mapbox.LineLayer id="route-casing" slot="middle" style={{ lineColor: '#0a0a1a', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
+          <Mapbox.LineLayer id="route-casing" slot="middle" style={{ lineColor: lightMode ? '#0a0a1a' : '#ffffff', lineWidth: 9, lineOpacity: lightMode ? 1.0 : 0.25, lineCap: 'round', lineJoin: 'round' }} />
           <Mapbox.LineLayer
             id="route-line"
             slot="middle"
             style={{
               lineColor: ['match', ['get', 'congestion'], 'low', routeLineColor, 'moderate', '#FFBC40', 'heavy', '#FF9100', 'severe', '#FA0000', routeLineColor],
-              lineWidth: 5, lineCap: 'round', lineJoin: 'round',
+              lineWidth: lightMode ? 5 : 7, lineCap: 'round', lineJoin: 'round',
             }}
           />
         </Mapbox.ShapeSource>
@@ -402,19 +404,20 @@ const MapLayers: React.FC<MapLayersProps> = ({
           }}
         >
           <Mapbox.SymbolLayer
-            id="parking-symbols" slot="top" minZoomLevel={10}
+            id="parking-symbols" slot="top" minZoomLevel={6}
             style={{
               textField: ['step', ['zoom'], 'P', 14, ['concat', 'P', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
                 ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
                 ''
               ]]],
-              textSize: ['interpolate', ['linear'], ['zoom'], 10, 10, 12, 14, 18, 18],
+              textSize: ['interpolate', ['linear'], ['zoom'], 6, 8, 10, 10, 12, 14, 18, 18],
               textColor: '#ffffff',
               textHaloColor: '#00f7ff',
               textHaloWidth: 1.8,
               textHaloBlur: 0.5,
               textAllowOverlap: true,
+              textIgnorePlacement: true,
               textAnchor: 'center',
             }}
           />
@@ -478,15 +481,16 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {mapIsLoaded && cameraResults.length > 0 && (
         <Mapbox.ShapeSource id="camera-source" shape={cameraGeoJSON}>
           <Mapbox.SymbolLayer
-            id="camera-emoji" slot="top" minZoomLevel={12}
+            id="camera-emoji" slot="top" minZoomLevel={6}
             style={{
               textField: '📷',
-              textSize: ['interpolate', ['linear'], ['zoom'], 12, 12, 14, 18, 16, 22],
+              textSize: ['interpolate', ['linear'], ['zoom'], 6, 10, 12, 14, 14, 18, 16, 22],
               textHaloColor: '#ff3b30',
               textHaloWidth: 1.5,
               textAnchor: 'bottom',
               textOffset: [0, 0.5],
-              textAllowOverlap: true
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
             }}
           />
         </Mapbox.ShapeSource>
