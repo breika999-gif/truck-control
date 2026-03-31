@@ -613,6 +613,52 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
     return {"type": "LineString", "coordinates": coords}
 
 
+def _mapbox_map_match(coords: list) -> list:
+    """Snap TomTom route coordinates to the Mapbox road network.
+
+    Splits into chunks of ≤100 points (API limit), calls Map Matching in
+    parallel, reassembles in order. Falls back to original coords on error.
+    """
+    if not _MAPBOX_TOKEN or len(coords) < 2:
+        return coords
+
+    CHUNK = 100
+    chunks = [coords[i:i + CHUNK] for i in range(0, len(coords), CHUNK)]
+
+    def _match_one(chunk: list) -> list:
+        coord_str = ";".join(f"{lng},{lat}" for lng, lat in chunk)
+        radiuses  = ";".join(["25"] * len(chunk))
+        try:
+            r = requests.get(
+                f"https://api.mapbox.com/matching/v5/mapbox/driving/{coord_str}",
+                params={
+                    "access_token": _MAPBOX_TOKEN,
+                    "geometries":   "geojson",
+                    "overview":     "full",
+                    "radiuses":     radiuses,
+                    "tidy":         "true",
+                },
+                timeout=10,
+            )
+            if r.status_code == 200:
+                pts: list = []
+                for m in r.json().get("matchings", []):
+                    pts.extend(m.get("geometry", {}).get("coordinates", []))
+                if pts:
+                    return pts
+        except Exception:
+            pass
+        return chunk  # fallback: keep original
+
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as ex:
+        results = list(ex.map(_match_one, chunks))
+
+    snapped: list = []
+    for pts in results:
+        snapped.extend(pts)
+    return snapped if snapped else coords
+
+
 def _tomtom_speed_limits(route: dict) -> list:
     """Build per-coordinate MaxspeedEntry array from TomTom speedLimit sections.
 
@@ -974,17 +1020,26 @@ def _tool_suggest_routes(
         routes_data = r.json().get("routes", [])
 
         primary_duration = routes_data[0].get("summary", {}).get("travelTimeInSeconds", 0)
-        
+
+        # ── Map Matching: snap preview geometries to Mapbox road network ──
+        preview_rts = routes_data[:3]
+        raw_geoms_preview = [_tomtom_route_to_geojson(rt) for rt in preview_rts]
+        raw_coords_preview = [g["coordinates"] for g in raw_geoms_preview]
+        with ThreadPoolExecutor(max_workers=len(raw_coords_preview)) as _mm_ex:
+            snapped_preview = list(_mm_ex.map(_mapbox_map_match, raw_coords_preview))
+        for idx_g, g in enumerate(raw_geoms_preview):
+            g["coordinates"] = snapped_preview[idx_g]
+
         colors  = ["#00bfff", "#00ff88", "#ffcc00"]
         labels  = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]
         options = []
-        for i, rt in enumerate(routes_data[:3]):
+        for i, rt in enumerate(preview_rts):
             summary   = rt.get("summary", {})
             duration  = summary.get("travelTimeInSeconds", 0)
             distance  = summary.get("lengthInMeters", 0)
             delay_min = round(summary.get("trafficDelayInSeconds", 0) / 60)
             dist_km   = round(distance / 1000)
-            
+
             # Calculate diff vs primary
             diff_s = duration - primary_duration
             diff_min = round(diff_s / 60)
@@ -997,9 +1052,9 @@ def _tool_suggest_routes(
             dur_h     = int(duration / 3600)
             dur_m     = int((duration % 3600) / 60)
             dur_str   = f"{dur_h}ч {dur_m}мин" if dur_h else f"{dur_m}мин"
-            
+
             traffic   = "low" if delay_min < 5 else "moderate" if delay_min < 20 else "heavy"
-            geometry  = _tomtom_route_to_geojson(rt)
+            geometry  = raw_geoms_preview[i]
             options.append({
                 "label":              f"{labels[i]} — {dist_km}км, {dur_str}{diff_str}",
                 "color":              colors[i],
@@ -1837,7 +1892,7 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 def health():
     return jsonify({
         "status":        "ok",
-        "version":       "3.2-AVOID-UNPAVED-FIX",
+        "version":       "3.3-MAP-MATCH",
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
         "db":            DB_PATH,
@@ -2558,10 +2613,21 @@ def calculate_route():
         # Build simplified alternatives (geometry + duration + distance only)
         alt_colors = ["#FF8C00", "#9B59B6"]
         alt_labels = ["Алтернатива 1", "Алтернатива 2"]
+        alt_routes_data = routes_data[1:3]
+        alt_geoms_raw = [_tomtom_route_to_geojson(ar) for ar in alt_routes_data]
+
+        # ── Map Matching: snap all geometries to Mapbox road network ──
+        all_raw_coords = [geometry["coordinates"]] + [g["coordinates"] for g in alt_geoms_raw]
+        with ThreadPoolExecutor(max_workers=len(all_raw_coords)) as _mm_ex:
+            all_snapped = list(_mm_ex.map(_mapbox_map_match, all_raw_coords))
+        geometry["coordinates"] = all_snapped[0]
+        for idx_g, ag in enumerate(alt_geoms_raw):
+            ag["coordinates"] = all_snapped[idx_g + 1]
+
         alternatives = []
-        for idx, alt_rt in enumerate(routes_data[1:3]):
+        for idx, alt_rt in enumerate(alt_routes_data):
             alt_summary  = alt_rt.get("summary", {})
-            alt_geom     = _tomtom_route_to_geojson(alt_rt)
+            alt_geom     = alt_geoms_raw[idx]
             alt_dest_coords = destination if isinstance(destination, list) else [0, 0]
             alternatives.append({
                 "label":             alt_labels[idx],
