@@ -6,8 +6,8 @@ export const MAPBOX_PUBLIC_TOKEN =
 // Routing calls go through backend/.env TOMTOM_API_KEY
 export const TOMTOM_API_KEY = 'ZHxLBBp74UwTtWXXEhAx7RZNBgeLxv8K';
 
-// Flask backend — Render cloud deploy
-export const BACKEND_URL = 'https://truckexpoai.onrender.com';
+// Flask backend — Railway cloud deploy
+export const BACKEND_URL = 'https://truckexpoai-production.up.railway.app';
 
 // Default map center — Bulgaria
 export const MAP_CENTER = {
