@@ -391,22 +391,32 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* ── Turn Guidance Arrows ── */}
+      {/* ── Turn Guidance Dots ── */}
       {mapIsLoaded && navigating && turnArrowsGeoJSON.features.length > 0 && (
         <Mapbox.ShapeSource id="turn-arrows-source" shape={turnArrowsGeoJSON}>
-          <Mapbox.SymbolLayer
-            id="turn-arrows-layer"
+          {/* Outer glow ring */}
+          <Mapbox.CircleLayer
+            id="turn-arrows-glow"
             slot="top"
             style={{
-              iconImage: 'nav-arrow',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 12, 0.4, 15, 0.7, 18, 1.0] as any,
-              iconRotate: ['get', 'bearing'] as any,
-              iconRotationAlignment: 'map',
-              iconAllowOverlap: true,
-              iconIgnorePlacement: true,
-              iconOpacity: ['interpolate', ['linear'], ['zoom'], 12, 0, 13, 1] as any,
-              iconColor: '#FFFFFF',
-              iconEmissiveStrength: lightMode ? 0 : 1.0,
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 12, 8, 15, 14, 18, 18] as any,
+              circleColor: 'rgba(0,247,255,0.15)',
+              circleStrokeWidth: 0,
+              circleOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1] as any,
+              circlePitchAlignment: 'viewport',
+            } as any}
+          />
+          {/* Solid dot */}
+          <Mapbox.CircleLayer
+            id="turn-arrows-dot"
+            slot="top"
+            style={{
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 12, 5, 15, 8, 18, 11] as any,
+              circleColor: '#00f7ff',
+              circleStrokeWidth: 2,
+              circleStrokeColor: '#ffffff',
+              circleOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1] as any,
+              circlePitchAlignment: 'viewport',
             } as any}
           />
         </Mapbox.ShapeSource>
