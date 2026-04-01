@@ -1492,8 +1492,19 @@ const MapScreen: React.FC = () => {
                 {maneuverEmoji(stepToShow.maneuver.type, stepToShow.maneuver.modifier)}
               </Text>
               <View style={styles.navBannerBody}>
+                {distToTurn != null && (
+                  <Text style={[styles.navDistText, {
+                    fontSize: distToTurn > 20000 ? 28
+                            : distToTurn > 10000 ? 24
+                            : distToTurn > 5000  ? 22
+                            : distToTurn > 2000  ? 20
+                            : 18,
+                  }]}>
+                    {fmtDistance(distToTurn)}
+                  </Text>
+                )}
                 <Text style={styles.navStreet} numberOfLines={1}>
-                  {distToTurn != null ? `${fmtDistance(distToTurn)} — ` : ''}{stepToShow.name || stepToShow.maneuver.instruction}
+                  {stepToShow.name || stepToShow.maneuver.instruction}
                 </Text>
                 {nextStep && (
                   <Text style={styles.navNext} numberOfLines={1}>

@@ -88,6 +88,7 @@ export const styles = StyleSheet.create({
   },
   navArrow: { fontSize: 36, marginRight: spacing.md },
   navBannerBody: { flex: 1 },
+  navDistText: { fontWeight: '800', color: NEON, lineHeight: 32 },
   navStreet: { fontSize: 18, fontWeight: '700', color: colors.text },
   navNext: { ...typography.caption, color: colors.textSecondary, marginTop: 3 },
 
