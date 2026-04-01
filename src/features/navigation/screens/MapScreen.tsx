@@ -159,8 +159,6 @@ const MapScreen: React.FC = () => {
     loadingRoute,
     rerouting,
     route, setRoute,
-    destination, setDestination,
-    destinationName, setDestinationName,
     departLabel, setDepartLabel,
     currentStep, setCurrentStep,
     distToTurn, setDistToTurn,
@@ -216,6 +214,8 @@ const MapScreen: React.FC = () => {
     customOriginRef,
     destinationRef,
     destinationNameRef,
+    setDestination,
+    setDestinationName,
     departAtRef,
     waypointsRef,
     waypointNamesRef,
@@ -231,8 +231,6 @@ const MapScreen: React.FC = () => {
     userCoordsRef: orchestratorUserCoordsRef,
     cameraRef,
     profile,
-    destination,
-    destinationName,
     departAt,
     avoidUnpaved,
     waypoints,
@@ -242,8 +240,6 @@ const MapScreen: React.FC = () => {
     setParkingResults,
     setFuelResults,
     setRoute,
-    setDestination,
-    setDestinationName,
     setNavPhase,
     setCurrentStep,
     setSpeedLimit,
@@ -255,6 +251,9 @@ const MapScreen: React.FC = () => {
     setRouteOptDest,
     setBackendOnline,
   });
+
+  const destination = destinationRef.current;
+  const destinationName = destinationNameRef.current;
 
   // ── States & Refs from useLocationRuntime ──────────────────────────────────
   const {

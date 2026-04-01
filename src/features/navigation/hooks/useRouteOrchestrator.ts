@@ -24,8 +24,6 @@ type UseRouteOrchestratorProps = {
   userCoordsRef: MutableRefObject<Coords | null>;
   cameraRef: MutableRefObject<Mapbox.Camera | null>;
   profile: VehicleProfile | null;
-  destination: Coords | null;
-  destinationName: string;
   departAt: string | null;
   avoidUnpaved: boolean;
   waypoints: Coords[];
@@ -35,8 +33,6 @@ type UseRouteOrchestratorProps = {
   setParkingResults: (pois: POICard[]) => void;
   setFuelResults: (pois: POICard[]) => void;
   setRoute: (route: RouteResult | null) => void;
-  setDestination: (dest: Coords | null) => void;
-  setDestinationName: (name: string) => void;
   setNavPhase: (phase: NavPhase) => void;
   setCurrentStep: (step: number) => void;
   setSpeedLimit: (limit: number | null) => void;
@@ -57,8 +53,6 @@ export function useRouteOrchestrator({
   userCoordsRef,
   cameraRef,
   profile,
-  destination,
-  destinationName,
   departAt,
   avoidUnpaved,
   waypoints,
@@ -68,8 +62,6 @@ export function useRouteOrchestrator({
   setParkingResults,
   setFuelResults,
   setRoute,
-  setDestination,
-  setDestinationName,
   setNavPhase,
   setCurrentStep,
   setSpeedLimit,
@@ -96,14 +88,18 @@ export function useRouteOrchestrator({
   const poisFetchedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    const isNew = destinationRef.current?.[0] !== destination?.[0] || destinationRef.current?.[1] !== destination?.[1];
+  const setDestination = useCallback((dest: Coords | null) => {
+    const isNew = destinationRef.current?.[0] !== dest?.[0] || destinationRef.current?.[1] !== dest?.[1];
     if (isNew) {
       poisFetchedRef.current = false;
     }
-    destinationRef.current = destination;
-  }, [destination]);
-  useEffect(() => { destinationNameRef.current = destinationName; }, [destinationName]);
+    destinationRef.current = dest;
+  }, []);
+
+  const setDestinationName = useCallback((name: string) => {
+    destinationNameRef.current = name;
+  }, []);
+
   useEffect(() => { departAtRef.current = departAt; }, [departAt]);
   useEffect(() => { avoidUnpavedRef.current = avoidUnpaved; }, [avoidUnpaved]);
   useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
@@ -286,6 +282,8 @@ export function useRouteOrchestrator({
     customOriginRef,
     destinationRef,
     destinationNameRef,
+    setDestination,
+    setDestinationName,
     departAtRef,
     waypointsRef,
     waypointNamesRef,

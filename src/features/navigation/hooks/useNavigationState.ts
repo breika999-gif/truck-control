@@ -19,8 +19,6 @@ export interface RouteOptDest {
 export const useNavigationState = () => {
   const [navPhase, setNavPhase]               = useState<NavPhase>('IDLE');
   const [route, setRoute]                     = useState<RouteResult | null>(null);
-  const [destination, setDestination]         = useState<[number, number] | null>(null);
-  const [destinationName, setDestinationName] = useState('');
   const [departLabel, setDepartLabel]         = useState<DepartLabel>('СЕГА');
   const [currentStep, setCurrentStep]         = useState(0);
   const [distToTurn, setDistToTurn]           = useState<number | null>(null);
@@ -50,8 +48,6 @@ export const useNavigationState = () => {
     loadingRoute,
     rerouting,
     route, setRoute,
-    destination, setDestination,
-    destinationName, setDestinationName,
     departLabel, setDepartLabel,
     currentStep, setCurrentStep,
     distToTurn, setDistToTurn,
