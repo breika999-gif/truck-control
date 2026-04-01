@@ -2460,23 +2460,16 @@ def gemini_chat():
             )
             contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
 
-            api_key = os.getenv("GEMINI_API_KEY", "")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent?key={api_key}"
-            payload = {
-                "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM + _build_tacho_context_block()}]},
-                "contents": contents,
-                "generationConfig": {"temperature": 0.65, "maxOutputTokens": 300},
-            }
-            r = requests.post(url, json=payload, timeout=20)
-            if r.status_code != 200:
-                print(f"[Gemini REST] Error {r.status_code}: {r.text}", flush=True)
-                r.raise_for_status()
-            
-            data = r.json()
-            return (data.get("candidates", [{}])[0]
-                    .get("content", {})
-                    .get("parts", [{}])[0]
-                    .get("text", ""))
+            resp = _gemini_client.models.generate_content(
+                model=_GEMINI_MODEL,
+                contents=contents,
+                config={
+                    "system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(),
+                    "temperature": 0.65,
+                    "max_output_tokens": 300,
+                },
+            )
+            return resp.text or ""
 
         # Task 2: GPT-4o pre-fetch only if message looks like nav intent
         _NAV_HINTS = ["карай", "навигирай", "маршрут", "отиди", "намери", "паркинг",
