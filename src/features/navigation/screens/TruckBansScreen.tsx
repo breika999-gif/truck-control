@@ -11,27 +11,50 @@ import {
   ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
+import { colors, spacing, radius } from '../../../shared/constants/theme';
 import { BACKEND_URL } from '../../../shared/constants/config';
 
 const NEON = '#00f7ff';
+const NEON_DIM = 'rgba(0,247,255,0.08)';
 
 interface Ban {
   flag: string;
   country: string;
   time: string;
   alert: boolean;
+  note?: string;
 }
 
-const FLAG_MAPPING: Record<string, string> = {
-  'DE': '🇩🇪', 'BG': '🇧🇬', 'AT': '🇦🇹', 'CH': '🇨🇭', 'FR': '🇫🇷',
-  'IT': '🇮🇹', 'RO': '🇷🇴', 'HU': '🇭🇺', 'RS': '🇷🇸', 'HR': '🇭🇷',
-  'SI': '🇸🇮', 'SK': '🇸🇰', 'PL': '🇵🇱', 'CZ': '🇨🇿', 'GR': '🇬🇷', 'TR': '🇹🇷'
+const FLAG_MAP: Record<string, string> = {
+  AT: '🇦🇹', BE: '🇧🇪', BG: '🇧🇬', CH: '🇨🇭', CZ: '🇨🇿',
+  DE: '🇩🇪', DK: '🇩🇰', ES: '🇪🇸', FI: '🇫🇮', FR: '🇫🇷',
+  GB: '🇬🇧', GR: '🇬🇷', HR: '🇭🇷', HU: '🇭🇺', IT: '🇮🇹',
+  LI: '🇱🇮', LU: '🇱🇺', NL: '🇳🇱', NO: '🇳🇴', PL: '🇵🇱',
+  PT: '🇵🇹', RO: '🇷🇴', RS: '🇷🇸', SE: '🇸🇪', SI: '🇸🇮',
+  SK: '🇸🇰', TR: '🇹🇷', UA: '🇺🇦',
 };
 
-const DAYS_TO_SHOW = 14;
+const COUNTRY_BG: Record<string, string> = {
+  Austria: 'Австрия', Belgium: 'Белгия', Bulgaria: 'България',
+  Switzerland: 'Швейцария', 'Czech Republic': 'Чехия', Germany: 'Германия',
+  Denmark: 'Дания', Spain: 'Испания', Finland: 'Финландия', France: 'Франция',
+  Croatia: 'Хърватия', Hungary: 'Унгария', Italy: 'Италия',
+  Liechtenstein: 'Лихтенщайн', Luxembourg: 'Люксембург', Netherlands: 'Холандия',
+  Norway: 'Норвегия', Poland: 'Полша', Portugal: 'Португалия',
+  Romania: 'Румъния', Serbia: 'Сърбия', Sweden: 'Швеция',
+  Slovenia: 'Словения', Slovakia: 'Словакия', Turkey: 'Турция', Ukraine: 'Украйна',
+};
 
-const TruckBansScreen = () => {
+const DAYS_BG = ['Нед', 'Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб'];
+const MONTHS_BG = ['Яну', 'Фев', 'Мар', 'Апр', 'Май', 'Юни', 'Юли', 'Авг', 'Сеп', 'Окт', 'Ное', 'Дек'];
+
+function toISO(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+const TODAY = toISO(new Date());
+
+export default function TruckBansScreen() {
   const navigation = useNavigation();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [bans, setBans] = useState<Ban[]>([]);
@@ -39,250 +62,153 @@ const TruckBansScreen = () => {
   const [error, setError] = useState<string | null>(null);
 
   const dates = useMemo(() => {
-    const arr = [];
-    for (let i = 0; i < DAYS_TO_SHOW; i++) {
+    return Array.from({ length: 14 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() + i);
-      arr.push(d);
-    }
-    return arr;
+      return d;
+    });
   }, []);
 
-  const formatDateForAPI = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  const formatDateForUI = (date: Date) => {
-    const days = ['Нед', 'Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб'];
-    const months = ['Яну', 'Фев', 'Мар', 'Апр', 'Май', 'Юни', 'Юли', 'Авг', 'Сеп', 'Окт', 'Ное', 'Дек'];
-    const dayName = days[date.getDay()];
-    const dayNum = String(date.getDate()).padStart(2, '0');
-    const monthName = months[date.getMonth()];
-    return `${dayName}\n${dayNum} ${monthName}`;
-  };
-
-  useEffect(() => {
-    fetchBans();
-  }, [selectedDate]);
+  useEffect(() => { fetchBans(); }, [selectedDate]);
 
   const fetchBans = async () => {
     setLoading(true);
     setError(null);
     try {
-      const dateStr = formatDateForAPI(selectedDate);
-      const response = await fetch(`${BACKEND_URL}/api/truck-bans?date=${dateStr}`);
-      const data = await response.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setBans(data.bans || []);
-      }
-    } catch (err) {
+      const res = await fetch(`${BACKEND_URL}/api/truck-bans?date=${toISO(selectedDate)}`);
+      const data = await res.json();
+      if (data.error) setError(data.error);
+      else setBans(data.bans || []);
+    } catch {
       setError('Грешка при зареждане');
     } finally {
       setLoading(false);
     }
   };
 
-  const renderBanItem = ({ item }: { item: Ban }) => (
-    <View style={styles.card}>
-      <View style={styles.cardLeft}>
-        <Text style={styles.flag}>{FLAG_MAPPING[item.flag] || item.flag}</Text>
-        <View style={styles.countryContainer}>
-          <Text style={styles.countryName}>{item.country}</Text>
-          {item.alert && <Text style={styles.alertIcon}>⚠️</Text>}
+  const renderBan = ({ item }: { item: Ban }) => {
+    const code = item.flag.toUpperCase();
+    const flag = FLAG_MAP[code] ?? '🏳️';
+    const name = COUNTRY_BG[item.country] ?? item.country;
+    return (
+      <View style={[styles.card, item.alert && styles.cardAlert]}>
+        {item.alert && <View style={styles.alertAccent} />}
+        <Text style={styles.flag}>{flag}</Text>
+        <View style={styles.cardBody}>
+          <Text style={styles.countryName}>{name}</Text>
+          {item.note ? <Text style={styles.noteText}>{item.note}</Text> : null}
         </View>
+        <Text style={styles.timeText}>{item.time}</Text>
       </View>
-      <Text style={styles.timeText}>{item.time}</Text>
-    </View>
-  );
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Text style={styles.backArrow}>←</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>🚫 Забрани за движение</Text>
       </View>
 
-      <View style={styles.datePickerContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.datePickerContent}>
-          {dates.map((date, index) => {
-            const isSelected = formatDateForAPI(date) === formatDateForAPI(selectedDate);
-            return (
-              <TouchableOpacity
-                key={index}
-                onPress={() => setSelectedDate(date)}
-                style={[
-                  styles.dateItem,
-                  isSelected && styles.dateItemSelected
-                ]}
-              >
-                <Text style={[styles.dateText, isSelected && styles.dateTextSelected]}>
-                  {formatDateForUI(date)}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+      {/* Date Picker */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.datePicker}
+        contentContainerStyle={styles.datePickerContent}
+      >
+        {dates.map((date, i) => {
+          const iso = toISO(date);
+          const isSelected = iso === toISO(selectedDate);
+          const isToday = iso === TODAY;
+          return (
+            <TouchableOpacity
+              key={i}
+              onPress={() => setSelectedDate(date)}
+              style={[styles.dateItem, isSelected && styles.dateItemSelected]}
+            >
+              {isToday && <Text style={styles.todayLabel}>ДНЕС</Text>}
+              <Text style={[styles.dateDayName, isSelected && styles.dateTextSelected]}>
+                {DAYS_BG[date.getDay()]}
+              </Text>
+              <Text style={[styles.dateDayNum, isSelected && styles.dateTextSelected]}>
+                {String(date.getDate()).padStart(2,'0')}
+              </Text>
+              <Text style={[styles.dateMonth, isSelected && styles.dateTextSelected]}>
+                {MONTHS_BG[date.getMonth()]}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
+      {/* Content */}
       {loading ? (
-        <View style={styles.centerContainer}>
+        <View style={styles.center}>
           <ActivityIndicator size="large" color={NEON} />
+          <Text style={styles.loadingText}>Зареждане...</Text>
         </View>
       ) : error ? (
-        <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={fetchBans} style={styles.retryButton}>
+        <View style={styles.center}>
+          <Text style={styles.errorText}>⚠️ {error}</Text>
+          <TouchableOpacity onPress={fetchBans} style={styles.retryBtn}>
             <Text style={styles.retryText}>Опитай пак</Text>
           </TouchableOpacity>
         </View>
       ) : bans.length === 0 ? (
-        <View style={styles.centerContainer}>
-          <Text style={styles.emptyText}>Няма забрани за избраната дата ✅</Text>
+        <View style={styles.center}>
+          <Text style={styles.emptyIcon}>✅</Text>
+          <Text style={styles.emptyText}>Няма забрани за тази дата</Text>
         </View>
       ) : (
         <FlatList
           data={bans}
-          renderItem={renderBanItem}
-          keyExtractor={(item, index) => `${item.flag}-${index}`}
-          contentContainerStyle={styles.listContent}
+          renderItem={renderBan}
+          keyExtractor={(item, i) => `${item.flag}-${i}`}
+          contentContainerStyle={styles.list}
         />
       )}
     </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 247, 255, 0.1)',
-  },
-  backButton: {
-    padding: spacing.sm,
-    marginRight: spacing.sm,
-  },
-  backButtonText: {
-    color: NEON,
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: NEON,
-  },
-  datePickerContainer: {
-    height: 80,
-    marginVertical: spacing.md,
-  },
-  datePickerContent: {
-    paddingHorizontal: spacing.md,
-  },
-  dateItem: {
-    width: 70,
-    height: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: radius.md,
-    marginRight: spacing.sm,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  dateItemSelected: {
-    borderColor: NEON,
-    backgroundColor: 'rgba(0, 247, 255, 0.1)',
-  },
-  dateText: {
-    color: colors.textSecondary,
-    textAlign: 'center',
-    fontSize: 14,
-  },
-  dateTextSelected: {
-    color: NEON,
-    fontWeight: 'bold',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-  },
-  listContent: {
-    padding: spacing.md,
-  },
-  card: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 247, 255, 0.05)',
-    borderColor: 'rgba(0, 247, 255, 0.2)',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-  },
-  cardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  flag: {
-    fontSize: 32,
-    marginRight: spacing.md,
-  },
-  countryContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  countryName: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginRight: spacing.xs,
-  },
-  alertIcon: {
-    fontSize: 18,
-  },
-  timeText: {
-    color: NEON,
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  emptyText: {
-    color: colors.success,
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  errorText: {
-    color: colors.error,
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
-  retryButton: {
-    padding: spacing.sm,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: radius.sm,
-  },
-  retryText: {
-    color: colors.text,
-  },
-});
+  container:        { flex: 1, backgroundColor: colors.bg },
+  header:           { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: 'rgba(0,247,255,0.15)' },
+  backBtn:          { padding: spacing.sm, marginRight: spacing.sm },
+  backArrow:        { color: NEON, fontSize: 26, fontWeight: 'bold' },
+  headerTitle:      { fontSize: 18, fontWeight: '800', color: NEON, letterSpacing: 0.5 },
 
-export default TruckBansScreen;
+  datePicker:       { maxHeight: 90, marginTop: spacing.sm },
+  datePickerContent:{ paddingHorizontal: spacing.md, gap: spacing.xs },
+  dateItem:         { width: 64, paddingVertical: 8, alignItems: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(255,255,255,0.04)', marginRight: 6 },
+  dateItemSelected: { borderColor: NEON, backgroundColor: NEON_DIM },
+  todayLabel:       { fontSize: 9, fontWeight: '800', color: NEON, letterSpacing: 1, marginBottom: 1 },
+  dateDayName:      { fontSize: 11, color: colors.textSecondary, fontWeight: '600' },
+  dateDayNum:       { fontSize: 18, fontWeight: '800', color: colors.text },
+  dateMonth:        { fontSize: 10, color: colors.textSecondary },
+  dateTextSelected: { color: NEON },
+
+  list:             { padding: spacing.md, paddingBottom: 40 },
+  card:             { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: spacing.md, marginBottom: spacing.sm, overflow: 'hidden' },
+  cardAlert:        { borderColor: 'rgba(0,247,255,0.3)', backgroundColor: NEON_DIM },
+  alertAccent:      { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: NEON, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 },
+  flag:             { fontSize: 34, marginRight: spacing.md },
+  cardBody:         { flex: 1 },
+  countryName:      { fontSize: 16, fontWeight: '700', color: colors.text },
+  noteText:         { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  timeText:         { fontSize: 18, fontWeight: '800', color: NEON },
+
+  center:           { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
+  loadingText:      { color: colors.textSecondary, marginTop: spacing.sm },
+  errorText:        { color: colors.error, fontSize: 15, textAlign: 'center', marginBottom: spacing.md },
+  retryBtn:         { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: NEON },
+  retryText:        { color: NEON, fontWeight: '600' },
+  emptyIcon:        { fontSize: 48, marginBottom: spacing.sm },
+  emptyText:        { color: colors.text, fontSize: 16, textAlign: 'center' },
+});
