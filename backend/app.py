@@ -1084,8 +1084,14 @@ def _tool_suggest_routes(
         preview_rts = routes_data[:3]
         raw_geoms_preview = [_tomtom_route_to_geojson(rt) for rt in preview_rts]
         raw_coords_preview = [g["coordinates"] for g in raw_geoms_preview]
-        with ThreadPoolExecutor(max_workers=len(raw_coords_preview)) as _mm_ex:
-            snapped_preview = list(_mm_ex.map(_mapbox_map_match, raw_coords_preview))
+
+        primary_dist_m = routes_data[0].get("summary", {}).get("lengthInMeters", 0)
+        if primary_dist_m > 300_000:
+            # Long route (>300 km): skip map matching for preview — raw TomTom is accurate enough
+            snapped_preview = raw_coords_preview
+        else:
+            with ThreadPoolExecutor(max_workers=len(raw_coords_preview)) as _mm_ex:
+                snapped_preview = list(_mm_ex.map(_mapbox_map_match, raw_coords_preview))
         for idx_g, g in enumerate(raw_geoms_preview):
             g["coordinates"] = snapped_preview[idx_g]
 
@@ -2698,8 +2704,17 @@ def calculate_route():
         alt_geoms_raw = [_tomtom_route_to_geojson(ar) for ar in alt_routes_data]
 
         # ── Map Matching: snap ONLY main route to Mapbox road network ──
-        # Alternatives keep raw TomTom coords (saves ~60% time, avoids timeout)
-        geometry["coordinates"] = _mapbox_map_match(geometry["coordinates"])
+        # Alternatives keep raw TomTom coords (saves ~60% time, avoids timeout).
+        # For long routes snap only the first portion — highway TomTom coords are already accurate.
+        if total_meters > 1_000_000:       # > 1000 km: snap first ~20 km only
+            mm_points = 200
+        elif total_meters > 500_000:       # > 500 km: snap first ~40 km
+            mm_points = 400
+        elif total_meters > 200_000:       # > 200 km: snap first ~80 km
+            mm_points = 800
+        else:
+            mm_points = 1600               # short route: full snap
+        geometry["coordinates"] = _mapbox_map_match(geometry["coordinates"], max_points=mm_points)
 
         alternatives = []
         for idx, alt_rt in enumerate(alt_routes_data):
@@ -3472,6 +3487,30 @@ def get_truck_bans():
         print(f"Trafficban.com fetch error: {e}")
         return jsonify({"bans": [], "error": "source unavailable"})
 
+
+
+@app.route("/api/places/search", methods=["GET"])
+def places_search():
+    """
+    Google Places Text Search fallback for the mobile SearchBar.
+    Called only when TomTom returns 0 results.
+    Returns: [{name, address, lat, lng}]
+    """
+    q   = request.args.get("q", "").strip()
+    lat = float(request.args.get("lat", 0) or 0)
+    lng = float(request.args.get("lng", 0) or 0)
+
+    if not q or len(q) < 2:
+        return jsonify({"results": [], "error": "query too short"})
+    if not _places_ready:
+        return jsonify({"results": [], "error": "Google Places not configured"})
+
+    ip = request.remote_addr or "unknown"
+    if _is_rate_limited(ip, limit=30, window_s=60):
+        return jsonify({"results": [], "error": "rate limited"}), 429
+
+    results = _google_places_fallback(q, lat, lng)
+    return jsonify({"results": results})
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
