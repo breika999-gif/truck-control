@@ -95,10 +95,9 @@ export default function TruckBansScreen() {
         {item.alert && <View style={styles.alertAccent} />}
         <Text style={styles.flag}>{flag}</Text>
         <View style={styles.cardBody}>
-          <Text style={styles.countryName}>{name}</Text>
-          {item.note ? <Text style={styles.noteText}>{item.note}</Text> : null}
+          <Text style={styles.countryName} numberOfLines={1}>{name}</Text>
         </View>
-        <Text style={styles.timeText}>{item.time}</Text>
+        <Text style={styles.timeText} numberOfLines={1}>{item.time}</Text>
       </View>
     );
   };
@@ -195,14 +194,13 @@ const styles = StyleSheet.create({
   dateTextSelected: { color: NEON },
 
   list:             { padding: spacing.md, paddingBottom: 40 },
-  card:             { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: spacing.md, marginBottom: spacing.sm, overflow: 'hidden' },
+  card:             { flexDirection: 'row', alignItems: 'center', height: 60, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderRadius: 12, paddingHorizontal: spacing.md, marginBottom: 6, overflow: 'hidden' },
   cardAlert:        { borderColor: 'rgba(0,247,255,0.3)', backgroundColor: NEON_DIM },
   alertAccent:      { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, backgroundColor: NEON, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 },
-  flag:             { fontSize: 34, marginRight: spacing.md },
-  cardBody:         { flex: 1 },
-  countryName:      { fontSize: 16, fontWeight: '700', color: colors.text },
-  noteText:         { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-  timeText:         { fontSize: 18, fontWeight: '800', color: NEON },
+  flag:             { fontSize: 28, marginRight: spacing.sm, width: 40 },
+  cardBody:         { flex: 1, marginRight: spacing.sm },
+  countryName:      { fontSize: 15, fontWeight: '700', color: colors.text },
+  timeText:         { fontSize: 16, fontWeight: '800', color: NEON, flexShrink: 0 },
 
   center:           { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
   loadingText:      { color: colors.textSecondary, marginTop: spacing.sm },
