@@ -1606,7 +1606,6 @@ const MapScreen: React.FC = () => {
         googleUser={googleUser}
         setShowAccountModal={setShowAccountModal}
         starredPOIs={starredPOIs}
-        navigation={navigation}
         setBorderCrossings={setBorderCrossings}
         setShowBorderPanel={setShowBorderPanel}
         searchTop={searchTop}

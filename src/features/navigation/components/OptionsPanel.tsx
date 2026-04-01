@@ -10,6 +10,9 @@ import {
   StyleSheet,
   Linking,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../../shared/types/navigation';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
 import { POI_META, type POICategory } from '../api/poi';
@@ -54,7 +57,6 @@ interface OptionsPanelProps {
   googleUser: GoogleAccount | null;
   setShowAccountModal: (show: boolean) => void;
   starredPOIs: any[];
-  navigation: any;
   setBorderCrossings: (crossings: any[]) => void;
   setShowBorderPanel: (show: boolean) => void;
   searchTop: number;
@@ -139,7 +141,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   handleSARSearch,
   googleUser,
   setShowAccountModal,
-  navigation,
   setBorderCrossings,
   setShowBorderPanel,
   searchTop,
@@ -151,6 +152,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   onOpenPoiHistory,
   backendOnline,
 }) => {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const close = () => setOptionsOpen(false);
   const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
   const mapModeIcon = mapMode === 'vector' ? 'earth' : 'layers';
