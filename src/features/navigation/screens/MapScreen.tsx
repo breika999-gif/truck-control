@@ -1493,7 +1493,7 @@ const MapScreen: React.FC = () => {
               </Text>
               <View style={styles.navBannerBody}>
                 <Text style={styles.navStreet} numberOfLines={1}>
-                  {stepToShow.name || stepToShow.maneuver.instruction}
+                  {distToTurn != null ? `${fmtDistance(distToTurn)} — ` : ''}{stepToShow.name || stepToShow.maneuver.instruction}
                 </Text>
                 {nextStep && (
                   <Text style={styles.navNext} numberOfLines={1}>
