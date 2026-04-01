@@ -42,6 +42,7 @@ interface MapLayersProps {
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
   restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'; value: string }>;
+  currentStep?: number;
 }
 
 const NEON = '#00f7ff';
@@ -84,7 +85,35 @@ const MapLayers: React.FC<MapLayersProps> = ({
   ttsSpeak,
   voiceMutedRef,
   restrictionPoints = [],
+  currentStep = 0,
 }) => {
+  const turnArrowsGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
+    if (!route || !navigating) return { type: 'FeatureCollection', features: [] };
+    const validTypes = ['turn', 'on ramp', 'off ramp', 'fork', 'merge', 'roundabout'];
+    const features: GeoJSON.Feature[] = [];
+    route.steps.slice(currentStep).forEach((step: any, i: number) => {
+      const loc = step.intersections?.[0]?.location;
+      if (!loc || !validTypes.includes(step.maneuver?.type)) return;
+      const coords = route.geometry.coordinates as [number, number][];
+      let nearestIdx = 0, minD = Infinity;
+      for (let j = 0; j < coords.length; j++) {
+        const dx = loc[0] - coords[j][0], dy = loc[1] - coords[j][1];
+        const d = dx * dx + dy * dy;
+        if (d < minD) { minD = d; nearestIdx = j; }
+      }
+      const p1 = coords[nearestIdx];
+      const p2 = coords[Math.min(nearestIdx + 2, coords.length - 1)];
+      const dLon = (p2[0] - p1[0]) * Math.PI / 180;
+      const lat1 = p1[1] * Math.PI / 180, lat2 = p2[1] * Math.PI / 180;
+      const bearing = (Math.atan2(
+        Math.sin(dLon) * Math.cos(lat2),
+        Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
+      ) * 180 / Math.PI + 360) % 360;
+      features.push({ type: 'Feature', id: `arrow-${i}`, geometry: { type: 'Point', coordinates: loc }, properties: { bearing } });
+    });
+    return { type: 'FeatureCollection', features };
+  }, [route, navigating, currentStep]);
+
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: restrictionPoints.map((rp, i) => ({
@@ -195,12 +224,13 @@ const MapLayers: React.FC<MapLayersProps> = ({
             minZoomLevel={11}
             style={{
               circleRadius: 18,
-              circleColor: lightMode ? '#FFFFFF' : '#FFFDE7',
+              circleColor: '#FFFFFF',
               circleOpacity: 1.0,
               circleStrokeWidth: 3,
-              circleStrokeColor: lightMode ? '#D0021B' : '#FF1744',
+              circleStrokeColor: '#D0021B',
               circleStrokeOpacity: 1.0,
               circlePitchAlignment: 'viewport',
+              ...((!lightMode) && { circleEmissiveStrength: 1.0 } as any),
             }}
           />
           <Mapbox.SymbolLayer
@@ -215,13 +245,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
               ],
               textSize: 14,
               textColor: '#1A1A1A',
-              textHaloColor: lightMode ? '#FFFFFF' : '#FFFDE7',
+              textHaloColor: '#FFFFFF',
               textHaloWidth: 2.5,
               textAnchor: 'center',
               textAllowOverlap: true,
               textIgnorePlacement: true,
               textPitchAlignment: 'viewport',
-            }}
+              textEmissiveStrength: lightMode ? 0 : 1.0,
+            } as any}
           />
         </Mapbox.ShapeSource>
       )}
@@ -292,13 +323,31 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {/* ── Route ── */}
       {mapIsLoaded && routeShape && (
         <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
-          <Mapbox.LineLayer id="route-casing" slot="middle" style={{ lineColor: lightMode ? '#0a0a1a' : '#ffffff', lineWidth: 9, lineOpacity: lightMode ? 1.0 : 0.25, lineCap: 'round', lineJoin: 'round' }} />
+          <Mapbox.LineLayer
+            id="route-casing"
+            slot="top"
+            style={{
+              lineColor: lightMode ? '#0a0a1a' : '#003d6b',
+              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 6, 10, 10, 15, 12],
+              lineOpacity: 1.0,
+              lineCap: 'round',
+              lineJoin: 'round',
+            }}
+          />
           <Mapbox.LineLayer
             id="route-line"
-            slot="middle"
+            slot="top"
             style={{
-              lineColor: ['match', ['get', 'congestion'], 'low', routeLineColor, 'moderate', '#FFBC40', 'heavy', '#FF9100', 'severe', '#FA0000', routeLineColor],
-              lineWidth: lightMode ? 5 : 7, lineCap: 'round', lineJoin: 'round',
+              lineColor: ['match', ['get', 'congestion'],
+                'low', lightMode ? routeLineColor : '#00f7ff',
+                'moderate', '#FFBC40',
+                'heavy', '#FF9100',
+                'severe', '#FA0000',
+                lightMode ? routeLineColor : '#00f7ff',
+              ],
+              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
+              lineCap: 'round',
+              lineJoin: 'round',
             }}
           />
         </Mapbox.ShapeSource>
@@ -337,6 +386,27 @@ const MapLayers: React.FC<MapLayersProps> = ({
               textColor: 'rgba(255,255,255,0.90)', textHaloColor: 'rgba(0,0,0,0.25)', textHaloWidth: 1,
               textRotationAlignment: 'map', textAllowOverlap: true, iconAllowOverlap: true,
             }}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
+      {/* ── Turn Guidance Arrows ── */}
+      {mapIsLoaded && navigating && turnArrowsGeoJSON.features.length > 0 && (
+        <Mapbox.ShapeSource id="turn-arrows-source" shape={turnArrowsGeoJSON}>
+          <Mapbox.SymbolLayer
+            id="turn-arrows-layer"
+            slot="top"
+            style={{
+              iconImage: 'nav-arrow',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 12, 0.4, 15, 0.7, 18, 1.0] as any,
+              iconRotate: ['get', 'bearing'] as any,
+              iconRotationAlignment: 'map',
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
+              iconOpacity: ['interpolate', ['linear'], ['zoom'], 12, 0, 13, 1] as any,
+              iconColor: '#FFFFFF',
+              iconEmissiveStrength: lightMode ? 0 : 1.0,
+            } as any}
           />
         </Mapbox.ShapeSource>
       )}
@@ -383,7 +453,17 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       {destination && (
         <Mapbox.ShapeSource id="dest-pin-src" shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: destination }, properties: {} }}>
-          <Mapbox.SymbolLayer id="dest-pin-layer" slot="top" style={{ textField: '📍', textSize: 30, textAnchor: 'bottom', textAllowOverlap: true }} />
+          <Mapbox.SymbolLayer
+            id="dest-pin-layer"
+            slot="top"
+            style={{
+              iconImage: 'dest-flag',
+              iconSize: 0.9,
+              iconAnchor: 'bottom',
+              iconAllowOverlap: true,
+              iconEmissiveStrength: lightMode ? 0 : 1.0,
+            } as any}
+          />
         </Mapbox.ShapeSource>
       )}
 

@@ -105,8 +105,8 @@ export const useRouteInsights = (route: RouteResult | null) => {
     }
     const totalM = cumDist[cumDist.length - 1];
 
-    // Sample at 20%, 40%, 60%, 80% of route
-    const fractions = [0.2, 0.4, 0.6, 0.8];
+    // Sample at 33% and 66% of route
+    const fractions = [0.33, 0.66];
     const sampleIdxs = fractions
       .map((f) => {
         const target = f * totalM;

@@ -23,6 +23,8 @@ export const ICON_FUEL          = require('../../../shared/assets/icon_fuel.png'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_CAMERA        = require('../../../shared/assets/icon_camera.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_DESTINATION   = require('../../../shared/assets/icon_destination.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_BIZ           = require('../../../shared/assets/icon_biz.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_NO_OVERTAKING = require('../../../shared/assets/icon_no_overtaking.png') as number;

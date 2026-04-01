@@ -43,6 +43,9 @@ export function useVoice(navigating: boolean, currentStep: number, route?: { ste
     if (!voiceMutedRef.current) {
       Tts.stop();
       try {
+        // Direct Tts.speak (not ttsSpeak) is intentional here: we call Tts.stop()
+        // first to cut off any in-progress speech, then speak the new text
+        // immediately. ttsSpeak adds extra queue logic that would race with stop().
         Tts.speak(text);
       } catch (err) {
         console.error('[useVoice] Tts.speak error:', err);
