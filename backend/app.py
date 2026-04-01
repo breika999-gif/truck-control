@@ -521,6 +521,15 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS truck_bans_cache (
+                date TEXT PRIMARY KEY,
+                data TEXT,
+                fetched_at TEXT
+            )
+            """
+        )
         conn.commit()
     # Migration: add user_email and type columns if they do not exist yet
     try:
@@ -3365,6 +3374,82 @@ def orchestrate():
             for i, t in enumerate(tasks)
         ],
     })
+
+
+@app.route("/api/truck-bans", methods=["GET"])
+def get_truck_bans():
+    """
+    Fetch truck bans for a specific date from trafficban.com and cache for 24h.
+    """
+    date_str = request.args.get("date")
+    if not date_str:
+        return jsonify({"bans": [], "error": "date parameter is required"}), 400
+
+    # 1. Check cache
+    try:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT data, fetched_at FROM truck_bans_cache WHERE date = ?",
+                (date_str,)
+            ).fetchone()
+            
+            if row:
+                fetched_at = datetime.fromisoformat(row["fetched_at"])
+                # Cache for 24 hours
+                if (datetime.now(timezone.utc) - fetched_at.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+                    return jsonify({"bans": json.loads(row["data"])})
+    except Exception as e:
+        print(f"Cache error: {e}")
+
+    # 2. Fetch from source
+    try:
+        # Step 1: Get key
+        key_url = f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}"
+        key_resp = requests.get(key_url, timeout=10)
+        key_resp.raise_for_status()
+        key_data = key_resp.json()
+        
+        # Extract key - usually it's either the raw response or a 'key' field
+        key = key_data.get("key") if isinstance(key_data, dict) else key_data
+        
+        if not key:
+             return jsonify({"bans": [], "error": "source unavailable (key)"})
+
+        # Step 2: Get bans
+        bans_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?KqMWFIg3={key}&d={date_str}"
+        bans_resp = requests.get(bans_url, timeout=10)
+        bans_resp.raise_for_status()
+        bans_data = bans_resp.json()
+
+        # 3. Map to requested format
+        # Expected: {"bans": [{"flag": "DE", "country": "Germany", "time": "00:00-22:00", "alert": true}]}
+        raw_bans = bans_data.get("bans", []) if isinstance(bans_data, dict) else bans_data
+        formatted_bans = []
+        if isinstance(raw_bans, list):
+            for b in raw_bans:
+                formatted_bans.append({
+                    "flag": b.get("flag") or b.get("c") or "",
+                    "country": b.get("country") or b.get("n") or "",
+                    "time": b.get("time") or b.get("t") or "",
+                    "alert": b.get("alert") or b.get("a") or False
+                })
+        
+        # 4. Save to cache
+        try:
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)",
+                    (date_str, json.dumps(formatted_bans), now_iso())
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"Cache write error: {e}")
+
+        return jsonify({"bans": formatted_bans})
+
+    except Exception as e:
+        print(f"Fetch error: {e}")
+        return jsonify({"bans": [], "error": "source unavailable"})
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

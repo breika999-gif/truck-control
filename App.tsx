@@ -12,6 +12,7 @@ import MapScreen from './src/features/navigation/screens/MapScreen';
 import VehicleProfileScreen from './src/features/vehicle/screens/VehicleProfileScreen';
 import POIListScreen from './src/features/navigation/screens/POIListScreen';
 import TachoScreen from './src/features/tacho/screens/TachoScreen';
+import TruckBansScreen from './src/features/navigation/screens/TruckBansScreen';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 
@@ -64,6 +65,13 @@ export default function App() {
             title: 'Тахограф',
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
+          }}
+        />
+        <Stack.Screen
+          name="TruckBans"
+          component={TruckBansScreen}
+          options={{
+            headerShown: false,
           }}
         />
       </Stack.Navigator>

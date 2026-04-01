@@ -356,8 +356,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 icon="truck-remove"
                 label="Забрани за каране 🚫"
                 onPress={() => {
+                  navigation.navigate('TruckBans');
                   close();
-                  openInBrowser('https://truckban.eu');
                 }}
                 iconColor="#FF5252"
                 iconBg="rgba(255,82,82,0.15)"

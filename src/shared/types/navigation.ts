@@ -3,4 +3,5 @@ export type RootStackParamList = {
   VehicleProfile: undefined;
   POIList: undefined;
   Tacho: undefined;
+  TruckBans: undefined;
 };
