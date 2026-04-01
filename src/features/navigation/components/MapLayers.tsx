@@ -89,11 +89,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
 }) => {
   const turnArrowsGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
     if (!route || !navigating) return { type: 'FeatureCollection', features: [] };
-    const validTypes = ['turn', 'on ramp', 'off ramp', 'fork', 'merge', 'roundabout'];
+    // TomTom sends raw uppercase codes (e.g. "TURN_RIGHT"); also handle Mapbox-style lowercase
+    const isTurnManeuver = (t: string) => /turn|ramp|fork|merge|roundabout|rotary|keep|bear|sharp|u.turn/i.test(t);
     const features: GeoJSON.Feature[] = [];
     route.steps.slice(currentStep).forEach((step: any, i: number) => {
       const loc = step.intersections?.[0]?.location;
-      if (!loc || !validTypes.includes(step.maneuver?.type)) return;
+      if (!loc || !isTurnManeuver(step.maneuver?.type ?? '')) return;
       const coords = route.geometry.coordinates as [number, number][];
       let nearestIdx = 0, minD = Infinity;
       for (let j = 0; j < coords.length; j++) {

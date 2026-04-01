@@ -1246,6 +1246,7 @@ const MapScreen: React.FC = () => {
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}
           restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
+          currentStep={currentStep}
         />
 
       </Mapbox.MapView>
