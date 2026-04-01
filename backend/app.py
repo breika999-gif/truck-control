@@ -3379,7 +3379,7 @@ def orchestrate():
 @app.route("/api/truck-bans", methods=["GET"])
 def get_truck_bans():
     """
-    Fetch truck bans for a specific date from trafficban.com and cache for 24h.
+    Fetch truck bans for a specific date using a static rules engine and cache for 24h.
     """
     date_str = request.args.get("date")
     if not date_str:
@@ -3392,7 +3392,7 @@ def get_truck_bans():
                 "SELECT data, fetched_at FROM truck_bans_cache WHERE date = ?",
                 (date_str,)
             ).fetchone()
-            
+
             if row:
                 fetched_at = datetime.fromisoformat(row["fetched_at"])
                 # Cache for 24 hours
@@ -3401,40 +3401,98 @@ def get_truck_bans():
     except Exception as e:
         print(f"Cache error: {e}")
 
-    # 2. Fetch from source
+    # 2. Compute bans using static rules engine (EU regulations)
     try:
-        # Step 1: Get key
-        key_url = f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}"
-        key_resp = requests.get(key_url, timeout=10)
-        key_resp.raise_for_status()
-        key_data = key_resp.json()
-        
-        # Extract key - usually it's either the raw response or a 'key' field
-        key = key_data.get("key") if isinstance(key_data, dict) else key_data
-        
-        if not key:
-             return jsonify({"bans": [], "error": "source unavailable (key)"})
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        weekday = dt.weekday()  # 0=Mon, 6=Sun
+        month = dt.month
+        is_sun = (weekday == 6)
+        is_sat = (weekday == 5)
+        is_fri = (weekday == 4)
 
-        # Step 2: Get bans
-        bans_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?KqMWFIg3={key}&d={date_str}"
-        bans_resp = requests.get(bans_url, timeout=10)
-        bans_resp.raise_for_status()
-        bans_data = bans_resp.json()
-
-        # 3. Map to requested format
-        # Expected: {"bans": [{"flag": "DE", "country": "Germany", "time": "00:00-22:00", "alert": true}]}
-        raw_bans = bans_data.get("bans", []) if isinstance(bans_data, dict) else bans_data
         formatted_bans = []
-        if isinstance(raw_bans, list):
-            for b in raw_bans:
-                formatted_bans.append({
-                    "flag": b.get("flag") or b.get("c") or "",
-                    "country": b.get("country") or b.get("n") or "",
-                    "time": b.get("time") or b.get("t") or "",
-                    "alert": b.get("alert") or b.get("a") or False
-                })
-        
-        # 4. Save to cache
+
+        # DE Germany: Sunday 00:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "DE", "country": "Germany", "time": "00:00-22:00", "alert": True, "note": "Неделна забрана >7.5т"})
+
+        # AT Austria: Sunday 00:00-22:00, trucks >7.5t + Saturday 15:00-24:00 Jul-Aug
+        if is_sun:
+            formatted_bans.append({"flag": "AT", "country": "Austria", "time": "00:00-22:00", "alert": True, "note": "Неделна забрана >7.5т"})
+        elif is_sat and month in [7, 8]:
+            formatted_bans.append({"flag": "AT", "country": "Austria", "time": "15:00-24:00", "alert": True, "note": "Лятна съботна забрана >7.5т"})
+
+        # CH Switzerland: Sunday 00:00-24:00 + every night 22:00-05:00, trucks >3.5t
+        if is_sun:
+            formatted_bans.append({"flag": "CH", "country": "Switzerland", "time": "00:00-24:00", "alert": True, "note": "Неделна забрана >3.5т"})
+        else:
+            formatted_bans.append({"flag": "CH", "country": "Switzerland", "time": "22:00-05:00", "alert": True, "note": "Нощна забрана >3.5т"})
+
+        # FR France: Saturday 22:00 to Sunday 22:00 (Jul 1 - Aug 31 only), trucks >7.5t
+        if month in [7, 8]:
+            if is_sat:
+                formatted_bans.append({"flag": "FR", "country": "France", "time": "22:00-24:00", "alert": True, "note": "Лятна забрана >7.5т"})
+            elif is_sun:
+                formatted_bans.append({"flag": "FR", "country": "France", "time": "00:00-22:00", "alert": True, "note": "Лятна забрана >7.5т"})
+
+        # PL Poland: Sunday 08:00-22:00, trucks >12t
+        if is_sun:
+            formatted_bans.append({"flag": "PL", "country": "Poland", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >12т"})
+
+        # RO Romania: Friday 18:00-22:00 + Saturday 08:00-22:00 + Sunday 08:00-22:00, trucks >7.5t
+        if is_fri:
+            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "18:00-22:00", "alert": False, "note": "Петъчна забрана >7.5т"})
+        elif is_sat:
+            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "08:00-22:00", "alert": False, "note": "Съботна забрана >7.5т"})
+        elif is_sun:
+            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # HU Hungary: Sunday 00:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "HU", "country": "Hungary", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # SI Slovenia: Sunday 08:00-21:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "SI", "country": "Slovenia", "time": "08:00-21:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # SK Slovakia: Sunday 00:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "SK", "country": "Slovakia", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # CZ Czech Republic: Sunday 13:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "CZ", "country": "Czech Republic", "time": "13:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # HR Croatia: Sunday 07:00-21:00 (summer Jun-Sep), trucks >7.5t
+        if is_sun and month in [6, 7, 8, 9]:
+            formatted_bans.append({"flag": "HR", "country": "Croatia", "time": "07:00-21:00", "alert": False, "note": "Лятна неделна забрана >7.5т"})
+
+        # RS Serbia: Sunday 06:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "RS", "country": "Serbia", "time": "06:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # IT Italy: Sunday 08:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "IT", "country": "Italy", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # ES Spain: Saturday/Sunday restrictions (seasonal)
+        if (is_sat or is_sun) and month in [7, 8]:
+            formatted_bans.append({"flag": "ES", "country": "Spain", "time": "08:00-24:00", "alert": False, "note": "Лятна забрана"})
+
+        # LU Luxembourg: Sunday 00:00-22:00, trucks >7.5t
+        if is_sun:
+            formatted_bans.append({"flag": "LU", "country": "Luxembourg", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
+
+        # BG Bulgaria: holidays only
+        bg_holidays = [
+            "2026-01-01", "2026-03-03", "2026-04-10", "2026-04-13", "2026-05-01",
+            "2026-05-06", "2026-05-24", "2026-09-06", "2026-09-22", "2026-11-01",
+            "2026-12-24", "2026-12-25", "2026-12-26"
+        ]
+        if date_str in bg_holidays:
+            formatted_bans.append({"flag": "BG", "country": "Bulgaria", "time": "08:00-20:00", "alert": False, "note": "Празнична забрана >12т"})
+
+        # 3. Save to cache
         try:
             with get_db() as conn:
                 conn.execute(
@@ -3448,8 +3506,8 @@ def get_truck_bans():
         return jsonify({"bans": formatted_bans})
 
     except Exception as e:
-        print(f"Fetch error: {e}")
-        return jsonify({"bans": [], "error": "source unavailable"})
+        print(f"Bans engine error: {e}")
+        return jsonify({"bans": [], "error": "rules engine failure"}), 500
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
