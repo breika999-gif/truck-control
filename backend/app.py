@@ -3379,13 +3379,14 @@ def orchestrate():
 @app.route("/api/truck-bans", methods=["GET"])
 def get_truck_bans():
     """
-    Fetch truck bans for a specific date using a static rules engine and cache for 24h.
+    Fetch truck bans for a specific date from trafficban.com with session+header auth.
+    Cache for 7 days in truck_bans_cache SQLite table.
     """
     date_str = request.args.get("date")
     if not date_str:
         return jsonify({"bans": [], "error": "date parameter is required"}), 400
 
-    # 1. Check cache
+    # 1. Check cache (7 days TTL)
     try:
         with get_db() as conn:
             row = conn.execute(
@@ -3394,120 +3395,90 @@ def get_truck_bans():
             ).fetchone()
 
             if row:
-                fetched_at = datetime.fromisoformat(row["fetched_at"])
-                # Cache for 24 hours
-                if (datetime.now(timezone.utc) - fetched_at.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+                fetched_at_str = row["fetched_at"]
+                fetched_at = datetime.fromisoformat(fetched_at_str)
+                if fetched_at.tzinfo is None:
+                    fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+                
+                now = datetime.now(timezone.utc)
+                if (now - fetched_at).total_seconds() < 604800: # 7 days
                     return jsonify({"bans": json.loads(row["data"])})
     except Exception as e:
-        print(f"Cache error: {e}")
+        print(f"Truck bans cache check error: {e}")
 
-    # 2. Compute bans using static rules engine (EU regulations)
+    # 2. Live fetch from trafficban.com
+    session = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.trafficban.com/",
+    }
+
+    def fetch_live():
+        # Step 1: Init session (visit homepage for cookies)
+        session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        
+        # Step 2: Get dynamic parameter name from JS file
+        js_url = "https://www.trafficban.com/res/js/js.ban.list.for.date.html"
+        js_resp = session.get(js_url, headers=headers, timeout=10)
+        param_match = re.search(r'\?([K][a-zA-Z0-9]+)=', js_resp.text)
+        if not param_match:
+            raise ValueError("Could not find dynamic parameter in JS")
+        param_name = param_match.group(1)
+
+        # Step 3: Get key for date
+        key_headers = headers.copy()
+        key_headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.trafficban.com",
+        })
+        key_url = f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}"
+        key_resp = session.get(key_url, headers=key_headers, timeout=10)
+        key_data = key_resp.json()
+        key = key_data.get("key")
+        if not key:
+            raise ValueError("Could not obtain key for date")
+
+        # Step 4: Get ban list
+        bans_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}"
+        bans_resp = session.get(bans_url, headers=key_headers, timeout=10)
+        raw_bans = bans_resp.json()
+        
+        # Map fields: fl->flag, cr->country, tm->time, al->alert (bool)
+        formatted = []
+        for b in raw_bans:
+            alert = bool(b.get("al"))
+            formatted.append({
+                "flag": b.get("fl"),
+                "country": b.get("cr"),
+                "time": b.get("tm"),
+                "alert": alert,
+                "note": "Важна забрана" if alert else ""
+            })
+        return formatted
+
     try:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        weekday = dt.weekday()  # 0=Mon, 6=Sun
-        month = dt.month
-        is_sun = (weekday == 6)
-        is_sat = (weekday == 5)
-        is_fri = (weekday == 4)
-
-        formatted_bans = []
-
-        # DE Germany: Sunday 00:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "DE", "country": "Germany", "time": "00:00-22:00", "alert": True, "note": "Неделна забрана >7.5т"})
-
-        # AT Austria: Sunday 00:00-22:00, trucks >7.5t + Saturday 15:00-24:00 Jul-Aug
-        if is_sun:
-            formatted_bans.append({"flag": "AT", "country": "Austria", "time": "00:00-22:00", "alert": True, "note": "Неделна забрана >7.5т"})
-        elif is_sat and month in [7, 8]:
-            formatted_bans.append({"flag": "AT", "country": "Austria", "time": "15:00-24:00", "alert": True, "note": "Лятна съботна забрана >7.5т"})
-
-        # CH Switzerland: Sunday 00:00-24:00 + every night 22:00-05:00, trucks >3.5t
-        if is_sun:
-            formatted_bans.append({"flag": "CH", "country": "Switzerland", "time": "00:00-24:00", "alert": True, "note": "Неделна забрана >3.5т"})
-        else:
-            formatted_bans.append({"flag": "CH", "country": "Switzerland", "time": "22:00-05:00", "alert": True, "note": "Нощна забрана >3.5т"})
-
-        # FR France: Saturday 22:00 to Sunday 22:00 (Jul 1 - Aug 31 only), trucks >7.5t
-        if month in [7, 8]:
-            if is_sat:
-                formatted_bans.append({"flag": "FR", "country": "France", "time": "22:00-24:00", "alert": True, "note": "Лятна забрана >7.5т"})
-            elif is_sun:
-                formatted_bans.append({"flag": "FR", "country": "France", "time": "00:00-22:00", "alert": True, "note": "Лятна забрана >7.5т"})
-
-        # PL Poland: Sunday 08:00-22:00, trucks >12t
-        if is_sun:
-            formatted_bans.append({"flag": "PL", "country": "Poland", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >12т"})
-
-        # RO Romania: Friday 18:00-22:00 + Saturday 08:00-22:00 + Sunday 08:00-22:00, trucks >7.5t
-        if is_fri:
-            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "18:00-22:00", "alert": False, "note": "Петъчна забрана >7.5т"})
-        elif is_sat:
-            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "08:00-22:00", "alert": False, "note": "Съботна забрана >7.5т"})
-        elif is_sun:
-            formatted_bans.append({"flag": "RO", "country": "Romania", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # HU Hungary: Sunday 00:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "HU", "country": "Hungary", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # SI Slovenia: Sunday 08:00-21:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "SI", "country": "Slovenia", "time": "08:00-21:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # SK Slovakia: Sunday 00:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "SK", "country": "Slovakia", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # CZ Czech Republic: Sunday 13:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "CZ", "country": "Czech Republic", "time": "13:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # HR Croatia: Sunday 07:00-21:00 (summer Jun-Sep), trucks >7.5t
-        if is_sun and month in [6, 7, 8, 9]:
-            formatted_bans.append({"flag": "HR", "country": "Croatia", "time": "07:00-21:00", "alert": False, "note": "Лятна неделна забрана >7.5т"})
-
-        # RS Serbia: Sunday 06:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "RS", "country": "Serbia", "time": "06:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # IT Italy: Sunday 08:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "IT", "country": "Italy", "time": "08:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # ES Spain: Saturday/Sunday restrictions (seasonal)
-        if (is_sat or is_sun) and month in [7, 8]:
-            formatted_bans.append({"flag": "ES", "country": "Spain", "time": "08:00-24:00", "alert": False, "note": "Лятна забрана"})
-
-        # LU Luxembourg: Sunday 00:00-22:00, trucks >7.5t
-        if is_sun:
-            formatted_bans.append({"flag": "LU", "country": "Luxembourg", "time": "00:00-22:00", "alert": False, "note": "Неделна забрана >7.5т"})
-
-        # BG Bulgaria: holidays only
-        bg_holidays = [
-            "2026-01-01", "2026-03-03", "2026-04-10", "2026-04-13", "2026-05-01",
-            "2026-05-06", "2026-05-24", "2026-09-06", "2026-09-22", "2026-11-01",
-            "2026-12-24", "2026-12-25", "2026-12-26"
-        ]
-        if date_str in bg_holidays:
-            formatted_bans.append({"flag": "BG", "country": "Bulgaria", "time": "08:00-20:00", "alert": False, "note": "Празнична забрана >12т"})
-
-        # 3. Save to cache
         try:
-            with get_db() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)",
-                    (date_str, json.dumps(formatted_bans), now_iso())
-                )
-                conn.commit()
-        except Exception as e:
-            print(f"Cache write error: {e}")
+            bans = fetch_live()
+        except Exception:
+            # Retry once with fresh session
+            session.cookies.clear()
+            bans = fetch_live()
 
-        return jsonify({"bans": formatted_bans})
+        # Save to cache
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)",
+                (date_str, json.dumps(bans), now_iso())
+            )
+            conn.commit()
+        
+        return jsonify({"bans": bans})
 
     except Exception as e:
-        print(f"Bans engine error: {e}")
-        return jsonify({"bans": [], "error": "rules engine failure"}), 500
+        print(f"Trafficban.com fetch error: {e}")
+        return jsonify({"bans": [], "error": "source unavailable"})
+
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
