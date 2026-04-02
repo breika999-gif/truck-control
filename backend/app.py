@@ -566,39 +566,45 @@ def _transparking_cache_refresh() -> None:
             if row:
                 last_refreshed = datetime.fromisoformat(row["refreshed_at"])
                 if (datetime.now(timezone.utc) - last_refreshed.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
-                    return # Still fresh
+                    print("[Transparking] cache still fresh, skipping refresh")
+                    return
 
+        print("[Transparking] fetching points from truckerapps.eu ...")
         url = "https://truckerapps.eu/transparking/points.php?action=list"
-        r = requests.get(url, timeout=15)
+        r = requests.get(url, timeout=60)
         r.raise_for_status()
-        data = r.json() 
+        data = r.json()
 
         features = data.get("features", [])
+        print(f"[Transparking] got {len(features)} features")
         if not features:
             return
 
+        now = now_iso()
+        inserted = 0
         with get_db() as db:
             db.execute("DELETE FROM transparking_cache")
-            now = now_iso()
-            for f in features:
+            db.commit()
+            for i, f in enumerate(features):
                 props = f.get("properties", {})
                 pid = props.get("id")
                 name = props.get("title", "")
-                
-                geom = f.get("geometry", {})
-                coords = geom.get("coordinates", [])
-                
-                if not pid or not coords or len(coords) < 2:
+                coords = f.get("geometry", {}).get("coordinates", [])
+                if not pid or len(coords) < 2:
                     continue
-                
                 lng, lat = coords[0], coords[1]
                 db.execute(
                     "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
                     (str(pid), name, float(lat), float(lng), now)
                 )
+                inserted += 1
+                if inserted % 5000 == 0:
+                    db.commit()
+                    print(f"[Transparking] inserted {inserted}...")
             db.commit()
-    except Exception:
-        pass
+        print(f"[Transparking] cache ready — {inserted} spots")
+    except Exception as e:
+        print(f"[Transparking] refresh FAILED: {e}")
 
 
 def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | None:
