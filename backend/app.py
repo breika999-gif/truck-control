@@ -17,6 +17,7 @@ import os
 import re
 import sqlite3
 import time
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -630,7 +631,7 @@ def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | N
 
 
 init_db()
-_transparking_cache_refresh()
+threading.Thread(target=_transparking_cache_refresh, daemon=True).start()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
