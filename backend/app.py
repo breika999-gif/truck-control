@@ -572,21 +572,28 @@ def _transparking_cache_refresh() -> None:
         r.raise_for_status()
         data = r.json() 
 
-        if not isinstance(data, list):
+        features = data.get("features", [])
+        if not features:
             return
 
         with get_db() as db:
             db.execute("DELETE FROM transparking_cache")
             now = now_iso()
-            for p in data:
-                pid = p.get("pointid")
-                lat = p.get("lat")
-                lng = p.get("lng")
-                if not pid or lat is None or lng is None:
+            for f in features:
+                props = f.get("properties", {})
+                pid = props.get("id")
+                name = props.get("title", "")
+                
+                geom = f.get("geometry", {})
+                coords = geom.get("coordinates", [])
+                
+                if not pid or not coords or len(coords) < 2:
                     continue
+                
+                lng, lat = coords[0], coords[1]
                 db.execute(
                     "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(pid), p.get("name", ""), float(lat), float(lng), now)
+                    (str(pid), name, float(lat), float(lng), now)
                 )
             db.commit()
     except Exception:

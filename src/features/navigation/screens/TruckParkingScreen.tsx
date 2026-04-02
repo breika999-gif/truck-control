@@ -34,6 +34,18 @@ const TruckParkingScreen: React.FC = () => {
   const cameraRef = useRef<Mapbox.Camera>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    // Initial fetch for the area
+    const center = userCoords || [MAP_CENTER.longitude, MAP_CENTER.latitude];
+    // Create a dummy bounding box around the center for initial load
+    const pad = 0.05;
+    const initialBounds = {
+      ne: [center[0] + pad, center[1] + pad],
+      sw: [center[0] - pad, center[1] - pad]
+    };
+    fetchParking(initialBounds);
+  }, []);
+
   const fetchParking = async (bounds: any) => {
     setLoading(true);
     try {
