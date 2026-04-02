@@ -59,6 +59,7 @@ export interface POICard {
   open_now?: boolean | null;
   needs_confirm?: boolean;
   source?: 'google' | 'tomtom' | 'osm';
+  transparking_url?: string;
 }
 
 /** One traffic alert bubble on the route map */

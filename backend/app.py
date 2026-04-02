@@ -530,6 +530,17 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transparking_cache (
+                pointid TEXT PRIMARY KEY,
+                name TEXT,
+                lat REAL,
+                lng REAL,
+                refreshed_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
     # Migration: add user_email and type columns if they do not exist yet
     try:
@@ -546,7 +557,73 @@ def init_db() -> None:
         pass
 
 
+def _transparking_cache_refresh() -> None:
+    """Fetch all parking spots from Transparking and cache them locally (24h TTL)."""
+    try:
+        with get_db() as db:
+            row = db.execute("SELECT refreshed_at FROM transparking_cache LIMIT 1").fetchone()
+            if row:
+                last_refreshed = datetime.fromisoformat(row["refreshed_at"])
+                if (datetime.now(timezone.utc) - last_refreshed.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+                    return # Still fresh
+
+        url = "https://truckerapps.eu/transparking/points.php?action=list"
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json() 
+
+        if not isinstance(data, list):
+            return
+
+        with get_db() as db:
+            db.execute("DELETE FROM transparking_cache")
+            now = now_iso()
+            for p in data:
+                pid = p.get("pointid")
+                lat = p.get("lat")
+                lng = p.get("lng")
+                if not pid or lat is None or lng is None:
+                    continue
+                db.execute(
+                    "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
+                    (str(pid), p.get("name", ""), float(lat), float(lng), now)
+                )
+            db.commit()
+    except Exception:
+        pass
+
+
+def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | None:
+    """Find the closest Transparking spot within radius_m."""
+    try:
+        with get_db() as db:
+            # Bounding box filter for speed
+            rows = db.execute(
+                "SELECT pointid, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                (lat - 0.002, lat + 0.002, lng - 0.002, lng + 0.002)
+            ).fetchall()
+            
+            best_match = None
+            min_dist = radius_m
+            
+            for r in rows:
+                d = _haversine_m(lat, lng, r["lat"], r["lng"])
+                if d < min_dist:
+                    min_dist = d
+                    best_match = r["pointid"]
+            
+            if best_match:
+                return {
+                    "pointid": best_match,
+                    "url": f"https://truckerapps.eu/transparking/en/poi/{best_match}"
+                }
+    except Exception:
+        pass
+    return None
+
+
 init_db()
+_transparking_cache_refresh()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1366,6 +1443,11 @@ out center 10;
 
     # Fallback website — link to truckerapps.eu map centred on the parking spot
     for item in deduped:
+        # Match with Transparking for deep linking
+        tp = _transparking_match(item["lat"], item["lng"])
+        if tp:
+            item["transparking_url"] = tp["url"]
+
         if not item.get("website"):
             item["website"] = (
                 f"https://truckerapps.eu/search?lat={item['lat']}&lng={item['lng']}"
@@ -1998,6 +2080,10 @@ def poi_along_route_v2():
     results = _tomtom_along_route(coords, query, limit=12)
     for r in results:
         r["category"] = category
+        if category == "truck_stop":
+            tp = _transparking_match(r["lat"], r["lng"])
+            if tp:
+                r["transparking_url"] = tp["url"]
     return jsonify({"pois": results})
 
 

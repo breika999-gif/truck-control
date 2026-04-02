@@ -107,7 +107,9 @@ import MapLayers from '../components/MapLayers';
 import { styles, NEON, NEON_DIM } from './MapScreen.styles';
 import {
   NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
-  ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_DESTINATION, ICON_BIZ, ICON_NO_OVERTAKING,
+  ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_DESTINATION, ICON_START, ICON_WAYPOINT, ICON_BIZ, ICON_NO_OVERTAKING,
+  ARROW_STRAIGHT, ARROW_RIGHT, ARROW_LEFT, ARROW_SLIGHT_RIGHT, ARROW_SLIGHT_LEFT,
+  ARROW_SHARP_RIGHT, ARROW_SHARP_LEFT, ARROW_UTURN, ARROW_ROUNDABOUT,
   NAV_PADDING, ZERO_PADDING,
   APP_URL_MAP, HOS_LIMIT_S, POI_CATEGORIES,
   DEPART_LABELS, type DepartLabel, departIso,
@@ -1168,6 +1170,15 @@ const MapScreen: React.FC = () => {
             'biz-icon':      ICON_BIZ,
             'no-overtaking': ICON_NO_OVERTAKING,
             'dest-flag':     ICON_DESTINATION,
+            'arrow-straight':     ARROW_STRAIGHT,
+            'arrow-right':        ARROW_RIGHT,
+            'arrow-left':         ARROW_LEFT,
+            'arrow-slight-right': ARROW_SLIGHT_RIGHT,
+            'arrow-slight-left':  ARROW_SLIGHT_LEFT,
+            'arrow-sharp-right':  ARROW_SHARP_RIGHT,
+            'arrow-sharp-left':   ARROW_SHARP_LEFT,
+            'arrow-uturn':        ARROW_UTURN,
+            'arrow-roundabout':   ARROW_ROUNDABOUT,
           }}
           onImageMissing={(imageKey) => {
             console.warn('[Mapbox] missing image in atlas:', imageKey);
@@ -1360,10 +1371,20 @@ const MapScreen: React.FC = () => {
             >
               <Icon name="open-in-new" size={16} color={NEON} />
               <Text style={styles.parkingBubbleWebBtnTxt}>Инфо</Text>
-            </TouchableOpacity>
+              </TouchableOpacity>
 
-            {selectedParking.voice_desc && (
+              {selectedParking.transparking_url && (
               <TouchableOpacity
+                style={[styles.parkingBubbleWebBtn, { backgroundColor: 'rgba(0,255,136,0.12)', borderColor: '#00ff88' }]}
+                activeOpacity={0.8}
+                onPress={() => Linking.openURL(selectedParking.transparking_url!)}
+              >
+                <Icon name="comment-text-multiple" size={16} color="#00ff88" />
+                <Text style={[styles.parkingBubbleWebBtnTxt, { color: '#00ff88' }]}>Отзиви</Text>
+              </TouchableOpacity>
+              )}
+
+              {selectedParking.voice_desc && (              <TouchableOpacity
                 style={styles.parkingBubbleTtsBtn}
                 activeOpacity={0.8}
                 onPress={() => ttsSpeak(selectedParking.voice_desc!)}
@@ -1712,7 +1733,7 @@ const MapScreen: React.FC = () => {
       )}
 
       {/* ── Parking cards from GPT-4o ── */}
-      {!navigating && parkingResults.length > 0 && (
+      {parkingResults.length > 0 && (
         <View style={[styles.parkingPanel, { top: searchTop + 58 }]}>
           <View style={styles.parkingPanelHeader}>
             <Text style={styles.parkingPanelTitle}>🅿️ Паркинги за камиони</Text>
