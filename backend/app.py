@@ -2068,6 +2068,53 @@ def match_window():
     return jsonify({"coords": matched})
 
 
+@app.get("/api/parking/bbox")
+def get_parking_bbox():
+    """Fetch parking spots within a bounding box for the Live Parking screen."""
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    if _is_rate_limited(ip, limit=60, window_s=60):
+        return jsonify({"ok": False, "error": "rate limited"}), 429
+
+    try:
+        sw_lat = float(request.args.get("swLat"))
+        sw_lng = float(request.args.get("swLng"))
+        ne_lat = float(request.args.get("neLat"))
+        ne_lng = float(request.args.get("neLng"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid bbox parameters"}), 400
+
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                """
+                SELECT pointid, name, lat, lng 
+                FROM transparking_cache 
+                WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                LIMIT 150
+                """,
+                (sw_lat, ne_lat, sw_lng, ne_lng)
+            ).fetchall()
+
+            features = []
+            for r in rows:
+                features.append({
+                    "type": "Feature",
+                    "geometry": { "type": "Point", "coordinates": [r["lng"], r["lat"]] },
+                    "properties": { 
+                        "pointid": r["pointid"], 
+                        "name": r["name"],
+                        "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"
+                    }
+                })
+            
+            return jsonify({
+                "type": "FeatureCollection",
+                "features": features
+            })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.post("/api/poi-along-route")
 def poi_along_route_v2():
     """Fetch truck parking or fuel along a route."""

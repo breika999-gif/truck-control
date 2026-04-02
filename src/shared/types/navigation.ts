@@ -4,4 +4,5 @@ export type RootStackParamList = {
   POIList: undefined;
   Tacho: undefined;
   TruckBans: undefined;
+  TruckParking: { userCoords?: [number, number] };
 };
