@@ -175,6 +175,63 @@ _GEMINI_SYSTEM = (
     "свободни места) → добавяй:\n"
     "[APP:{\"app\":\"chrome\",\"url\":\"https://truckerapps.eu/transparking/pl/map/\"}]\n"
     "Кажи на шофьора: 'Отварям TransParking за теб, колега.'\n"
+    "## WTD / Работен ден (Working Time Directive EU 2002/15)\n\n"
+    "Получаваш сурови данни от тахографа:\n"
+    "- shift_start_iso: началото на смяната (ISO timestamp) — кога шофьорът е започнал да работи\n"
+    "- reduced_rests_remaining: колко 9-часови (намалени) почивки му остават тази седмица (обичайно 3 на 2 седмици)\n"
+    "- daily_driving_limit_h: дневен лимит каране в часове (9 или 10)\n"
+    "- driven_seconds: изкарани секунди каране днес\n"
+    "- est_km: прогнозни километри до дестинацията\n\n"
+    "Правила (изчисляваш сам):\n"
+    "1. Максимален работен ден = 13ч. Ако reduced_rests_remaining > 0 → може да разпъне до 15ч (с намалена почивка 9ч).\n"
+    "2. Краен час на работния ден = shift_start_iso + (13 или 15)ч\n"
+    "3. Оставащо каране = daily_driving_limit_h * 3600 - driven_seconds\n"
+    "4. Краен час за каране = now + оставащо_каране\n"
+    "5. Шофьорът трябва да спре при по-ранния от двата края (работен ден или каране)\n\n"
+    "При въпроси 'До колко часа?', 'Колко мога още?', 'Стигам ли до X?':\n"
+    "- Дай точен час (напр. 'До 21:15')\n"
+    "- Кажи дали ограничението е от тахографа или от работния ден\n"
+    "- Ако reduced_rests_remaining > 0, предложи опцията за 15ч смяна\n\n"
+    "## Тахограф дневник (tacho_log)\n\n"
+    "Получаваш `tacho_log` — дневен журнал на активностите от BLE тахографа:\n"
+    "- `shift_start`: час на първата активност (HH:MM)\n"
+    "- `current_time`: текущ час\n"
+    "- `total_driven_min`: изкарани минути каране\n"
+    "- `remaining_drive_min`: оставащи минути каране (от тахографа)\n"
+    "- `segments`: списък [{activity, start, end, duration_min}]\n\n"
+    "Активности: DRIVING=каране, REST=почивка, WORK=друга работа, AVAILABILITY=на разположение\n\n"
+    "При въпроси за тахографа ВИНАГИ ползвай tacho_log за точни изчисления:\n"
+    "- Смяна = shift_start + 13ч (или 15ч ако reduced_rests_remaining > 0)\n"
+    "- Следваща задължителна пауза = след 4.5ч непрекъснато каране (проверявай в segments)\n"
+    "- 45мин пауза = може разделена на 15мин + 30мин (в този ред)\n"
+    "- Форматирай отговора с точни часове: 'Трябва да спреш до 18:30'\n\n"
+    "## Седмично тахо (tacho_week)\n\n"
+    "Получаваш `tacho_week` — седмично и двуседмично резюме по EU 561/2006:\n"
+    "- weekly_driven_min / weekly_limit_min (56ч = 3360мин): седмичен лимит\n"
+    "- biweekly_driven_min / biweekly_limit_min (90ч = 5400мин): двуседмичен лимит\n"
+    "- weekly_remaining_min: оставащи минути тази седмица\n"
+    "- daily_breakdown: {дата: часове} за последните 7 дни\n\n"
+    "При въпроси 'Колко мога да карам тази седмица?', 'Имам ли право на повече часове?' — ползвай тези данни.\n"
+    "\n## Потребителска памет (user_memory)\n\n"
+    "Получаваш `user_memory` — масив от предпочитания и факти за шофьора, натрупани от предишни разговори.\n"
+    "Примери: 'Обича да спи в Найт Стар', 'Камионът е Volvo FH 500, Euro 6'\n"
+    "Ползвай тези факти проактивно при препоръки — не питай отново за неща, които вече знаеш.\n"
+    "Когато шофьорът каже нещо ново важно ('обичам X', 'камионът ми е Y'), отговори нормално, "
+    "но в края добави JSON тагове за запомняне: <remember category=\"preference\">текст</remember>\n"
+    "Категории: parking, route, preference, general\n\n"
+    "## Важно правило за контекстни данни\n"
+    "Данните в квадратни скоби [ТАХОГРАФ:...], [ПАМЕТ:...], [gpt_route_data:...], [НАВИЦИ:...] са ВЪТРЕШНИ.\n"
+    "НИКОГА не ги цитирай, не ги повтаряй и не показвай JSON в отговора си.\n"
+    "Ползвай ги само за да формулираш естествен отговор на български.\n\n"
+    "## GPT маршрутни данни (gpt_route_data)\n"
+    "Когато получиш gpt_route_data в контекста, използвай само числата — обясни на шофьора на човешки език.\n"
+    "Пример: 'До Хамбург има около 1240 км, около 13 часа каране без почивки.'\n\n"
+    "## Навици на шофьора (driver_habits)\n"
+    "Статистика от последните 14 дни:\n"
+    "- typical_start: обичайно начало на работния ден\n"
+    "- typical_stop: обичайно спиране\n"
+    "- avg_daily_driven_h: средно часове каране на ден\n\n"
+    "Ползвай тези данни за персонализирани препоръки: 'Обикновено тръгваш в 7:00, но днес е вече 9:00 — имаш ли забавяне?'\n"
 )
 
 _NAV_RE = re.compile(r'\[NAV:\s*(\{.*?\})\s*\]', re.DOTALL)
@@ -209,6 +266,54 @@ def _extract_app_intent(text: str):
         except Exception:
             pass
     return None, text
+
+
+# ── GPT + Gemini collaboration ────────────────────────────────────────────────
+
+_NAV_KEYWORDS = [
+    'маршрут', 'route', 'навигация', 'stiga', 'стигам', 'пристигане',
+    'разстояние', 'км', 'километ', 'път до', 'как да стигна', 'колко дълго',
+]
+
+
+def _has_nav_intent(text: str) -> bool:
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in _NAV_KEYWORDS)
+
+
+def _get_gpt_route_insight(destination: str, context: dict) -> dict | None:
+    """Call GPT-4o for compact route facts as JSON. Returns dict or None on error."""
+    if not _gpt4o_ready:
+        return None
+    try:
+        lat = context.get('lat')
+        lng = context.get('lng')
+        loc_hint = f" from GPS {lat:.4f},{lng:.4f}" if lat and lng else ""
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a truck routing assistant. "
+                    "Reply with ONLY a JSON object — no prose, no code fences. "
+                    'Format: {"distance_km": <number>, "duration_min": <number>, "key_waypoints": [<string>, ...]}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Give route facts for a truck going to {destination}{loc_hint}.",
+            },
+        ]
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,  # type: ignore[arg-type]
+            max_tokens=80,
+            temperature=0,
+        )
+        raw = _strip_md_fence(resp.choices[0].message.content or "")
+        return json.loads(raw)
+    except Exception:
+        return None
+
 
 _MAPBOX_TOKEN = (
     "pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ"
@@ -2596,11 +2701,11 @@ def gemini_chat():
             for h in history[-4:]:
                 role = "user" if h.get("role") == "user" else "model"
                 contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
-            
+
             ctx_note = ""
             if context.get("lat"):
                 ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
-            
+
             tacho = _tacho_summary(user_email)
             min_remaining_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
             est_km = round(min_remaining_h * 80)
@@ -2611,7 +2716,24 @@ def gemini_chat():
                 f"седмично {tacho['weekly_driven_h']}ч/56ч; "
                 f"ефективно-остава {min_remaining_h}ч ≈ {est_km}км при 80км/ч]"
             )
-            contents.append({"role": "user", "parts": [{"text": user_msg + ctx_note}]})
+            user_memory = context.get("user_memory") or []
+            if user_memory:
+                ctx_note += " [ПАМЕТ: " + "; ".join(user_memory) + "]"
+
+            # Driver habits context
+            driver_habits = context.get("driver_habits")
+            if driver_habits:
+                ctx_note += f" [НАВИЦИ: {json.dumps(driver_habits, ensure_ascii=False)}]"
+
+            # GPT route insight — inject when nav intent detected and destination in context
+            destination = context.get("destination")
+            if _has_nav_intent(user_msg) and destination and _gpt4o_ready:
+                route_data = _get_gpt_route_insight(str(destination), context)
+                if route_data:
+                    ctx_note += f" [gpt_route_data: {json.dumps(route_data, ensure_ascii=False)}]"
+
+            internal = f"\n\n[ВЪТРЕШНИ ДАННИ — не цитирай в отговора:{ctx_note}]" if ctx_note else ""
+            contents.append({"role": "user", "parts": [{"text": user_msg + internal}]})
 
             resp = _gemini_client.models.generate_content(
                 model=_GEMINI_MODEL,
@@ -2656,8 +2778,13 @@ def gemini_chat():
             if not clean_reply:
                 clean_reply = gpt_result.get("reply", "")
 
+    # Extract <remember> memory tags from reply
+    remember_tags = re.findall(r'<remember\s+category="(\w+)">(.*?)</remember>', clean_reply, re.DOTALL)
+    clean_reply = re.sub(r'<remember[^>]*>.*?</remember>', '', clean_reply, flags=re.DOTALL).strip()
+    remember_items = [{'category': c, 'text': t.strip()} for c, t in remember_tags]
+
     _db_save_chat(user_msg, clean_reply)
-    return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent})
+    return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent, "remember": remember_items})
 
 
 # ── POI endpoints ──────────────────────────────────────────────────────────────
