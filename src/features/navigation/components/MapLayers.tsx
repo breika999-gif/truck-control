@@ -43,9 +43,14 @@ interface MapLayersProps {
   voiceMutedRef: React.MutableRefObject<boolean>;
   restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'; value: string }>;
   currentStep?: number;
+  drivingSeconds?: number;
+  hosLimitS?: number;
 }
 
 const NEON = '#00f7ff';
+const SAFE_GREEN = '#4CAF50';
+const WARN_YELLOW = '#FFC107';
+const DANGER_RED = '#F44336';
 
 const MapLayers: React.FC<MapLayersProps> = ({
   mapIsLoaded,
@@ -86,31 +91,65 @@ const MapLayers: React.FC<MapLayersProps> = ({
   voiceMutedRef,
   restrictionPoints = [],
   currentStep = 0,
+  drivingSeconds = 0,
+  hosLimitS = 16200,
 }) => {
   const turnArrowsGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
     if (!route || !navigating) return { type: 'FeatureCollection', features: [] };
-    // TomTom sends raw uppercase codes (e.g. "TURN_RIGHT"); also handle Mapbox-style lowercase
-    const isTurnManeuver = (t: string) => /turn|ramp|fork|merge|roundabout|rotary|keep|bear|sharp|u.turn/i.test(t);
+    const isTurnManeuver = (t: string) =>
+      /turn|ramp|fork|merge|roundabout|rotary|keep|bear|sharp|u.turn/i.test(t);
+    const maneuverIconKey = (type: string, modifier?: string): string => {
+      const t = (type ?? '').toUpperCase();
+      const m = (modifier ?? '').toLowerCase();
+      if (/U.TURN|UTURN/.test(t) || m === 'uturn')               return 'arrow-uturn';
+      if (/ROUNDABOUT|ROTARY/.test(t))                            return 'arrow-roundabout';
+      if (/(SHARP_LEFT|TURN_SHARP_LEFT)/.test(t) || m === 'sharp left')    return 'arrow-sharp-left';
+      if (/(SHARP_RIGHT|TURN_SHARP_RIGHT)/.test(t) || m === 'sharp right') return 'arrow-sharp-right';
+      if (/(KEEP_LEFT|BEAR_LEFT|SLIGHT.LEFT)/.test(t) || m === 'slight left')    return 'arrow-slight-left';
+      if (/(KEEP_RIGHT|BEAR_RIGHT|SLIGHT.RIGHT)/.test(t) || m === 'slight right') return 'arrow-slight-right';
+      if (/(TURN_LEFT)/.test(t) || m === 'left')                  return 'arrow-left';
+      if (/(TURN_RIGHT)/.test(t) || m === 'right')                return 'arrow-right';
+      if (/left/.test(m))  return 'arrow-left';
+      if (/right/.test(m)) return 'arrow-right';
+      return 'arrow-straight';
+    };
     const features: GeoJSON.Feature[] = [];
+    const coords = route.geometry.coordinates;
+
     route.steps.slice(currentStep).forEach((step: any, i: number) => {
       const loc = step.intersections?.[0]?.location;
-      if (!loc || !isTurnManeuver(step.maneuver?.type ?? '')) return;
-      const coords = route.geometry.coordinates as [number, number][];
-      let nearestIdx = 0, minD = Infinity;
+      const mType = step.maneuver?.type ?? '';
+      if (!loc || !isTurnManeuver(mType)) return;
+
+      const iconKey = maneuverIconKey(mType, step.maneuver?.modifier);
+
+      // Calculate bearing for rotation: find nearest index in route geometry
+      let nearestIdx = 0;
+      let minD = Infinity;
       for (let j = 0; j < coords.length; j++) {
         const dx = loc[0] - coords[j][0], dy = loc[1] - coords[j][1];
         const d = dx * dx + dy * dy;
         if (d < minD) { minD = d; nearestIdx = j; }
       }
-      const p1 = coords[nearestIdx];
-      const p2 = coords[Math.min(nearestIdx + 2, coords.length - 1)];
-      const dLon = (p2[0] - p1[0]) * Math.PI / 180;
-      const lat1 = p1[1] * Math.PI / 180, lat2 = p2[1] * Math.PI / 180;
-      const bearing = (Math.atan2(
-        Math.sin(dLon) * Math.cos(lat2),
-        Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
-      ) * 180 / Math.PI + 360) % 360;
-      features.push({ type: 'Feature', id: `arrow-${i}`, geometry: { type: 'Point', coordinates: loc }, properties: { bearing } });
+
+      // Bearing from loc to next point in geometry (5 points ahead for stability)
+      let rotation = 0;
+      const nextP = coords[nearestIdx + 5] || coords[nearestIdx + 1];
+      if (nextP) {
+        const dLon = (nextP[0] - loc[0]) * Math.PI / 180;
+        const lat1 = loc[1] * Math.PI / 180;
+        const lat2 = nextP[1] * Math.PI / 180;
+        const y = Math.sin(dLon) * Math.cos(lat2);
+        const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+        rotation = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+      }
+
+      features.push({ 
+        type: 'Feature', 
+        id: `arrow-${i}`, 
+        geometry: { type: 'Point', coordinates: loc }, 
+        properties: { iconKey, rotation } 
+      });
     });
     return { type: 'FeatureCollection', features };
   }, [route, navigating, currentStep]);
@@ -135,19 +174,41 @@ const MapLayers: React.FC<MapLayersProps> = ({
     })),
   }), [fuelResults]);
 
-  const parkingGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: parkingResults.filter(p => p.lat && p.lng).map((p, i) => ({
-      type: 'Feature',
-      id: i,
-      geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
-      properties: { index: i, name: p.name, distance_m: p.distance_m },
-    })),
-  }), [parkingResults]);
+  const parkingGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => {
+    const remainingS = hosLimitS - drivingSeconds;
+    
+    return {
+      type: 'FeatureCollection',
+      features: parkingResults.filter(p => p.lat && p.lng).map((p, i) => {
+        let tachoStatus = 'safe';
+        if (p.travel_time) {
+          const bufferS = 900; // 15 min buffer
+          if (p.travel_time > remainingS) {
+            tachoStatus = 'danger';
+          } else if (p.travel_time > (remainingS - bufferS)) {
+            tachoStatus = 'warning';
+          }
+        }
+
+        return {
+          type: 'Feature',
+          id: i,
+          geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+          properties: { 
+            index: i, 
+            name: p.name, 
+            distance_m: p.distance_m,
+            tachoStatus 
+          },
+        };
+      }),
+    };
+  }, [parkingResults, drivingSeconds, hosLimitS]);
 
   return (
     <>
-      {/* ── Real-time traffic overlay ── */}
+      {/* ... keep traffic, restriction, incident, truck layers unchanged ... */}
+
       {mapIsLoaded && showTraffic && mapMode !== 'satellite' && (
         <Mapbox.VectorSource
           key={`traffic-${trafficKey}`}
@@ -383,41 +444,32 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="route-direction-arrows"
             slot="middle"
             style={{
-              symbolPlacement: 'line', symbolSpacing: 90, textField: '›', textSize: 20,
-              textColor: 'rgba(255,255,255,0.90)', textHaloColor: 'rgba(0,0,0,0.25)', textHaloWidth: 1,
+              symbolPlacement: 'line', symbolSpacing: 80, textField: '▲', textSize: 14,
+              textColor: 'rgba(255,255,255,0.85)', textHaloColor: 'rgba(0,0,0,0.30)', textHaloWidth: 1,
               textRotationAlignment: 'map', textAllowOverlap: true, iconAllowOverlap: true,
             }}
           />
         </Mapbox.ShapeSource>
       )}
 
-      {/* ── Turn Guidance Dots ── */}
+      {/* ── Turn Guidance Arrows (TomTom original icons) ── */}
       {mapIsLoaded && navigating && turnArrowsGeoJSON.features.length > 0 && (
         <Mapbox.ShapeSource id="turn-arrows-source" shape={turnArrowsGeoJSON}>
-          {/* Outer glow ring */}
-          <Mapbox.CircleLayer
-            id="turn-arrows-glow"
+          <Mapbox.SymbolLayer
+            id="turn-arrows-layer"
             slot="top"
             style={{
-              circleRadius: ['interpolate', ['linear'], ['zoom'], 12, 8, 15, 14, 18, 18] as any,
-              circleColor: 'rgba(0,247,255,0.15)',
-              circleStrokeWidth: 0,
-              circleOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1] as any,
-              circlePitchAlignment: 'viewport',
-            } as any}
-          />
-          {/* Solid dot */}
-          <Mapbox.CircleLayer
-            id="turn-arrows-dot"
-            slot="top"
-            style={{
-              circleRadius: ['interpolate', ['linear'], ['zoom'], 12, 5, 15, 8, 18, 11] as any,
-              circleColor: '#00f7ff',
-              circleStrokeWidth: 2,
-              circleStrokeColor: '#ffffff',
-              circleOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1] as any,
-              circlePitchAlignment: 'viewport',
-            } as any}
+              iconImage: ['get', 'iconKey'],
+              iconRotate: ['get', 'rotation'],
+              iconRotationAlignment: 'map',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 11, 0.8, 14, 1.2, 17, 1.8],
+              iconColor: '#ffffff',
+              iconHaloColor: '#000000',
+              iconHaloWidth: 2,
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
+              iconOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1],
+            }}
           />
         </Mapbox.ShapeSource>
       )}
@@ -469,9 +521,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
             slot="top"
             style={{
               iconImage: 'dest-flag',
-              iconSize: 0.9,
+              iconSize: 0.6,
               iconAnchor: 'bottom',
               iconAllowOverlap: true,
+              iconIgnorePlacement: true,
               iconEmissiveStrength: lightMode ? 0 : 1.0,
             } as any}
           />
@@ -504,7 +557,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
               ]]],
               textSize: ['interpolate', ['linear'], ['zoom'], 6, 8, 10, 10, 12, 14, 18, 18],
               textColor: '#ffffff',
-              textHaloColor: '#00f7ff',
+              textHaloColor: ['match', ['get', 'tachoStatus'],
+                'safe', SAFE_GREEN,
+                'warning', WARN_YELLOW,
+                'danger', DANGER_RED,
+                '#00f7ff'
+              ],
               textHaloWidth: 1.8,
               textHaloBlur: 0.5,
               textAllowOverlap: true,

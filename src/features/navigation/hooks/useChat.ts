@@ -1,17 +1,21 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import Tts from 'react-native-tts';
-import { 
+import {
   ChatMessage, ChatContext, sendChatMessage, sendGeminiMessage,
-  AppIntent
+  AppIntent, TachoSummary
 } from '../../../shared/services/backendApi';
 import { GoogleAccount } from '../../../shared/services/accountManager';
 import { VehicleProfile } from '../../../shared/types/vehicle';
+import { getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
+import { getMemorySummary, addMemory } from '../utils/geminiMemory';
+import { getHabitsSummary } from '../utils/driverHabits';
 
 interface ChatProps {
   userCoords: [number, number] | null;
   drivingSeconds: number;
   speed: number;
   profile: VehicleProfile | null;
+  tachoSummary: TachoSummary | null;
   gptHistory: ChatMessage[];
   setGptHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   geminiHistory: ChatMessage[];
@@ -37,6 +41,7 @@ export function useChat({
   drivingSeconds,
   speed,
   profile,
+  tachoSummary,
   gptHistory,
   setGptHistory,
   geminiHistory,
@@ -166,12 +171,26 @@ export function useChat({
     setGeminiHistory(newHistory);
     setGeminiLoading(true);
 
+    const [tachoLog, tachoWeek, userMemory, driverHabits] = await Promise.all([
+      getDaySummary().catch(() => ({})),
+      getWeeklySummary().catch(() => ({})),
+      getMemorySummary().catch(() => [] as string[]),
+      getHabitsSummary().catch(() => null),
+    ]);
+
     const context: ChatContext = {
-      lat:            userCoords?.[1],
-      lng:            userCoords?.[0],
-      driven_seconds: drivingSeconds,
-      speed_kmh:      speed,
-      profile:        profile || undefined,
+      lat:                      userCoords?.[1],
+      lng:                      userCoords?.[0],
+      driven_seconds:           drivingSeconds,
+      speed_kmh:                speed,
+      profile:                  profile || undefined,
+      shift_start_iso:          tachoSummary?.shift_start_iso,
+      reduced_rests_remaining:  tachoSummary?.reduced_rests_remaining,
+      daily_driving_limit_h:    tachoSummary?.daily_limit_h,
+      tacho_log:                tachoLog,
+      tacho_week:               tachoWeek,
+      user_memory:              userMemory,
+      driver_habits:            driverHabits,
     };
 
     const response = await sendGeminiMessage(
@@ -199,11 +218,19 @@ export function useChat({
       }
     }
 
+    // Persist any memory items the backend flagged
+    if (response.remember && response.remember.length > 0) {
+      for (const item of response.remember) {
+        const cat = item.category as 'parking' | 'route' | 'preference' | 'general';
+        addMemory({ text: item.text, category: cat }).catch(() => {/* silent */});
+      }
+    }
+
     if (response.app_intent) { handleAppIntent(response.app_intent); }
 
     setGeminiLoading(false);
-  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, googleUser,
-      handleAppIntent, speak, processAction]);
+  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, tachoSummary,
+      googleUser, handleAppIntent, speak, processAction]);
 
   return {
     gptLoading,

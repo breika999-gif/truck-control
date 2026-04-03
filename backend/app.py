@@ -2735,16 +2735,24 @@ def gemini_chat():
             internal = f"\n\n[ВЪТРЕШНИ ДАННИ — не цитирай в отговора:{ctx_note}]" if ctx_note else ""
             contents.append({"role": "user", "parts": [{"text": user_msg + internal}]})
 
-            resp = _gemini_client.models.generate_content(
-                model=_GEMINI_MODEL,
-                contents=contents,
-                config={
-                    "system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(),
-                    "temperature": 0.65,
-                    "max_output_tokens": 300,
-                },
-            )
-            return resp.text or ""
+            try:
+                resp = _gemini_client.models.generate_content(
+                    model=_GEMINI_MODEL,
+                    contents=contents,
+                    config={
+                        "system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(),
+                        "temperature": 0.65,
+                        "max_output_tokens": 300,
+                    },
+                )
+                return resp.text or ""
+            except Exception as gemini_exc:
+                print(f"[Gemini] generate_content failed: {gemini_exc}", flush=True)
+                if _gpt4o_ready:
+                    print("[Gemini] falling back to GPT-4o", flush=True)
+                    result = _run_gpt4o_internal(user_msg, history, context)
+                    return result.get("reply", "") if isinstance(result, dict) else ""
+                raise
 
         # Task 2: GPT-4o pre-fetch only if message looks like nav intent
         _NAV_HINTS = ["карай", "навигирай", "маршрут", "отиди", "намери", "паркинг",
