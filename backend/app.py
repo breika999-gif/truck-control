@@ -2791,6 +2791,15 @@ def gemini_chat():
     clean_reply = re.sub(r'<remember[^>]*>.*?</remember>', '', clean_reply, flags=re.DOTALL).strip()
     remember_items = [{'category': c, 'text': t.strip()} for c, t in remember_tags]
 
+    # Safety: strip raw JSON if Gemini accidentally returned it
+    _cr = _strip_md_fence(clean_reply)
+    if _cr.startswith("{"):
+        try:
+            _p = json.loads(_cr)
+            clean_reply = _p.get("text") or _p.get("message") or _p.get("reply") or clean_reply
+        except Exception:
+            pass
+
     _db_save_chat(user_msg, clean_reply)
     return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent, "remember": remember_items})
 
