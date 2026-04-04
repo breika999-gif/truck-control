@@ -704,6 +704,7 @@ def _transparking_cache_refresh() -> None:
                     db.commit()
             db.commit()
     except Exception as e:
+        app.logger.warning("Transparking cache refresh failed: %s", e)
 
 
 def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | None:
@@ -3698,6 +3699,7 @@ def get_truck_bans():
                 if (now - fetched_at).total_seconds() < 604800: # 7 days
                     return jsonify({"bans": json.loads(row["data"])})
     except Exception as e:
+        app.logger.warning("Truck bans cache read failed: %s", e)
 
     # 2. Live fetch from trafficban.com
     session = requests.Session()
