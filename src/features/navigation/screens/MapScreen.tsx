@@ -1164,186 +1164,6 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {hosViolations.length > 0 && (
-        <View style={{ position: 'absolute', top: backendOnline ? 40 : 80, left: 16, right: 16,
-          backgroundColor: '#E65100', borderRadius: 8, padding: 10, zIndex: 998 }}
-          pointerEvents="none">
-          <Text style={{ color: '#fff', fontWeight: '700' }}>⚠️ {hosViolations[0].message}</Text>
-        </View>
-      )}
-
-      {/* ── Map ── */}
-      <Mapbox.MapView
-        style={styles.map}
-        styleURL={mapStyleURL}
-        pitchEnabled
-        scaleBarEnabled={false}
-        attributionPosition={{ bottom: 8, left: 8 }}
-        onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
-        onLongPress={handleMapLongPress}
-        onRegionWillChange={(feature: any) => {
-          if (navigating && isTracking && feature?.properties?.isUserInteraction) {
-            setIsTracking(false);
-          }
-        }}
-        onPress={() => {
-          if (gptChatOpen) setGptChatOpen(false);
-          if (geminiChatOpen) setGeminiChatOpen(false);
-          if (longPressCoord) setLongPressCoord(null);
-          if (selectedParking) setSelectedParking(null);
-        }}
-      >
-        {/* nav-arrow + road sign images pre-loaded into the Mapbox atlas.
-            Must be inside MapView. onImageMissing fires if a layer references
-            an image that was not registered — helps debugging. */}
-        <Mapbox.Images
-          images={{
-            'nav-arrow':     NAV_ARROW,
-            'sign-closed':   SIGN_CLOSED,
-            'sign-danger-0': SIGN_DANGER0,
-            'star-icon':     STAR_ICON,
-            'parking-icon':  ICON_PARKING,
-            'fuel-icon':     ICON_FUEL,
-            'camera-icon':   ICON_CAMERA,
-            'biz-icon':      ICON_BIZ,
-            'no-overtaking': ICON_NO_OVERTAKING,
-            'dest-flag':     ICON_DESTINATION,
-            'arrow-straight':     { sdf: true, image: ARROW_STRAIGHT },
-            'arrow-right':        { sdf: true, image: ARROW_RIGHT },
-            'arrow-left':         { sdf: true, image: ARROW_LEFT },
-            'arrow-slight-right': { sdf: true, image: ARROW_SLIGHT_RIGHT },
-            'arrow-slight-left':  { sdf: true, image: ARROW_SLIGHT_LEFT },
-            'arrow-sharp-right':  { sdf: true, image: ARROW_SHARP_RIGHT },
-            'arrow-sharp-left':   { sdf: true, image: ARROW_SHARP_LEFT },
-            'arrow-uturn':        { sdf: true, image: ARROW_UTURN },
-            'arrow-roundabout':   { sdf: true, image: ARROW_ROUNDABOUT },
-          }}
-          onImageMissing={(imageKey) => {
-          }}
-        />
-
-        {/* Always pass followUserMode + followZoomLevel with concrete values.
-            Mapbox creates an Animated node for every prop it first receives.
-            If a prop appears later its Animated.Value starts as undefined →
-            "Animated.timing called on undefined". */}
-        <StableCamera 
-          cameraRef={cameraRef} 
-          navigating={navigating} 
-          mapLoaded={mapIsLoaded} 
-          speed={speed}
-          isTracking={isTracking}
-        />
-
-        {/* UserLocation: GPS data only — no visual puck (LocationPuck handles rendering).
-            minDisplacement={0} delivers every position update without threshold filtering.
-            visible={false} suppresses the deprecated built-in puck marker. */}
-        {/* UserLocation: keeps Mapbox location engine warm for LocationPuck */}
-        <Mapbox.UserLocation visible={false} />
-
-        {/* LocationPuck — Neon Blue glowing arrow (Mapbox v10.2.10).
-            bearingImage="nav-arrow" — custom PNG for the middle rotating layer;
-              without this prop the puck renders as a static dot (no rotation).
-            pulsing.color=NEON      — neon-blue sonar ring around the puck.
-            pulsing.radius=30       — fixed 30 dp radius (clean ring vs accuracy blob). */}
-        <LocationPuck
-          puckBearingEnabled
-          puckBearing="course"
-          topImage="nav-arrow"
-          bearingImage="nav-arrow"
-          shadowImage="nav-arrow"
-          scale={puckScale}
-          pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
-          visible
-        />
-
-        <MapLayers
-          mapIsLoaded={mapIsLoaded}
-          mapMode={mapMode}
-          showTraffic={showTraffic}
-          showIncidents={showIncidents}
-          showRestrictions={showRestrictions}
-          showStarredLayer={showStarredLayer}
-          navigating={navigating}
-          trafficKey={trafficKey}
-          lightMode={lightMode}
-          route={route}
-          routeShape={routeShape}
-          routeLineColor={routeLineColor}
-          exitsGeoJSON={exitsGeoJSON}
-          navTrafficAlerts={navTrafficAlerts}
-          starGeoJSON={starGeoJSON}
-          starredPOIs={starredPOIs}
-          customOriginRef={customOriginRef}
-          userCoords={userCoords}
-          destination={destination}
-          parkingResults={parkingResults}
-          fuelResults={fuelResults}
-          businessResults={businessResults}
-          businessGeoJSON={businessGeoJSON}
-          cameraResults={cameraResults}
-          cameraGeoJSON={cameraGeoJSON}
-          overtakingResults={overtakingResults}
-          overtakingGeoJSON={overtakingGeoJSON}
-          navCongestionVisible={navCongestionVisible}
-          routeOptions={routeOptions}
-          selectedRouteIdx={selectedRouteIdx}
-          navigateTo={navigateTo}
-          setSelectedParking={setSelectedParking}
-          setSelectedFuel={setSelectedFuel}
-          handleSelectRouteOption={handleSelectRouteOption}
-          ttsSpeak={ttsSpeak}
-          voiceMutedRef={voiceMutedRef}
-          restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
-          currentStep={currentStep}
-          drivingSeconds={drivingSeconds}
-          hosLimitS={HOS_LIMIT_S}
-        />
-
-      </Mapbox.MapView>
-
-      {/* ── Floating fuel station detail bubble ── */}
-      {selectedFuel && (
-        <FuelPanel
-          fuel={selectedFuel}
-          onClose={() => setSelectedFuel(null)}
-          topOffset={insets.top + 68}
-          onAddWaypoint={(coords, name) => {
-            setSelectedFuel(null);
-            setFuelResults([]);
-            addWaypoint(coords, name);
-          }}
-        />
-      )}
-
-      {/* ── Floating parking detail bubble (appears when map pin is tapped) ── */}
-      {selectedParking && (
-        <ParkingBubble
-          parking={selectedParking}
-          onClose={() => setSelectedParking(null)}
-          onNavigate={navigateTo}
-          onAddWaypoint={addWaypoint}
-          onClearResults={() => setParkingResults([])}
-          drivingSeconds={drivingSeconds}
-          hosLimitS={HOS_LIMIT_S}
-          topOffset={insets.top + 68}
-        />
-      )}
-      {/* ── Long-press popup ── */}
-      {longPressCoord && (
-        <MapLongPressMenu
-          coord={longPressCoord}
-          hasDestination={!!destination}
-          waypointCount={waypointsRef.current.length}
-          onClose={() => setLongPressCoord(null)}
-          onNavigate={navigateTo}
-          onAddWaypoint={addWaypoint}
-          onStar={async (coord) => {
-            const name = `⭐ ${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`;
-            const saved = await starPlace(name, coord[1], coord[0], undefined, googleUser?.email);
-            if (saved) setStarredPOIs(prev => [...prev, saved]);
-          }}
-        />
-      )}
       {/* ── Search bar (hidden during navigation) ── */}
       {!navigating && (
         <View style={[styles.searchContainer, { top: searchTop }]}>
@@ -1777,7 +1597,6 @@ const MapScreen: React.FC = () => {
       )}
 
       {/* ── Tachograph card from GPT-4o ── */}
-      {/* -- Tachograph card from GPT-4o -- */}
       {tachographResult && (
         <TachoResultCard
           result={tachographResult}
@@ -1787,3 +1606,362 @@ const MapScreen: React.FC = () => {
           topOffset={searchTop + 58}
         />
       )}
+      {/* ── Business / place results from GPT-4o search ── */}
+      {!navigating && businessResults.length > 0 && (
+        <View style={[styles.bizPanel, { top: searchTop + 58 }]}>
+          <View style={styles.parkingPanelHeader}>
+            <Text style={styles.bizPanelTitle}>📍 Намерени места</Text>
+            <TouchableOpacity
+              onPress={() => setBusinessResults([])}
+              style={styles.parkingDismissBtn}
+            >
+              <Text style={styles.parkingDismissTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.parkingListContent}
+          >
+            {businessResults.map((b, i) => {
+              const doNavigate = () => { setBusinessResults([]); navigateTo([b.lng, b.lat], b.name); };
+              const statusMsg =
+                b.business_status === 'CLOSED_PERMANENTLY' ? '🔴 Затворено завинаги' :
+                b.business_status === 'CLOSED_TEMPORARILY' ? '🟡 Временно затворено' :
+                '🟡 Затворено в момента';
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[styles.bizCard, b.needs_confirm ? styles.bizCardClosed : null]}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    if (b.needs_confirm) {
+                      Alert.alert(
+                        '⚠️ Внимание',
+                        `${b.name}\n\n${statusMsg}\n\nЧертаем маршрут?`,
+                        [
+                          { text: 'Отказ', style: 'cancel' },
+                          { text: 'Да, продължи', onPress: doNavigate },
+                        ],
+                      );
+                    } else {
+                      doNavigate();
+                    }
+                  }}
+                >
+                  {b.source === 'google' && (
+                    <View style={styles.sourceBadge}>
+                      <Text style={styles.sourceBadgeTxt}>Google</Text>
+                    </View>
+                  )}
+                  {b.photo_url ? (
+                    <Image source={{ uri: b.photo_url }} style={styles.bizCardPhoto} />
+                  ) : null}
+                  {b.needs_confirm ? (
+                    <View style={styles.bizClosedBadge}>
+                      <Text style={styles.bizClosedBadgeTxt}>{statusMsg}</Text>
+                    </View>
+                  ) : null}
+                  <Text style={styles.bizCardName} numberOfLines={2}>{b.name}</Text>
+                  {b.distance_m > 0 && (
+                    <Text style={styles.bizCardDist}>{fmtDistance(b.distance_m)}</Text>
+                  )}
+                  {b.info ? (
+                    <Text style={styles.bizCardAddr} numberOfLines={2}>{b.info}</Text>
+                  ) : null}
+                  {b.review_summary ? (
+                    <Text style={styles.bizReviewSummary} numberOfLines={3}>{b.review_summary}</Text>
+                  ) : null}
+                  <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ── Route options panel — shown at ROUTE_PREVIEW ── */}
+      {routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW' && (
+        <RouteOptionsPanel
+          routeOptions={routeOptions}
+          selectedRouteIdx={selectedRouteIdx}
+          routeOptDest={routeOptDest}
+          restrictionChecking={restrictionChecking}
+          restrictionWarnings={restrictionWarnings}
+          insets={insets}
+          onSelectRoute={handleSelectRouteOption}
+          onDismiss={() => {
+            setRouteOptions([]);
+            setRouteOptDest(null);
+            setSelectedRouteIdx(null);
+            setRestrictionWarnings([]);
+          }}
+          onStart={(cong, alerts) => {
+            setNavCongestionGeoJSON(cong ?? null);
+            setNavTrafficAlerts(alerts && alerts.length > 0 ? {
+              type: 'FeatureCollection',
+              features: alerts.map((a: any) => ({
+                type: 'Feature' as const,
+                properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
+                geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
+              })),
+            } : null);
+            if (routeOptDest) {
+              navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);
+            }
+            setRouteOptions([]);
+            setSelectedRouteIdx(null);
+            setRestrictionWarnings([]);
+          }}
+        />
+      )}
+
+      {/* ── Road restriction sign popup ── */}
+      <RestrictionSign restriction={activeRestriction} />
+
+
+      {/* ── Wake word indicator: green mic dot when navigating (hands-free active) ── */}
+      {navigating && (
+        <View style={{
+          position: 'absolute', top: insets.top + 8, right: 12,
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: wakeWordHeard ? '#00C853' : 'rgba(0,0,0,0.55)',
+          borderRadius: 16, paddingHorizontal: 8, paddingVertical: 4,
+          gap: 4,
+        }}>
+          <Icon name="microphone" size={14} color={wakeWordHeard ? '#fff' : '#4CAF50'} />
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
+            {wakeWordHeard ? 'Чух те!' : 'Колега...'}
+          </Text>
+        </View>
+      )}
+
+      {/* ── Bottom-left: HOS badge + speed + limit — anchored just above elevationChip ── */}
+      <NavigationHUD
+        navigating={navigating}
+        route={route}
+        currentStep={currentStep}
+        distToTurn={distToTurn}
+        speed={speed}
+        speedLimit={speedLimit}
+        remainingSeconds={remainingSeconds}
+        destination={destination}
+        destinationName={destinationName}
+        onStop={handleStopNav}
+        onClose={handleClear}
+        drivingSeconds={drivingSeconds}
+        testLanesMode={testLanesMode}
+        insets={insets}
+        loadingRoute={loadingRoute}
+        gpsReady={gpsReady}
+        onStart={handleStart}
+        onFetchElevation={() => route && buildElevProfile(route)}
+        onFetchWeather={() => route && fetchWeatherForRoute(route)}
+        profile={profile}
+        dominantCongestion={dominantCongestion}
+        elevProfile={elevProfile}
+        weatherPoints={weatherPoints}
+        departLabel={departLabel}
+        pickDeparture={pickDeparture}
+        waypoints={waypoints}
+        waypointNames={waypointNames}
+        setWaypoints={setWaypoints}
+        setWaypointNames={setWaypointNames}
+        optimizeWaypointOrder={optimizeWaypointOrder}
+        userCoords={userCoords}
+        navigateTo={navigateTo}
+        HOS_LIMIT_S={HOS_LIMIT_S}
+        speedingBg={speedingBg}
+        proximityAlerts={proximityAlerts}
+        nearestParkingM={nearestParkingM}
+      />
+
+
+      {/* ── Speed Camera HUD — visible when < 600 m from a camera ── */}
+      {navigating && cameraAlert && (
+        <Animated.View style={[
+          styles.cameraHUD,
+          { bottom: 320 + insets.bottom },
+          {
+            borderColor: cameraFlashAnim.interpolate({
+              inputRange: [0, 1], outputRange: ['#cc0000', '#ff5555'],
+            }),
+            backgroundColor: cameraFlashAnim.interpolate({
+              inputRange: [0, 1], outputRange: ['rgba(100,0,0,0.90)', 'rgba(210,15,15,0.97)'],
+            }),
+          },
+        ]}>
+          <Text style={styles.cameraHUDIcon}>📷</Text>
+          <View>
+            <Text style={styles.cameraHUDDist}>{cameraAlert.dist} м</Text>
+            <Text style={styles.cameraHUDLabel}>КАМЕРА</Text>
+          </View>
+        </Animated.View>
+      )}
+
+
+      {/* ── Tilt controls (3D pitch) ── */}
+      {!navigating && (
+        <View style={[styles.tiltBtnCol, { bottom: insets.bottom + 100 }]}>
+          <TouchableOpacity
+            style={styles.tiltBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              const next = Math.min(mapPitch + 15, 60);
+              setMapPitch(next);
+              cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
+            }}
+          >
+            <Icon name="plus" size={20} color={NEON} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.tiltBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              const next = Math.max(mapPitch - 15, 0);
+              setMapPitch(next);
+              cameraRef.current?.setCamera({ pitch: next, animationDuration: 400 });
+            }}
+          >
+            <Icon name="minus" size={20} color={NEON} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+
+
+      {/* ── Visual Debug Overlay ── */}
+      {debugMode && (
+        <View style={[styles.debugOverlay, { top: insets.top + 120 }]}>
+          <Text style={styles.debugTitle}>▌ DEBUG</Text>
+          <Text style={styles.debugRow}>📍 Крачка: {currentStep + 1}</Text>
+          <Text style={styles.debugRow}>
+            📏 До завой: {distToTurn != null ? `${Math.round(distToTurn)} м` : '—'}
+          </Text>
+          <Text style={styles.debugRow}>
+            🛣️ EU знак: {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? '✅ ВИДИМ' : '⬜ скрит'}
+          </Text>
+          <Text style={styles.debugRow}>
+            🚦 Ленти: {displayLanes.length > 0 ? `${displayLanes.length} (${displayLanes.filter(l => l.active).length} активни)` : '—'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.debugLaneTestBtn, testLanesMode && styles.debugLaneTestBtnOn]}
+            onPress={() => setTestLanesMode(v => !v)}
+          >
+            <Text style={styles.debugLaneTestTxt}>
+              {testLanesMode ? '🚦 TEST LANES ON' : '🚦 Test Lanes'}
+            </Text>
+          </TouchableOpacity>
+          <Text style={styles.debugRow}>⚡ Скорост: {speed} км/ч</Text>
+          <Text style={styles.debugRow}>🎯 Лимит: {speedLimit ?? '—'} км/ч</Text>
+          <Text style={styles.debugRow}>
+            {simulating ? '🟢 SIM активен' : '🔴 GPS реален'}
+          </Text>
+        </View>
+      )}
+
+      {/* ── Chat FABs — hidden when route active ── */}
+      {!route && (
+        <>
+          {/* Gemini Chat FAB (bottom-left) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { left: spacing.md, bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGeminiChatOpen(v => !v);
+              setGptChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
+
+          {/* GPT-4o FAB (bottom-right) */}
+          <TouchableOpacity
+            style={[
+              styles.geminiFab,
+              { bottom: insets.bottom + spacing.xl },
+              backendOnline ? styles.geminiFabOnline : styles.geminiFabOffline,
+            ]}
+            onPress={() => {
+              setGptChatOpen(v => !v);
+              setGeminiChatOpen(false);
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
+            <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
+          </TouchableOpacity>
+        </>
+      )}
+
+      {/* ── Recenter button — shows when user pans map during navigation ── */}
+      {navigating && !isTracking && (
+        <TouchableOpacity
+          style={[
+            styles.geminiFab,
+            { right: spacing.md, bottom: insets.bottom + 100, backgroundColor: 'rgba(10,12,30,0.92)' },
+          ]}
+          activeOpacity={0.8}
+          onPress={() => {
+            setIsTracking(true);
+            cameraRef.current?.setCamera({
+              zoomLevel: 15,
+              animationDuration: 800,
+            } as any);
+          }}
+        >
+          <Icon name="crosshairs-gps" size={22} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      {/* ── Chat Panels (GPT + Gemini) ── */}
+      <ChatPanel
+        gptChatOpen={gptChatOpen}
+        geminiChatOpen={geminiChatOpen}
+        gptHistory={gptHistory}
+        geminiHistory={geminiHistory}
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        gptLoading={gptLoading}
+        geminiLoading={geminiLoading}
+        handleChat={handleChat}
+        isRecording={isRecording}
+        handleMicStart={handleMicStart}
+        handleMicStop={handleMicStop}
+        kbHeight={kbHeight}
+        gptScrollRef={gptScrollRef}
+        geminiScrollRef={geminiScrollRef}
+        googleUser={googleUser}
+        insets={insets}
+        micLoading={micLoading}
+        onClose={() => { setGptChatOpen(false); setGeminiChatOpen(false); }}
+      />
+
+      {/* ── Google Account Modal ── */}
+      <GoogleAccountModal
+        visible={showAccountModal}
+        onClose={() => setShowAccountModal(false)}
+        currentAccount={googleUser}
+        onConnected={(email) => {
+          setGoogleUser({ email });
+          listStarred(email).then(places => {
+            if (isMountedRef.current) setStarredPOIs(places);
+          });
+        }}
+        onDisconnected={() => {
+          setGoogleUser(null);
+          setStarredPOIs([]);
+        }}
+      />
+
+
+    </View>
+  );
+}
+
+export default MapScreen;
