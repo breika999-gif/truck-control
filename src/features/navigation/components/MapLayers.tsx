@@ -123,26 +123,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       const iconKey = maneuverIconKey(mType, step.maneuver?.modifier);
 
-      // Calculate bearing for rotation: find nearest index in route geometry
-      let nearestIdx = 0;
-      let minD = Infinity;
-      for (let j = 0; j < coords.length; j++) {
-        const dx = loc[0] - coords[j][0], dy = loc[1] - coords[j][1];
-        const d = dx * dx + dy * dy;
-        if (d < minD) { minD = d; nearestIdx = j; }
-      }
-
-      // Bearing from loc to next point in geometry (5 points ahead for stability)
-      let rotation = 0;
-      const nextP = coords[nearestIdx + 5] || coords[nearestIdx + 1];
-      if (nextP) {
-        const dLon = (nextP[0] - loc[0]) * Math.PI / 180;
-        const lat1 = loc[1] * Math.PI / 180;
-        const lat2 = nextP[1] * Math.PI / 180;
-        const y = Math.sin(dLon) * Math.cos(lat2);
-        const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-        rotation = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-      }
+      // Use bearing_after from the routing engine — exact outgoing direction after the maneuver
+      const rotation = step.maneuver?.bearing_after ?? 0;
 
       features.push({ 
         type: 'Feature', 
