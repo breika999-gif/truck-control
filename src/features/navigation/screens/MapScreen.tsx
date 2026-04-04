@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
@@ -106,6 +106,8 @@ type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 const EMPTY_RESTRICTIONS: never[] = [];
 
 import MapLayers from '../components/MapLayers';
+import ParkingBubble from '../components/ParkingBubble';
+import MapLongPressMenu from '../components/MapLongPressMenu';
 import { styles, NEON, NEON_DIM } from './MapScreen.styles';
 import {
   NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
@@ -128,9 +130,9 @@ import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
 import { useLocationRuntime } from '../hooks/useLocationRuntime';
 import { useWakeWord } from '../hooks/useWakeWord';
 
-// AudioRecorderPlayer is exported as a ready-made singleton — use directly
+// AudioRecorderPlayer is exported as a ready-made singleton � use directly
 
-// ── Component ────────────────────────────────────────────────────────────────
+// -- Component ----------------------------------------------------------------
 
 const MapScreen: React.FC = () => {
   const navigation = useNavigation<MapNavProp>();
@@ -138,7 +140,7 @@ const MapScreen: React.FC = () => {
   const { profile } = useVehicleStore();
   const cameraRef = useRef<Mapbox.Camera>(null);
 
-  // ── States & Refs ──────────────────────────────────────────────────────────
+  // -- States & Refs ----------------------------------------------------------
   const {
     mapLoaded, setMapLoaded,
     mapMode, setMapMode,
@@ -202,11 +204,11 @@ const MapScreen: React.FC = () => {
   const [navTrafficAlerts, setNavTrafficAlerts]         = useState<GeoJSON.FeatureCollection | null>(null);
   const [autoParking, setAutoParking]   = useState<ParkingSpot[]>([]);
   const setTunnelWarningRef = useRef<(msg: string | null) => void>(() => {});
-  // POI result states — declared early so useRouteOrchestrator can auto-populate them on route set
+  // POI result states � declared early so useRouteOrchestrator can auto-populate them on route set
   const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
   const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
   const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
-  // Declared early — passed to useRouteOrchestrator / useLocationRuntime
+  // Declared early � passed to useRouteOrchestrator / useLocationRuntime
   const [backendOnline, setBackendOnline] = useState(true);
 
   useEffect(() => { profileRef.current         = profile;          }, [profile]);
@@ -259,7 +261,7 @@ const MapScreen: React.FC = () => {
   const destination = destinationRef.current;
   const destinationName = destinationNameRef.current;
 
-  // ── States & Refs from useLocationRuntime ──────────────────────────────────
+  // -- States & Refs from useLocationRuntime ----------------------------------
   const {
     userCoords,
     userCoordsRef,
@@ -295,12 +297,12 @@ const MapScreen: React.FC = () => {
     setBackendOnline,
     navigating,
   });
-  // Sync GPS userCoordsRef → orchestratorUserCoordsRef so navigateTo uses real position
+  // Sync GPS userCoordsRef > orchestratorUserCoordsRef so navigateTo uses real position
   useLayoutEffect(() => {
     orchestratorUserCoordsRef.current = userCoordsRef.current;
   }, [userCoords]);
 
-  // ── Hooks Integration ──────────────────────────────────────────────────────
+  // -- Hooks Integration ------------------------------------------------------
 
   // 0. Session bootstrap (account, starred POIs, backend health)
   const setTachoSummaryRef = useRef<(summary: TachoSummary) => void>(() => {});
@@ -325,16 +327,16 @@ const MapScreen: React.FC = () => {
     try {
       const [daySummary, weeklySummary] = await Promise.all([getDaySummary(), getWeeklySummary()]);
       const prompt =
-        `Направи кратко гласово обобщение на работния ден за шофьора. Използвай тези данни: ${JSON.stringify(daySummary)} и седмични: ${JSON.stringify(weeklySummary)}. ` +
-        'Формат: "Днес изкара X км, Y часа каране. Следващата ти почивка трябва да е поне Z часа. Можеш да тръгнеш утре след HH:MM." ' +
-        'Отговори само с текста за четене, без форматиране.';
+        `������� ������ ������� ��������� �� �������� ��� �� �������. ��������� ���� �����: ${JSON.stringify(daySummary)} � ��������: ${JSON.stringify(weeklySummary)}. ` +
+        '������: "���� ������ X ��, Y ���� ������. ���������� �� ������� ������ �� � ���� Z ����. ����� �� ������� ���� ���� HH:MM." ' +
+        '�������� ���� � ������ �� ������, ��� �����������.';
       const response = await sendGeminiMessage(prompt, [], {}, 'system');
       if (response.ok) {
         const text = (response.reply ?? '').trim();
         if (text) { ttsSpeak(text); }
       }
     } catch {
-      // silent — end-of-day summary is non-critical
+      // silent � end-of-day summary is non-critical
     }
   }, []);
 
@@ -385,9 +387,9 @@ const MapScreen: React.FC = () => {
 
   const chatLoading = gptChatOpen ? gptLoading : geminiLoading;
 
-  // ── Hands-free wake word: "Колега, <команда>" ─────────────────────────────
-  // Активен само при навигация — пести батерия при browse mode.
-  // Пауза автоматично докато TTS говори за да не чуе себе си.
+  // -- Hands-free wake word: "������, <�������>" -----------------------------
+  // ������� ���� ��� ��������� � ����� ������� ��� browse mode.
+  // ����� ����������� ������ TTS ������ �� �� �� ��� ���� ��.
   const [wakeWordHeard, setWakeWordHeard] = useState(false); // brief visual flash
 
   const handleWakeCommand = useCallback((cmd: string) => {
@@ -411,10 +413,10 @@ const MapScreen: React.FC = () => {
     }
   }, [chatInput, gptChatOpen, sendGptText, sendGeminiText]);
 
-  // ── Voice / Microphone Handling ──
+  // -- Voice / Microphone Handling --
   const [isRecording, setIsRecording] = useState(false);
   const [micLoading, setMicLoading]   = useState(false);
-  const audioRecorderPlayer = AudioRecorderPlayer; // singleton — not constructable
+  const audioRecorderPlayer = AudioRecorderPlayer; // singleton � not constructable
 
   const handleMicStart = useCallback(async () => {
     try {
@@ -430,7 +432,6 @@ const MapScreen: React.FC = () => {
       await audioRecorderPlayer.startRecorder();
       audioRecorderPlayer.addRecordBackListener(() => {});
     } catch (err) {
-      console.error('[MicStart] error:', err);
     }
   }, [audioRecorderPlayer]);
 
@@ -450,13 +451,12 @@ const MapScreen: React.FC = () => {
         setTimeout(() => handleChat(), 200);
       }
     } catch (err) {
-      console.error('[MicStop] transcription error:', err);
     } finally {
       setMicLoading(false);
     }
   }, [isRecording, audioRecorderPlayer, handleChat]);
 
-  // ── Keyboard height ──
+  // -- Keyboard height --
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', e => setKbHeight(e.endCoordinates.height));
@@ -472,7 +472,7 @@ const MapScreen: React.FC = () => {
   }>>([]);
   const [showBorderPanel, setShowBorderPanel] = useState(false);
 
-  // ── GPS / route / waypoint state ───────────────────────────────────────────
+  // -- GPS / route / waypoint state -------------------------------------------
   const {
     elevProfile,
     weatherPoints,
@@ -485,7 +485,7 @@ const MapScreen: React.FC = () => {
   useEffect(() => { buildRoutePOIScanRef.current = buildRoutePOIScan; }, [buildRoutePOIScan]);
   useEffect(() => { setNavCongestionGeoJSONRef.current = setNavCongestionGeoJSON; }, [setNavCongestionGeoJSON]);
 
-  // ── Faster route detection ────────────────────────────────────────────────
+  // -- Faster route detection ------------------------------------------------
   const { offer: fasterOffer, acceptOffer, dismissOffer } = useFasterRouteCheck({
     navigating,
     userCoordsRef,
@@ -514,14 +514,14 @@ const MapScreen: React.FC = () => {
 
   const lastAlertCheckPos  = useRef<[number, number] | null>(null);
   const offRouteCountRef   = useRef(0);
-  const lastRerouteTimeRef = useRef(0); // cooldown — min 45s between reroutes
+  const lastRerouteTimeRef = useRef(0); // cooldown � min 45s between reroutes
 
-  // ── Helper: Point-to-polyline distance (meters) ───────────────────────────
+  // -- Helper: Point-to-polyline distance (meters) ---------------------------
   const getDistToRoute = useCallback((pos: [number, number], routeObj: RouteResult) => {
     const coords = routeObj.geometry.coordinates;
     if (!coords || coords.length < 2) return Infinity;
 
-    // Find nearest point first, then check ±30 segments around it
+    // Find nearest point first, then check �30 segments around it
     let nearestIdx = 0;
     let nearestD = Infinity;
     for (let i = 0; i < coords.length; i++) {
@@ -571,7 +571,7 @@ const MapScreen: React.FC = () => {
     return brng;
   }, []);
 
-  // ── Auto-reroute detection ────────────────────────────────────────────────
+  // -- Auto-reroute detection ------------------------------------------------
   useEffect(() => {
     if (!navigating || !route || !destination || !userCoords) {
       offRouteCountRef.current = 0;
@@ -582,13 +582,13 @@ const MapScreen: React.FC = () => {
 
     const dist = getDistToRoute(userCoords, route);
 
-    // Bearing check: if GPS heading differs >90° from route direction → parallel street, not off-route
+    // Bearing check: if GPS heading differs >90� from route direction > parallel street, not off-route
     if (dist > 80 && userHeading !== null) {
       const routeBearing = getBearingAtNearest(userCoords, route);
       const diff = Math.abs(((userHeading - routeBearing) + 360) % 360);
       const angleDiff = diff > 180 ? 360 - diff : diff;
       if (angleDiff > 90) {
-        // Heading away from route direction — likely parallel street, skip
+        // Heading away from route direction � likely parallel street, skip
         return;
       }
     }
@@ -604,22 +604,22 @@ const MapScreen: React.FC = () => {
       if (now - lastRerouteTimeRef.current < 45_000) return; // 45s cooldown
       offRouteCountRef.current = 0;
       lastRerouteTimeRef.current = now;
-      if (!voiceMutedRef.current) { ttsSpeak('Отклонение! Преизчислявам маршрута.'); }
+      if (!voiceMutedRef.current) { ttsSpeak('����������! ������������� ��������.'); }
       navigateTo(destination, destinationName, waypoints, true);
     }
   }, [userCoords, userHeading, navigating, route, destination, destinationName, waypoints, navPhase, getDistToRoute, getBearingAtNearest, navigateTo]);
 
-  // Convenience alias — JSX uses mapIsLoaded for readability
+  // Convenience alias � JSX uses mapIsLoaded for readability
   const mapIsLoaded = mapLoaded;
 
-  // ── Auto Day/Night Theme based on hour ────────────────────────────────────
+  // -- Auto Day/Night Theme based on hour ------------------------------------
   useEffect(() => {
     const hour = new Date().getHours();
     const isDay = hour >= 7 && hour < 19;
     setLightMode(isDay);
   }, [setLightMode]);
 
-  // ── Wake up backend on app start + periodic health poll ──────────────────────
+  // -- Wake up backend on app start + periodic health poll ----------------------
   useEffect(() => {
     // Fire-and-forget wake-up ping (warms Railway/Render cold starts)
     pingBackend();
@@ -634,11 +634,11 @@ const MapScreen: React.FC = () => {
     return () => { if (backendPollRef.current) clearInterval(backendPollRef.current); };
   }, []);
 
-  // ── Load Google account + starred POIs + tacho summary on mount ──────────
+  // -- Load Google account + starred POIs + tacho summary on mount ----------
 
-  // ── HOS timer & warnings handled by useTacho hook ────────────────────────
+  // -- HOS timer & warnings handled by useTacho hook ------------------------
 
-  // ── Live ETA countdown — resets when route changes (reroute refreshes duration) ──
+  // -- Live ETA countdown � resets when route changes (reroute refreshes duration) --
   useEffect(() => {
     if (!navigating || !route) { setRemainingSeconds(0); return; }
     navStartRef.current      = Date.now();
@@ -657,14 +657,14 @@ const MapScreen: React.FC = () => {
     setLongPressCoord([lng, lat]);
   }, []);
 
-  // ── Destination selection (from SearchBar) ────────────────────────────────
+  // -- Destination selection (from SearchBar) --------------------------------
 
   const handleDestinationSelect = useCallback(
     (place: GeoPlace) => navigateTo(place.center, place.text),
     [navigateTo],
   );
 
-  // ── Start navigation ──────────────────────────────────────────────────────
+  // -- Start navigation ------------------------------------------------------
 
   const handleStart = useCallback(() => {
     lastSpokenStepRef.current = -1; // allow first step to be spoken
@@ -677,19 +677,19 @@ const MapScreen: React.FC = () => {
     // to avoid heavy satellite/hybrid tiles on mobile data.
     if (mapMode !== 'vector') setMapMode('vector');
 
-    // Set navigating LAST — StableCamera's followUserLocation will activate and
+    // Set navigating LAST � StableCamera's followUserLocation will activate and
     // smoothly move the camera to the user. Do NOT call flyTo() here: it conflicts
     // with followUserLocation and crashes the native Camera animation node.
     setNavPhase('NAVIGATING');
     if (!voiceMutedRef.current) {
       Tts.stop();
-      ttsSpeak('Следвайте маршрута.');
+      ttsSpeak('��������� ��������.');
     }
   }, [mapMode, resetSession]);
   handleStartRef.current = handleStart; // keep ref fresh each render
 
-  // ── Stop navigation, keep route (Спри навигацията) ────────────────────────
-  // Keeps the route so the user can press "Тръгваме!" again without re-searching.
+  // -- Stop navigation, keep route (���� �����������) ------------------------
+  // Keeps the route so the user can press "��������!" again without re-searching.
   const handleStopNav = useCallback(() => {
     Tts.stop();
     setNavPhase('ROUTE_PREVIEW');
@@ -699,10 +699,10 @@ const MapScreen: React.FC = () => {
     setCurrentStep(0);
     setDistToTurn(null);
     lastRerouteRef.current = 0;
-    saveSession(); // persist to backend if session ≥ 60 s
+    saveSession(); // persist to backend if session ? 60 s
   }, [saveSession, setNavPhase]);
 
-  // ── Clear route & stop navigation entirely (✕ close button) ───────────────
+  // -- Clear route & stop navigation entirely (? close button) ---------------
   const handleClear = useCallback(() => {
     Tts.stop();
     lastSpokenStepRef.current = -1;
@@ -740,13 +740,13 @@ const MapScreen: React.FC = () => {
     simIndexRef.current = 0;
   }, [clearPOI, resetSession]);
 
-  // ── Custom origin handler ─────────────────────────────────────────────────
+  // -- Custom origin handler -------------------------------------------------
   const handleOriginChange = useCallback((place: import('../api/geocoding').GeoPlace | null) => {
     customOriginRef.current = place?.center ?? null;
     setCustomOriginName(place?.text ?? '');
   }, []);
 
-  // ── Route option selection + restrictions check ───────────────────────────
+  // -- Route option selection + restrictions check ---------------------------
   const handleSelectRouteOption = useCallback(async (idx: number) => {
     setSelectedRouteIdx(idx);
     setRestrictionWarnings([]);
@@ -768,7 +768,7 @@ const MapScreen: React.FC = () => {
     }
   }, [routeOptions]);
 
-  // ── Navigation Simulator ───────────────────────────────────────────────────
+  // -- Navigation Simulator ---------------------------------------------------
   // Moves the user position along route.geometry.coordinates at ~80 km/h.
   const startSim = useCallback(() => {
     const coords = routeRef.current?.geometry.coordinates;
@@ -776,7 +776,7 @@ const MapScreen: React.FC = () => {
     simIndexRef.current = 0;
     isSimulatingRef.current = true;
     setSimulating(true);
-    // ~80 km/h: route coords are ~20 m apart on average; 1 tick = 500ms = 40 m/s ≈ 144 km/h
+    // ~80 km/h: route coords are ~20 m apart on average; 1 tick = 500ms = 40 m/s ? 144 km/h
     // Skip every 2 coords to land near 80 km/h
     simIntervalRef.current = setInterval(() => {
       if (!isMountedRef.current) { clearInterval(simIntervalRef.current!); return; }
@@ -793,7 +793,7 @@ const MapScreen: React.FC = () => {
       setGpsReady(true);
       setSpeed(80);
       isDrivingRef.current = true;
-      simIndexRef.current = idx + 2; // advance 2 coords per 500ms ≈ 80 km/h
+      simIndexRef.current = idx + 2; // advance 2 coords per 500ms ? 80 km/h
     }, 500);
   }, []);
 
@@ -804,7 +804,7 @@ const MapScreen: React.FC = () => {
     simIndexRef.current = 0;
   }, []);
 
-  // ── App deep-link handler ──────────────────────────────────────────────────
+  // -- App deep-link handler --------------------------------------------------
   const handleAppIntent = useCallback((intent: AppIntent) => {
     // 1. Direct URL priority (e.g. from Gemini TransParking intent)
     if (intent.url) {
@@ -822,8 +822,8 @@ const MapScreen: React.FC = () => {
     });
   }, []);
 
-  // Puck scale: arrow grows when approaching a turn (≤300 m) so the driver
-  // can clearly see the heading. Uses a plain number — Value<number> accepts
+  // Puck scale: arrow grows when approaching a turn (?300 m) so the driver
+  // can clearly see the heading. Uses a plain number � Value<number> accepts
   // both static numbers and Mapbox expressions.
   const puckScale = useMemo(() => {
     if (!navigating || distToTurn == null || distToTurn > 300) return 1.0;
@@ -832,7 +832,7 @@ const MapScreen: React.FC = () => {
     return 1.2;
   }, [navigating, distToTurn]);
 
-  // ── Auto-fit map to POI results (from AI chat) ───────────────────────────
+  // -- Auto-fit map to POI results (from AI chat) ---------------------------
   useEffect(() => {
     const results = parkingResults.length > 0 ? parkingResults : businessResults;
     if (results.length === 0 || !cameraRef.current) return;
@@ -858,18 +858,18 @@ const MapScreen: React.FC = () => {
     }
   }, [parkingResults, businessResults]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // -- Render ----------------------------------------------------------------
 
   // Dynamic terrain exaggeration: stronger relief when driving fast (rural / highway)
   const terrainExaggeration = speed > 90 ? 2.0 : speed > 60 ? 1.6 : speed > 30 ? 1.3 : 1.0;
 
-  // Nearest truck parking distance — shown in HUD during navigation
+  // Nearest truck parking distance � shown in HUD during navigation
   const nearestParkingM = useMemo(() => {
     if (!parkingResults.length) return null;
     return Math.min(...parkingResults.map(p => p.distance_m));
   }, [parkingResults]);
 
-  // ── GeoJSON for POI SymbolLayers (replaces PointAnnotation — much lighter) ──
+  // -- GeoJSON for POI SymbolLayers (replaces PointAnnotation � much lighter) --
   const parkingGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: parkingResults.map((p, i) => ({
@@ -910,7 +910,7 @@ const MapScreen: React.FC = () => {
     })),
   }), [cameraResults]);
 
-  // ── GeoJSON for SymbolLayers replacing PointAnnotation (GEMINI.md rule) ──
+  // -- GeoJSON for SymbolLayers replacing PointAnnotation (GEMINI.md rule) --
   const waypointsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: waypoints.map((coords, i) => ({
@@ -937,11 +937,11 @@ const MapScreen: React.FC = () => {
       type: 'Feature' as const,
       id: i,
       geometry: { type: 'Point' as const, coordinates: wp.coords },
-      properties: { label: `${wp.emoji}\n${wp.temp}°` },
+      properties: { label: `${wp.emoji}\n${wp.temp}�` },
     })),
   }), [weatherPoints]);
 
-  // ── Highway exit markers — placed on map at off-ramp positions (Google Maps style) ──
+  // -- Highway exit markers � placed on map at off-ramp positions (Google Maps style) --
   const exitsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
     if (!route) return { type: 'FeatureCollection', features: [] };
     const features: GeoJSON.Feature[] = [];
@@ -963,7 +963,7 @@ const MapScreen: React.FC = () => {
         geometry: { type: 'Point' as const, coordinates: loc },
         properties: {
           exitNum: exitNum ?? '',
-          label: exitNum ? `⬡${exitNum}` : '⬡',
+          label: exitNum ? `?${exitNum}` : '?',
           dest: destName,
         },
       });
@@ -971,13 +971,13 @@ const MapScreen: React.FC = () => {
     return { type: 'FeatureCollection', features };
   }, [route]);
 
-  // ── Derived / computed values ─────────────────────────────────────────────
+  // -- Derived / computed values ---------------------------------------------
 
   const routeShape = route
     ? ({ type: 'Feature', properties: {}, geometry: route.geometry } as const)
     : null;
 
-  // ── Congestion overlay: only show 15 km ahead during navigation ─────────────
+  // -- Congestion overlay: only show 15 km ahead during navigation -------------
   const navCongestionVisible = useMemo<GeoJSON.FeatureCollection | null>(() => {
     if (!navigating || !userCoords || !navCongestionGeoJSON) return null;
     const MAX_M = 15_000;
@@ -1002,7 +1002,7 @@ const MapScreen: React.FC = () => {
   const nextStep   = route?.steps?.[currentStep + 1];
   const stepToShow = navigating ? activeStep : null;
 
-  // ── Nearest upcoming restriction sign (within 600m, strictly ahead on route) ──
+  // -- Nearest upcoming restriction sign (within 600m, strictly ahead on route) --
   const activeRestriction = useMemo<RestrictionPoint | null>(() => {
     if (!navigating || !userCoords || !route?.restrictions?.length) return null;
     const coords = route.geometry.coordinates;
@@ -1135,7 +1135,7 @@ const MapScreen: React.FC = () => {
 
   const handleReportCamera = useCallback(() => {
     playCameraAlert();
-    Alert.alert('Благодарим!', 'Камерата е докладвана.');
+    Alert.alert('����������!', '�������� � ����������.');
   }, [playCameraAlert]);
 
   const pickDeparture = useCallback((label: DepartLabel) => {
@@ -1151,7 +1151,7 @@ const MapScreen: React.FC = () => {
     <View style={styles.container}>
       {!backendOnline && (
         <View style={styles.noInternetBanner} pointerEvents="none">
-          <Text style={styles.noInternetText}>⚠️ Сървърът не отговаря — AI функциите са изключени</Text>
+          <Text style={styles.noInternetText}>?? �������� �� �������� � AI ��������� �� ���������</Text>
         </View>
       )}
 
@@ -1159,11 +1159,11 @@ const MapScreen: React.FC = () => {
         <View style={{ position: 'absolute', top: backendOnline ? 40 : 80, left: 16, right: 16,
           backgroundColor: '#E65100', borderRadius: 8, padding: 10, zIndex: 998 }}
           pointerEvents="none">
-          <Text style={{ color: '#fff', fontWeight: '700' }}>⚠️ {hosViolations[0].message}</Text>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>?? {hosViolations[0].message}</Text>
         </View>
       )}
 
-      {/* ── Map ── */}
+      {/* -- Map -- */}
       <Mapbox.MapView
         style={styles.map}
         styleURL={mapStyleURL}
@@ -1186,7 +1186,7 @@ const MapScreen: React.FC = () => {
       >
         {/* nav-arrow + road sign images pre-loaded into the Mapbox atlas.
             Must be inside MapView. onImageMissing fires if a layer references
-            an image that was not registered — helps debugging. */}
+            an image that was not registered � helps debugging. */}
         <Mapbox.Images
           images={{
             'nav-arrow':     NAV_ARROW,
@@ -1210,13 +1210,12 @@ const MapScreen: React.FC = () => {
             'arrow-roundabout':   { sdf: true, image: ARROW_ROUNDABOUT },
           }}
           onImageMissing={(imageKey) => {
-            console.warn('[Mapbox] missing image in atlas:', imageKey);
           }}
         />
 
         {/* Always pass followUserMode + followZoomLevel with concrete values.
             Mapbox creates an Animated node for every prop it first receives.
-            If a prop appears later its Animated.Value starts as undefined →
+            If a prop appears later its Animated.Value starts as undefined >
             "Animated.timing called on undefined". */}
         <StableCamera 
           cameraRef={cameraRef} 
@@ -1226,17 +1225,17 @@ const MapScreen: React.FC = () => {
           isTracking={isTracking}
         />
 
-        {/* UserLocation: GPS data only — no visual puck (LocationPuck handles rendering).
+        {/* UserLocation: GPS data only � no visual puck (LocationPuck handles rendering).
             minDisplacement={0} delivers every position update without threshold filtering.
             visible={false} suppresses the deprecated built-in puck marker. */}
         {/* UserLocation: keeps Mapbox location engine warm for LocationPuck */}
         <Mapbox.UserLocation visible={false} />
 
-        {/* LocationPuck — Neon Blue glowing arrow (Mapbox v10.2.10).
-            bearingImage="nav-arrow" — custom PNG for the middle rotating layer;
+        {/* LocationPuck � Neon Blue glowing arrow (Mapbox v10.2.10).
+            bearingImage="nav-arrow" � custom PNG for the middle rotating layer;
               without this prop the puck renders as a static dot (no rotation).
-            pulsing.color=NEON      — neon-blue sonar ring around the puck.
-            pulsing.radius=30       — fixed 30 dp radius (clean ring vs accuracy blob). */}
+            pulsing.color=NEON      � neon-blue sonar ring around the puck.
+            pulsing.radius=30       � fixed 30 dp radius (clean ring vs accuracy blob). */}
         <LocationPuck
           puckBearingEnabled
           puckBearing="course"
@@ -1293,7 +1292,7 @@ const MapScreen: React.FC = () => {
 
       </Mapbox.MapView>
 
-      {/* ── Floating fuel station detail bubble ── */}
+      {/* -- Floating fuel station detail bubble -- */}
       {selectedFuel && (
         <FuelPanel
           fuel={selectedFuel}
@@ -1307,231 +1306,38 @@ const MapScreen: React.FC = () => {
         />
       )}
 
-      {/* ── Floating parking detail bubble (appears when map pin is tapped) ── */}
+      {/* -- Floating parking detail bubble (appears when map pin is tapped) -- */}
       {selectedParking && (
-        <View style={[styles.parkingBubble, { top: insets.top + 68 }]}>
-          {/* Header row */}
-          <View style={styles.parkingBubbleHeader}>
-            <Text style={styles.parkingBubbleName} numberOfLines={2}>
-              🅿️ {selectedParking.name}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setSelectedParking(null)}
-              style={styles.parkingBubbleClose}
-            >
-              <Text style={styles.parkingBubbleCloseTxt}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Distance + hours */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={styles.parkingBubbleDist}>
-              {fmtDistance(selectedParking.distance_m)}
-              {selectedParking.opening_hours ? `  ·  ${selectedParking.opening_hours}` : ''}
-            </Text>
-            {selectedParking.travel_time && (
-              <View style={[
-                styles.pkBadge, 
-                { marginLeft: 8, backgroundColor: 'rgba(0,0,0,0.3)' },
-                (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time < 900) && { borderColor: '#FFC107', borderWidth: 1 },
-                (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time < 0) && { borderColor: '#F44336', borderWidth: 1 }
-              ]}>
-                <Text style={[styles.pkBadgeTxt, { fontSize: 11 }]}>
-                  ⏱️ {Math.round(selectedParking.travel_time / 60)} мин
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Tacho reachability text */}
-          {selectedParking.travel_time && (
-            <Text style={[
-              { fontSize: 12, marginBottom: 8, fontWeight: '600' },
-              (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 900) ? { color: '#4CAF50' } :
-              (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 0) ? { color: '#FFC107' } :
-              { color: '#F44336' }
-            ]}>
-              {(HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 0) 
-                ? `Резерв: ${Math.round((HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time) / 60)} мин`
-                : `ВНИМАНИЕ: Превишаване с ${Math.round((selectedParking.travel_time - (HOS_LIMIT_S - drivingSeconds)) / 60)} мин!`}
-            </Text>
-          )}
-
-          {/* Amenity badge row */}
-          <View style={styles.parkingBubbleBadgeRow}>
-            <View style={[styles.pkBadge, selectedParking.paid ? styles.pkBadgePaid : styles.pkBadgeFree]}>
-              <Text style={styles.pkBadgeTxt}>{selectedParking.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
-            </View>
-            {selectedParking.showers && (
-              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚿</Text></View>
-            )}
-            {selectedParking.toilets && (
-              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚽</Text></View>
-            )}
-            {selectedParking.wifi && (
-              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>📶 WiFi</Text></View>
-            )}
-            {selectedParking.security && (
-              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔒 Охрана</Text></View>
-            )}
-            {selectedParking.lighting && (
-              <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔦 Осветен</Text></View>
-            )}
-            {selectedParking.capacity != null && (
-              <View style={styles.pkBadge}>
-                <Text style={styles.pkBadgeTxt}>🚛 {selectedParking.capacity}</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Action buttons */}
-          <View style={styles.parkingBubbleBtns}>
-            <TouchableOpacity
-              style={styles.parkingBubbleNavBtn}
-              activeOpacity={0.8}
-              onPress={() => {
-                const p = selectedParking;
-                setSelectedParking(null);
-                setParkingResults([]);
-                navigateTo([p.lng, p.lat], p.name);
-              }}
-            >
-              <Icon name="navigation-variant" size={16} color="#0a0c1c" />
-              <Text style={styles.parkingBubbleNavBtnTxt}>Навигация</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.parkingBubbleWpBtn}
-              activeOpacity={0.8}
-              onPress={() => {
-                const p = selectedParking;
-                setSelectedParking(null);
-                setParkingResults([]);
-                addWaypoint([p.lng, p.lat], p.name);
-              }}
-            >
-              <Icon name="map-marker-plus" size={16} color={NEON} />
-              <Text style={styles.parkingBubbleWpBtnTxt}>+ Спирка</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.parkingBubbleWebBtn}
-              activeOpacity={0.8}
-              onPress={() => {
-                if (selectedParking.website) {
-                  openInBrowser(selectedParking.website);
-                } else {
-                  const cc = detectCountryCode(selectedParking.lat, selectedParking.lng);
-                  const base = cc === 'eu'
-                    ? 'https://truckerapps.eu/transparking/'
-                    : `https://truckerapps.eu/transparking/${cc}/map/`;
-                  openInBrowser(base);
-                }
-              }}
-            >
-              <Icon name="open-in-new" size={16} color={NEON} />
-              <Text style={styles.parkingBubbleWebBtnTxt}>Инфо</Text>
-              </TouchableOpacity>
-
-              {selectedParking.transparking_url && (
-              <TouchableOpacity
-                style={[styles.parkingBubbleWebBtn, { backgroundColor: 'rgba(0,255,136,0.12)', borderColor: '#00ff88' }]}
-                activeOpacity={0.8}
-                onPress={() => Linking.openURL(selectedParking.transparking_url!)}
-              >
-                <Icon name="comment-text-multiple" size={16} color="#00ff88" />
-                <Text style={[styles.parkingBubbleWebBtnTxt, { color: '#00ff88' }]}>Отзиви</Text>
-              </TouchableOpacity>
-              )}
-
-              {selectedParking.voice_desc && (              <TouchableOpacity
-                style={styles.parkingBubbleTtsBtn}
-                activeOpacity={0.8}
-                onPress={() => ttsSpeak(selectedParking.voice_desc!)}
-              >
-                <Icon name="volume-high" size={16} color="#fff" />
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
+        <ParkingBubble
+          parking={selectedParking}
+          onClose={() => setSelectedParking(null)}
+          onNavigate={navigateTo}
+          onAddWaypoint={addWaypoint}
+          onClearResults={() => setParkingResults([])}
+          drivingSeconds={drivingSeconds}
+          hosLimitS={HOS_LIMIT_S}
+          topOffset={insets.top + 68}
+        />
       )}
 
-      {/* ── Long-press popup — glassmorphism card with icon buttons ── */}
+      {/* -- Long-press popup -- */}
       {longPressCoord && (
-        <View style={styles.longPressPopup}>
-          {/* Header row */}
-          <View style={styles.longPressHeader}>
-            <Icon name="map-marker" size={18} color="#00bfff" />
-            <Text style={styles.longPressTitle}> Задържана точка</Text>
-            <TouchableOpacity
-              style={styles.longPressCloseBtn}
-              activeOpacity={0.7}
-              onPress={() => setLongPressCoord(null)}
-            >
-              <Icon name="close" size={18} color="rgba(255,255,255,0.6)" />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.longPressCoords}>
-            {longPressCoord[1].toFixed(5)}, {longPressCoord[0].toFixed(5)}
-          </Text>
-
-          {/* Action buttons */}
-          <View style={styles.longPressBtns}>
-            {/* Navigate button */}
-            <TouchableOpacity
-              style={styles.longPressBtn}
-              activeOpacity={0.75}
-              onPress={() => {
-                const coord = longPressCoord;
-                setLongPressCoord(null);
-                navigateTo(coord, `${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`);
-              }}
-            >
-              <View style={styles.longPressBtnInner}>
-                <Icon name="navigation" size={20} color="#0a0c1c" />
-                <Text style={styles.longPressBtnTxt}>Упътване</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Add as waypoint — only when route exists */}
-            {destination && (
-              <TouchableOpacity
-                style={[styles.longPressBtn, styles.longPressBtnWaypoint]}
-                activeOpacity={0.75}
-                onPress={() => {
-                  const coord = longPressCoord;
-                  setLongPressCoord(null);
-                  addWaypoint(coord, `Спирка ${waypointsRef.current.length + 1}`);
-                }}
-              >
-                <View style={styles.longPressBtnInner}>
-                  <Icon name="map-marker-plus" size={20} color="#0a0c1c" />
-                  <Text style={styles.longPressBtnTxt}>Добави спирка</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-
-            {/* ⭐ Star — save as Google Favourite */}
-            <TouchableOpacity
-              style={[styles.longPressBtn, styles.longPressBtnStar]}
-              activeOpacity={0.75}
-              onPress={async () => {
-                const coord = longPressCoord!;
-                setLongPressCoord(null);
-                const name = `⭐ ${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`;
-                const saved = await starPlace(name, coord[1], coord[0], undefined, googleUser?.email);
-                if (saved) setStarredPOIs(prev => [...prev, saved]);
-              }}
-            >
-              <View style={styles.longPressBtnInner}>
-                <Text style={{ fontSize: 18 }}>⭐</Text>
-                <Text style={styles.longPressBtnTxt}>Запази</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <MapLongPressMenu
+          coord={longPressCoord}
+          hasDestination={!!destination}
+          waypointCount={waypointsRef.current.length}
+          onClose={() => setLongPressCoord(null)}
+          onNavigate={navigateTo}
+          onAddWaypoint={addWaypoint}
+          onStar={async (coord) => {
+            const name = `⭐ ${coord[1].toFixed(4)}, ${coord[0].toFixed(4)}`;
+            const saved = await starPlace(name, coord[1], coord[0], undefined, googleUser?.email);
+            if (saved) setStarredPOIs(prev => [...prev, saved]);
+          }}
+        />
       )}
 
-      {/* ── Search bar (hidden during navigation) ── */}
+      {/* -- Search bar (hidden during navigation) -- */}
       {!navigating && (
         <View style={[styles.searchContainer, { top: searchTop }]}>
           <SearchBar
@@ -1541,24 +1347,24 @@ const MapScreen: React.FC = () => {
           />
           {customOriginName ? (
             <View style={styles.originActiveBadge}>
-              <Text style={styles.originActiveTxt}>📍 Начало: {customOriginName}</Text>
+              <Text style={styles.originActiveTxt}>?? ������: {customOriginName}</Text>
             </View>
           ) : null}
         </View>
       )}
 
-      {/* ── Tunnel / bridge restriction warning banner ── */}
+      {/* -- Tunnel / bridge restriction warning banner -- */}
       {tunnelWarning && navigating && (
         <View style={[styles.tunnelWarnBanner, { top: insets.top }]}>
           <Text style={styles.tunnelWarnText}>{tunnelWarning}</Text>
         </View>
       )}
 
-      {/* ── Navigation top panel ── */}
+      {/* -- Navigation top panel -- */}
       {navigating && stepToShow && (
         <View style={[styles.signWrap, { top: insets.top + spacing.xs }]}>
           {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? (
-            /* Junction Sign — EU-style sign + split lane view within 800 m */
+            /* Junction Sign � EU-style sign + split lane view within 800 m */
             <SignRenderer
               step={stepToShow}
               nextStep={nextStep ?? undefined}
@@ -1567,7 +1373,7 @@ const MapScreen: React.FC = () => {
               banner={stepToShow.bannerInstructions?.[0]}
             />
           ) : (
-            /* Simple nav banner — outside 800 m range */
+            /* Simple nav banner � outside 800 m range */
             <View style={styles.navBanner}>
               <Text style={styles.navArrow}>
                 {maneuverEmoji(stepToShow.maneuver.type, stepToShow.maneuver.modifier)}
@@ -1589,7 +1395,7 @@ const MapScreen: React.FC = () => {
                 </Text>
                 {nextStep && (
                   <Text style={styles.navNext} numberOfLines={1}>
-                    после:{' '}
+                    �����:{' '}
                     {maneuverEmoji(nextStep.maneuver.type, nextStep.maneuver.modifier)}{' '}
                     {nextStep.name || nextStep.maneuver.instruction}
                   </Text>
@@ -1600,10 +1406,10 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Truck lane guidance — shows from 500 m, neon strip with label ── */}
+      {/* -- Truck lane guidance � shows from 500 m, neon strip with label -- */}
       {(testLanesMode || (navigating && distToTurn != null && distToTurn < 500)) && displayLanes.length > 0 && (
         <View style={styles.laneStrip}>
-          <Text style={styles.laneStripLabel}>ЗАПАЗИ ЛЕНТАТА</Text>
+          <Text style={styles.laneStripLabel}>������ �������</Text>
           <View style={styles.laneStripCells}>
             {displayLanes.map((lane, i) =>
               lane.active ? (
@@ -1632,7 +1438,7 @@ const MapScreen: React.FC = () => {
       )}
 
 
-      {/* ── Route Timeline (parking + fuel pins along route) ── */}
+      {/* -- Route Timeline (parking + fuel pins along route) -- */}
       {navigating && route && routeAheadPOIs.length > 0 && (
         <RouteTimeline
           routeAheadPOIs={routeAheadPOIs}
@@ -1642,7 +1448,7 @@ const MapScreen: React.FC = () => {
         />
       )}
 
-      {/* ── Faster route banner ── */}
+      {/* -- Faster route banner -- */}
       <FasterRouteBanner
         offer={fasterOffer}
         onAccept={handleAcceptFasterRoute}
@@ -1650,7 +1456,7 @@ const MapScreen: React.FC = () => {
         top={insets.top + 8}
       />
 
-      {/* ── Options Panel (Settings, Toggles, POIs) ── */}
+      {/* -- Options Panel (Settings, Toggles, POIs) -- */}
       <OptionsPanel
         optionsOpen={optionsOpen}
         setOptionsOpen={setOptionsOpen}
@@ -1698,7 +1504,7 @@ const MapScreen: React.FC = () => {
         backendOnline={backendOnline}
       />
 
-      {/* ── GPS chip ── */}
+      {/* -- GPS chip -- */}
       {!gpsReady && (
         <View style={styles.gpsChip}>
           <ActivityIndicator size="small" color={colors.accent} />
@@ -1706,21 +1512,21 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Re-routing chip ── */}
+      {/* -- Re-routing chip -- */}
       {rerouting && (
         <View style={styles.reroutingChip}>
           <ActivityIndicator size="small" color={colors.warning} />
-          <Text style={styles.reroutingText}>Рекалкулиране...</Text>
+          <Text style={styles.reroutingText}>�������������...</Text>
         </View>
       )}
 
-      {/* ── Border Crossings panel ── */}
+      {/* -- Border Crossings panel -- */}
       {showBorderPanel && borderCrossings.length > 0 && (
         <View style={styles.borderPanel}>
           <View style={styles.borderPanelHeader}>
-            <Text style={styles.borderPanelTitle}>🛂 Гранични преходи</Text>
+            <Text style={styles.borderPanelTitle}>?? �������� �������</Text>
             <TouchableOpacity onPress={() => setShowBorderPanel(false)}>
-              <Text style={styles.borderPanelClose}>✕</Text>
+              <Text style={styles.borderPanelClose}>?</Text>
             </TouchableOpacity>
           </View>
           {borderCrossings.map((c, i) => (
@@ -1731,41 +1537,41 @@ const MapScreen: React.FC = () => {
             >
               <Text style={styles.borderFlag}>{c.flag}</Text>
               <Text style={styles.borderName}>{c.name}</Text>
-              <Text style={styles.borderStatus}>{c.status} →</Text>
+              <Text style={styles.borderStatus}>{c.status} ></Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* ── Vehicle badge ── */}
+      {/* -- Vehicle badge -- */}
       {profile?.plate && !navigating && (
         <View style={[styles.badge, { top: searchTop + 58 }]}>
           <Text style={styles.badgeText}>{profile.plate}</Text>
         </View>
       )}
 
-      {/* ── Route loading chip ── */}
+      {/* -- Route loading chip -- */}
       {loadingRoute && (
         <View style={styles.loadingChip}>
           <ActivityIndicator size="small" color={colors.accent} />
-          <Text style={styles.loadingText}>Изчисляване на маршрут...</Text>
+          <Text style={styles.loadingText}>����������� �� �������...</Text>
         </View>
       )}
 
-      {/* ── POI / SAR results horizontal scroll ── */}
+      {/* -- POI / SAR results horizontal scroll -- */}
       {!navigating && (poiResults.length > 0 || loadingPOI) && (!route || sarMode) && (
         <View style={[styles.poiListContainer, { top: searchTop + (sarMode ? 68 : 110) }]}>
           {/* SAR badge */}
           {sarMode && (
             <View style={styles.sarHeaderBadge}>
               <Text style={styles.sarHeaderTxt}>
-                🗺️ По маршрут · до 10 мин отклонение
+                ??? �� ������� � �� 10 ��� ����������
               </Text>
               <TouchableOpacity
                 onPress={() => clearPOI()}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text style={[styles.sarHeaderTxt, { marginLeft: 8 }]}>✕</Text>
+                <Text style={[styles.sarHeaderTxt, { marginLeft: 8 }]}>?</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -1791,16 +1597,16 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Parking cards from GPT-4o ── */}
+      {/* -- Parking cards from GPT-4o -- */}
       {parkingResults.length > 0 && (
         <View style={[styles.parkingPanel, { top: searchTop + 58 }]}>
           <View style={styles.parkingPanelHeader}>
-            <Text style={styles.parkingPanelTitle}>🅿️ Паркинги за камиони</Text>
+            <Text style={styles.parkingPanelTitle}>??? �������� �� �������</Text>
             <TouchableOpacity
               onPress={() => setParkingResults([])}
               style={styles.parkingDismissBtn}
             >
-              <Text style={styles.parkingDismissTxt}>✕</Text>
+              <Text style={styles.parkingDismissTxt}>?</Text>
             </TouchableOpacity>
           </View>
           <ScrollView
@@ -1816,25 +1622,25 @@ const MapScreen: React.FC = () => {
                 {/* Amenity badges */}
                 <View style={styles.parkingBadgeRow}>
                   <View style={[styles.parkingBadge, p.paid ? styles.parkingBadgePaid : styles.parkingBadgeFree]}>
-                    <Text style={styles.parkingBadgeTxt}>{p.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
+                    <Text style={styles.parkingBadgeTxt}>{p.paid ? '?? ������' : '?? ���������'}</Text>
                   </View>
                   {p.showers && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚿</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>??</Text></View>
                   )}
                   {p.toilets && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚽</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>??</Text></View>
                   )}
                   {p.wifi && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>📶</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>??</Text></View>
                   )}
                   {p.security && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🔒</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>??</Text></View>
                   )}
                   {p.lighting && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🔦</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>??</Text></View>
                   )}
                   {p.capacity != null && (
-                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚛 {p.capacity}</Text></View>
+                    <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>?? {p.capacity}</Text></View>
                   )}
                 </View>
 
@@ -1854,7 +1660,7 @@ const MapScreen: React.FC = () => {
                     }}
                   >
                     <Icon name="navigation-variant" size={12} color="#0a0c1c" />
-                    <Text style={styles.parkingGoBtnTxt2}>Маршрут</Text>
+                    <Text style={styles.parkingGoBtnTxt2}>�������</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.parkingWpBtn}
@@ -1866,7 +1672,7 @@ const MapScreen: React.FC = () => {
                     }}
                   >
                     <Icon name="map-marker-plus" size={12} color={NEON} />
-                    <Text style={styles.parkingWpBtnTxt}>+ Спирка</Text>
+                    <Text style={styles.parkingWpBtnTxt}>+ ������</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1885,7 +1691,7 @@ const MapScreen: React.FC = () => {
                     }}
                   >
                     <Icon name="open-in-new" size={12} color={NEON} />
-                    <Text style={styles.parkingWebBtnTxt}>Инфо</Text>
+                    <Text style={styles.parkingWebBtnTxt}>����</Text>
                   </TouchableOpacity>
 
                   {p.voice_desc && (
@@ -1904,16 +1710,16 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Fuel station cards from GPT-4o ── */}
+      {/* -- Fuel station cards from GPT-4o -- */}
       {!navigating && fuelResults.length > 0 && (
         <View style={[styles.fuelPanel, { top: searchTop + 58 }]}>
           <View style={styles.parkingPanelHeader}>
-            <Text style={styles.fuelPanelTitle}>⛽ Горивни станции</Text>
+            <Text style={styles.fuelPanelTitle}>? ������� �������</Text>
             <TouchableOpacity
               onPress={() => setFuelResults([])}
               style={styles.parkingDismissBtn}
             >
-              <Text style={styles.parkingDismissTxt}>✕</Text>
+              <Text style={styles.parkingDismissTxt}>?</Text>
             </TouchableOpacity>
           </View>
           <ScrollView
@@ -1928,12 +1734,12 @@ const MapScreen: React.FC = () => {
                 <Text style={styles.fuelCardDist}>{fmtDistance(f.distance_m)}</Text>
                 {f.price ? (
                   <View style={styles.fuelBadge}>
-                    <Text style={styles.fuelBadgeTxt}>💶 {f.price}</Text>
+                    <Text style={styles.fuelBadgeTxt}>?? {f.price}</Text>
                   </View>
                 ) : null}
                 {f.truck_lane ? (
                   <View style={styles.fuelBadgeTruck}>
-                    <Text style={styles.fuelBadgeTxt}>🚚 Камионна лента</Text>
+                    <Text style={styles.fuelBadgeTxt}>?? �������� �����</Text>
                   </View>
                 ) : null}
                 {f.opening_hours ? (
@@ -1946,7 +1752,7 @@ const MapScreen: React.FC = () => {
                     onPress={() => { setFuelResults([]); if (f.lat && f.lng) navigateTo([f.lng, f.lat], f.name); }}
                   >
                     <Icon name="gas-station" size={14} color="#0a0c1c" />
-                    <Text style={styles.goBtnTxt}>Маршрут</Text>
+                    <Text style={styles.goBtnTxt}>�������</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.fuelWpBtn}
@@ -1954,7 +1760,7 @@ const MapScreen: React.FC = () => {
                     onPress={() => { setFuelResults([]); if (f.lat && f.lng) addWaypoint([f.lng, f.lat], f.name); }}
                   >
                     <Icon name="map-marker-plus" size={14} color={NEON} />
-                    <Text style={styles.fuelWpBtnTxt}>+ Спирка</Text>
+                    <Text style={styles.fuelWpBtnTxt}>+ ������</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1963,74 +1769,74 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Tachograph card from GPT-4o ── */}
+      {/* -- Tachograph card from GPT-4o -- */}
       {tachographResult && (
         <View style={[styles.tachPanel, { top: searchTop + 58 }]}>
           <View style={styles.parkingPanelHeader}>
-            <Text style={styles.tachTitle}>⏱️ Тахограф</Text>
+            <Text style={styles.tachTitle}>?? ��������</Text>
             <TouchableOpacity
               onPress={() => setTachographResult(null)}
               style={styles.parkingDismissBtn}
             >
-              <Text style={styles.parkingDismissTxt}>✕</Text>
+              <Text style={styles.parkingDismissTxt}>?</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.tachCard}>
             {/* Continuous session */}
-            <Text style={styles.tachRow}>🚛 Непрекъснато: {tachographResult.drivenHours.toFixed(1)} ч</Text>
+            <Text style={styles.tachRow}>?? ������������: {tachographResult.drivenHours.toFixed(1)} �</Text>
             <Text style={[styles.tachRow, tachographResult.breakNeeded && styles.tachWarn]}>
               {tachographResult.breakNeeded
-                ? '🛑 СТОП — задължителна 45 мин почивка!'
+                ? '?? ���� � ������������ 45 ��� �������!'
                 : tachographResult.remainingHours < 0.5
-                ? `⚠️ Само ${Math.round(tachographResult.remainingHours * 60)} мин до почивка!`
-                : `✅ Остават ${tachographResult.remainingHours.toFixed(1)} ч`}
+                ? `?? ���� ${Math.round(tachographResult.remainingHours * 60)} ��� �� �������!`
+                : `? ������� ${tachographResult.remainingHours.toFixed(1)} �`}
             </Text>
             {/* Daily / Weekly from persistent DB */}
             {tachoSummary && (
               <>
                 <View style={styles.tachDivider} />
                 <Text style={styles.tachRow}>
-                  📅 Днес: {tachoSummary.daily_driven_h.toFixed(1)} / {tachoSummary.daily_limit_h} ч
+                  ?? ����: {tachoSummary.daily_driven_h.toFixed(1)} / {tachoSummary.daily_limit_h} �
                   {'  '}
                   <Text style={tachoSummary.daily_remaining_h < 1 ? styles.tachWarn : styles.tachOk}>
-                    (остават {tachoSummary.daily_remaining_h.toFixed(1)} ч)
+                    (������� {tachoSummary.daily_remaining_h.toFixed(1)} �)
                   </Text>
                 </Text>
                 <Text style={styles.tachRow}>
-                  📆 Седмично: {tachoSummary.weekly_driven_h.toFixed(1)} / {tachoSummary.weekly_limit_h} ч
+                  ?? ��������: {tachoSummary.weekly_driven_h.toFixed(1)} / {tachoSummary.weekly_limit_h} �
                   {'  '}
                   <Text style={tachoSummary.weekly_remaining_h < 4 ? styles.tachWarn : styles.tachOk}>
-                    (остават {tachoSummary.weekly_remaining_h.toFixed(1)} ч)
+                    (������� {tachoSummary.weekly_remaining_h.toFixed(1)} �)
                   </Text>
                 </Text>
                 {tachoSummary.biweekly_driven_h !== undefined && (
                   <Text style={styles.tachRow}>
-                    📅📅 2 седм.: {tachoSummary.biweekly_driven_h.toFixed(1)} / {tachoSummary.biweekly_limit_h} ч
+                    ???? 2 ����.: {tachoSummary.biweekly_driven_h.toFixed(1)} / {tachoSummary.biweekly_limit_h} �
                     {'  '}
                     <Text style={tachoSummary.biweekly_remaining_h < 5 ? styles.tachWarn : styles.tachOk}>
-                      (остават {tachoSummary.biweekly_remaining_h.toFixed(1)} ч)
+                      (������� {tachoSummary.biweekly_remaining_h.toFixed(1)} �)
                     </Text>
                   </Text>
                 )}
                 <View style={styles.tachDivider} />
                 {/* Weekly daily-rest breakdown */}
                 <Text style={styles.tachRow}>
-                  🛏️ Почивки тази седмица:
+                  ??? ������� ���� �������:
                 </Text>
                 <Text style={styles.tachRow}>
-                  {'  '}✅ 11ч (редовни): {tachoSummary.weekly_regular_rests}
+                  {'  '}? 11� (�������): {tachoSummary.weekly_regular_rests}
                   {'   '}
                   <Text style={tachoSummary.weekly_reduced_rests > 0 ? styles.tachOk : undefined}>
-                    🟡 9ч (намалени): {tachoSummary.weekly_reduced_rests}/3
+                    ?? 9� (��������): {tachoSummary.weekly_reduced_rests}/3
                   </Text>
                 </Text>
                 {tachoSummary.reduced_rests_remaining === 0 ? (
                   <Text style={styles.tachWarn}>
-                    ⚠️ Изчерпани намалени почивки — следващата трябва да е 11ч!
+                    ?? ��������� �������� ������� � ���������� ������ �� � 11�!
                   </Text>
                 ) : (
                   <Text style={styles.tachOk}>
-                    Можеш още {tachoSummary.reduced_rests_remaining}x 9ч почивка
+                    ����� ��� {tachoSummary.reduced_rests_remaining}x 9� �������
                   </Text>
                 )}
               </>
@@ -2045,23 +1851,23 @@ const MapScreen: React.FC = () => {
                   navigateTo([s.lng, s.lat], s.name);
                 }}
               >
-                <Text style={styles.tachStopTxt}>🅿️ {tachographResult.suggestedStop.name} →</Text>
+                <Text style={styles.tachStopTxt}>??? {tachographResult.suggestedStop.name} ></Text>
               </TouchableOpacity>
             )}
           </View>
         </View>
       )}
 
-      {/* ── Business / place results from GPT-4o search ── */}
+      {/* -- Business / place results from GPT-4o search -- */}
       {!navigating && businessResults.length > 0 && (
         <View style={[styles.bizPanel, { top: searchTop + 58 }]}>
           <View style={styles.parkingPanelHeader}>
-            <Text style={styles.bizPanelTitle}>📍 Намерени места</Text>
+            <Text style={styles.bizPanelTitle}>?? �������� �����</Text>
             <TouchableOpacity
               onPress={() => setBusinessResults([])}
               style={styles.parkingDismissBtn}
             >
-              <Text style={styles.parkingDismissTxt}>✕</Text>
+              <Text style={styles.parkingDismissTxt}>?</Text>
             </TouchableOpacity>
           </View>
           <ScrollView
@@ -2072,9 +1878,9 @@ const MapScreen: React.FC = () => {
             {businessResults.map((b, i) => {
               const doNavigate = () => { setBusinessResults([]); navigateTo([b.lng, b.lat], b.name); };
               const statusMsg =
-                b.business_status === 'CLOSED_PERMANENTLY' ? '🔴 Затворено завинаги' :
-                b.business_status === 'CLOSED_TEMPORARILY' ? '🟡 Временно затворено' :
-                '🟡 Затворено в момента';
+                b.business_status === 'CLOSED_PERMANENTLY' ? '?? ��������� ��������' :
+                b.business_status === 'CLOSED_TEMPORARILY' ? '?? �������� ���������' :
+                '?? ��������� � �������';
               return (
                 <TouchableOpacity
                   key={i}
@@ -2083,11 +1889,11 @@ const MapScreen: React.FC = () => {
                   onPress={() => {
                     if (b.needs_confirm) {
                       Alert.alert(
-                        '⚠️ Внимание',
-                        `${b.name}\n\n${statusMsg}\n\nЧертаем маршрут?`,
+                        '?? ��������',
+                        `${b.name}\n\n${statusMsg}\n\n������� �������?`,
                         [
-                          { text: 'Отказ', style: 'cancel' },
-                          { text: 'Да, продължи', onPress: doNavigate },
+                          { text: '�����', style: 'cancel' },
+                          { text: '��, ��������', onPress: doNavigate },
                         ],
                       );
                     } else {
@@ -2118,7 +1924,7 @@ const MapScreen: React.FC = () => {
                   {b.review_summary ? (
                     <Text style={styles.bizReviewSummary} numberOfLines={3}>{b.review_summary}</Text>
                   ) : null}
-                  <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
+                  <Text style={styles.bizGoTxt}>?? �������</Text>
                 </TouchableOpacity>
               );
             })}
@@ -2126,7 +1932,7 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
-      {/* ── Route options panel — shown at ROUTE_PREVIEW ── */}
+      {/* -- Route options panel � shown at ROUTE_PREVIEW -- */}
       {routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW' && (
         <RouteOptionsPanel
           routeOptions={routeOptions}
@@ -2148,7 +1954,7 @@ const MapScreen: React.FC = () => {
               type: 'FeatureCollection',
               features: alerts.map((a: any) => ({
                 type: 'Feature' as const,
-                properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
+                properties: { label: a.label ?? `?? +${a.delay_min} ���`, severity: a.severity },
                 geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
               })),
             } : null);
@@ -2162,11 +1968,11 @@ const MapScreen: React.FC = () => {
         />
       )}
 
-      {/* ── Road restriction sign popup ── */}
+      {/* -- Road restriction sign popup -- */}
       <RestrictionSign restriction={activeRestriction} />
 
 
-      {/* ── Wake word indicator: green mic dot when navigating (hands-free active) ── */}
+      {/* -- Wake word indicator: green mic dot when navigating (hands-free active) -- */}
       {navigating && (
         <View style={{
           position: 'absolute', top: insets.top + 8, right: 12,
@@ -2177,12 +1983,12 @@ const MapScreen: React.FC = () => {
         }}>
           <Icon name="microphone" size={14} color={wakeWordHeard ? '#fff' : '#4CAF50'} />
           <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
-            {wakeWordHeard ? 'Чух те!' : 'Колега...'}
+            {wakeWordHeard ? '��� ��!' : '������...'}
           </Text>
         </View>
       )}
 
-      {/* ── Bottom-left: HOS badge + speed + limit — anchored just above elevationChip ── */}
+      {/* -- Bottom-left: HOS badge + speed + limit � anchored just above elevationChip -- */}
       <NavigationHUD
         navigating={navigating}
         route={route}
@@ -2223,7 +2029,7 @@ const MapScreen: React.FC = () => {
       />
 
 
-      {/* ── Speed Camera HUD — visible when < 600 m from a camera ── */}
+      {/* -- Speed Camera HUD � visible when < 600 m from a camera -- */}
       {navigating && cameraAlert && (
         <Animated.View style={[
           styles.cameraHUD,
@@ -2237,16 +2043,16 @@ const MapScreen: React.FC = () => {
             }),
           },
         ]}>
-          <Text style={styles.cameraHUDIcon}>📷</Text>
+          <Text style={styles.cameraHUDIcon}>??</Text>
           <View>
-            <Text style={styles.cameraHUDDist}>{cameraAlert.dist} м</Text>
-            <Text style={styles.cameraHUDLabel}>КАМЕРА</Text>
+            <Text style={styles.cameraHUDDist}>{cameraAlert.dist} �</Text>
+            <Text style={styles.cameraHUDLabel}>������</Text>
           </View>
         </Animated.View>
       )}
 
 
-      {/* ── Tilt controls (3D pitch) ── */}
+      {/* -- Tilt controls (3D pitch) -- */}
       {!navigating && (
         <View style={[styles.tiltBtnCol, { bottom: insets.bottom + 100 }]}>
           <TouchableOpacity
@@ -2276,37 +2082,37 @@ const MapScreen: React.FC = () => {
 
 
 
-      {/* ── Visual Debug Overlay ── */}
+      {/* -- Visual Debug Overlay -- */}
       {debugMode && (
         <View style={[styles.debugOverlay, { top: insets.top + 120 }]}>
-          <Text style={styles.debugTitle}>▌ DEBUG</Text>
-          <Text style={styles.debugRow}>📍 Крачка: {currentStep + 1}</Text>
+          <Text style={styles.debugTitle}>� DEBUG</Text>
+          <Text style={styles.debugRow}>?? ������: {currentStep + 1}</Text>
           <Text style={styles.debugRow}>
-            📏 До завой: {distToTurn != null ? `${Math.round(distToTurn)} м` : '—'}
+            ?? �� �����: {distToTurn != null ? `${Math.round(distToTurn)} �` : '�'}
           </Text>
           <Text style={styles.debugRow}>
-            🛣️ EU знак: {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? '✅ ВИДИМ' : '⬜ скрит'}
+            ??? EU ����: {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? '? �����' : '? �����'}
           </Text>
           <Text style={styles.debugRow}>
-            🚦 Ленти: {displayLanes.length > 0 ? `${displayLanes.length} (${displayLanes.filter(l => l.active).length} активни)` : '—'}
+            ?? �����: {displayLanes.length > 0 ? `${displayLanes.length} (${displayLanes.filter(l => l.active).length} �������)` : '�'}
           </Text>
           <TouchableOpacity
             style={[styles.debugLaneTestBtn, testLanesMode && styles.debugLaneTestBtnOn]}
             onPress={() => setTestLanesMode(v => !v)}
           >
             <Text style={styles.debugLaneTestTxt}>
-              {testLanesMode ? '🚦 TEST LANES ON' : '🚦 Test Lanes'}
+              {testLanesMode ? '?? TEST LANES ON' : '?? Test Lanes'}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.debugRow}>⚡ Скорост: {speed} км/ч</Text>
-          <Text style={styles.debugRow}>🎯 Лимит: {speedLimit ?? '—'} км/ч</Text>
+          <Text style={styles.debugRow}>? �������: {speed} ��/�</Text>
+          <Text style={styles.debugRow}>?? �����: {speedLimit ?? '�'} ��/�</Text>
           <Text style={styles.debugRow}>
-            {simulating ? '🟢 SIM активен' : '🔴 GPS реален'}
+            {simulating ? '?? SIM �������' : '?? GPS ������'}
           </Text>
         </View>
       )}
 
-      {/* ── Chat FABs — hidden when route active ── */}
+      {/* -- Chat FABs � hidden when route active -- */}
       {!route && (
         <>
           {/* Gemini Chat FAB (bottom-left) */}
@@ -2322,7 +2128,7 @@ const MapScreen: React.FC = () => {
             }}
             activeOpacity={0.85}
           >
-            <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+            <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '?' : '??'}</Text>
             <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
           </TouchableOpacity>
 
@@ -2339,13 +2145,13 @@ const MapScreen: React.FC = () => {
             }}
             activeOpacity={0.85}
           >
-            <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
+            <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '?' : '??'}</Text>
             <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
           </TouchableOpacity>
         </>
       )}
 
-      {/* ── Recenter button — shows when user pans map during navigation ── */}
+      {/* -- Recenter button � shows when user pans map during navigation -- */}
       {navigating && !isTracking && (
         <TouchableOpacity
           style={[
@@ -2365,7 +2171,7 @@ const MapScreen: React.FC = () => {
         </TouchableOpacity>
       )}
 
-      {/* ── Chat Panels (GPT + Gemini) ── */}
+      {/* -- Chat Panels (GPT + Gemini) -- */}
       <ChatPanel
         gptChatOpen={gptChatOpen}
         geminiChatOpen={geminiChatOpen}
@@ -2388,7 +2194,7 @@ const MapScreen: React.FC = () => {
         onClose={() => { setGptChatOpen(false); setGeminiChatOpen(false); }}
       />
 
-      {/* ── Google Account Modal ── */}
+      {/* -- Google Account Modal -- */}
       <GoogleAccountModal
         visible={showAccountModal}
         onClose={() => setShowAccountModal(false)}
