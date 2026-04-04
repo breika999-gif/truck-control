@@ -18,6 +18,11 @@
 import { BACKEND_URL } from '../constants/config';
 import type { VehicleProfile } from '../types/vehicle';
 
+/** Global flag to track backend availability for UI banners */
+export let backendReachable = true;
+
+const updateReachable = (ok: boolean) => { backendReachable = ok; };
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
@@ -33,6 +38,7 @@ export interface POICard {
   distance_m: number;
   travel_time?: number; // seconds from current location
   detour_time?: number; // detour seconds
+  transparking_id?: string;
   // truck_stop fields
   paid?: boolean;
   showers?: boolean;
@@ -248,7 +254,12 @@ async function apiRequest<T>(
       throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
     }
 
-    return res.json() as Promise<T>;
+    const data = await res.json();
+    updateReachable(true);
+    return data as T;
+  } catch (err) {
+    updateReachable(false);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -258,8 +269,11 @@ async function apiRequest<T>(
 
 export async function fetchHealth(): Promise<BackendHealth | null> {
   try {
-    return await apiRequest<BackendHealth>('/api/health');
+    const data = await apiRequest<BackendHealth>('/api/health');
+    updateReachable(true);
+    return data;
   } catch {
+    updateReachable(false);
     return null;
   }
 }
@@ -267,9 +281,10 @@ export async function fetchHealth(): Promise<BackendHealth | null> {
 /** Fire-and-forget wake-up ping — call on app start to warm Railway/Render cold starts. */
 export async function pingBackend(): Promise<void> {
   try {
-    await fetch(`${BACKEND_URL}/api/health`, { method: 'GET' });
+    const res = await fetch(`${BACKEND_URL}/api/health`, { method: 'GET' });
+    updateReachable(res.ok);
   } catch {
-    // silent — just waking up the server
+    updateReachable(false);
   }
 }
 

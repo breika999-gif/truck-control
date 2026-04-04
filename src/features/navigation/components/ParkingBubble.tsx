@@ -112,22 +112,22 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.parkingBubbleWebBtn}
+          style={styles.pkWebBtn}
           activeOpacity={0.8}
           onPress={() => {
-            if (parking.website) {
+            if (parking.transparking_id) {
+              const cc = detectCountryCode(parking.lat, parking.lng);
+              openInBrowser(`https://truckerapps.eu/transparking/${cc}/map/poi/${parking.transparking_id}`);
+            } else if (parking.website) {
               openInBrowser(parking.website);
             } else {
               const cc = detectCountryCode(parking.lat, parking.lng);
-              const base = cc === 'eu'
-                ? 'https://truckerapps.eu/transparking/'
-                : `https://truckerapps.eu/transparking/${cc}/map/`;
-              openInBrowser(base);
+              openInBrowser(`https://truckerapps.eu/transparking/${cc}/map/`);
             }
           }}
         >
-          <Icon name="open-in-new" size={16} color={NEON} />
-          <Text style={styles.parkingBubbleWebBtnTxt}>Уеб</Text>
+          <Icon name="open-in-new" size={12} color={NEON} />
+          <Text style={styles.pkWebBtnTxt}>Уеб</Text>
         </TouchableOpacity>
 
         {parking.transparking_url && (

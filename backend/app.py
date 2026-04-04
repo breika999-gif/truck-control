@@ -1573,6 +1573,7 @@ out center 10;
         tp = _transparking_match(item["lat"], item["lng"])
         if tp:
             item["transparking_url"] = tp["url"]
+            item["transparking_id"] = tp["pointid"]
 
         if not item.get("website"):
             item["website"] = (
