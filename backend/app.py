@@ -1139,15 +1139,13 @@ def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
     try:
         url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
         params: dict = {
-            "key":      _TOMTOM_KEY,
-            "language": "bg-BG",
-            "limit":    limit,
-            "typeahead": "true",
+            "key":   _TOMTOM_KEY,
+            "limit": limit,
         }
         if lat and lng:
             params["lat"]    = lat
             params["lon"]    = lng
-            params["radius"] = 50000
+            params["radius"] = 100000
         r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
         results = []
@@ -1168,7 +1166,8 @@ def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
                 "distance_m": dist,
             })
         return results
-    except Exception:
+    except Exception as e:
+        app.logger.warning("TomTom search failed for %r: %s", query, e)
         return []
 
 
@@ -1212,10 +1211,8 @@ def _tool_navigate_to(destination: str) -> dict:
     try:
         url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(destination)}.json"
         params = {
-            "key":       _TOMTOM_KEY,
-            "language":  "bg-BG",
-            "limit":     1,
-            "typeahead": "true",
+            "key":   _TOMTOM_KEY,
+            "limit": 1,
         }
         r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
@@ -1226,17 +1223,17 @@ def _tool_navigate_to(destination: str) -> dict:
         res  = results[0]
         pos  = res.get("position", {})
         lat, lng = pos.get("lat"), pos.get("lon")
-        
+
         # Check for entry points (gates)
         entry_points = res.get("entryPoints", [])
         if entry_points:
-            # Use the first entry point as it's usually the main gate
             ep = entry_points[0]
             lat, lng = ep.get("position", {}).get("lat", lat), ep.get("position", {}).get("lon", lng)
 
         name = (res.get("poi") or {}).get("name") or res.get("address", {}).get("freeformAddress", destination)
         return {"destination": name, "coords": [lng, lat]}
     except Exception as exc:
+        app.logger.warning("TomTom navigate_to failed for %r: %s", destination, exc)
         return {"error": str(exc)}
 
 
@@ -2131,13 +2128,11 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
     try:
         url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
         params = {
-            "key":       _TOMTOM_KEY,
-            "language":  "bg-BG",
-            "limit":     1,
-            "typeahead": "true",
-            "lat":       lat,
-            "lon":       lng,
-            "radius":    200_000,
+            "key":    _TOMTOM_KEY,
+            "limit":  1,
+            "lat":    lat,
+            "lon":    lng,
+            "radius": 200_000,
         }
         r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
