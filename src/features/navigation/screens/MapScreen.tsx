@@ -340,7 +340,21 @@ const MapScreen: React.FC = () => {
 
   const {
     drivingSeconds, tachoSummary, setTachoSummary, resetSession, saveSession, hosViolations
-  } = useTacho(navigating, isDrivingRef, googleUserRef, speak, handleEndOfDay);
+  } = useTacho(
+    navigating, isDrivingRef, googleUserRef, speak, handleEndOfDay,
+    (remMin) => {
+      ttsSpeak(`Колега, остават ${remMin} минути каране. Търси паркинг...`);
+      if (userCoords) {
+        fetchNearbyParking(userCoords[1], userCoords[0], 20000)
+          .then(results => {
+            if (results.length > 0 && isMountedRef.current) {
+              setParkingResults(results.slice(0, 5));
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  );
   useLayoutEffect(() => { setTachoSummaryRef.current = setTachoSummary; });
 
   // 3. POI Search (Nearby & Along Route)

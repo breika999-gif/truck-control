@@ -14,6 +14,7 @@ export function useTacho(
   googleUserRef: React.MutableRefObject<GoogleAccount | null>,
   speak: (text: string) => void,
   onEndOfDay?: () => void,
+  onApproachingLimit?: (remainingMinutes: number) => void,
 ) {
   const [drivingSeconds, setDrivingSeconds] = useState(0);
   const [tachoSummary, setTachoSummary] = useState<TachoSummary | null>(null);
@@ -33,6 +34,8 @@ export function useTacho(
     w30: false, w10: false, limit: false,
     daily9h: false, daily10h: false, weekly56h: false
   });
+  const warned20Ref = useRef(false);
+  const warned10Ref = useRef(false);
   const isMountedRef = useRef(true);
   // WTD shift start: timestamp (ms) when the shift began (first activity after rest)
   const shiftStartRef = useRef<number | null>(null);
@@ -145,6 +148,20 @@ export function useTacho(
   useEffect(() => {
     if (!navigating || !tachoSummary) return;
     
+    // Remaining driving time in minutes
+    const remSeconds = Math.max(0, HOS_LIMIT_S - drivingSeconds);
+    const remMinutes = Math.floor(remSeconds / 60);
+
+    // Auto-search and alert at 20 and 10 minutes
+    if (remMinutes <= 20 && !warned20Ref.current && drivingSeconds > 0) {
+      warned20Ref.current = true;
+      if (onApproachingLimit) onApproachingLimit(20);
+    }
+    if (remMinutes <= 10 && !warned10Ref.current && drivingSeconds > 0) {
+      warned10Ref.current = true;
+      if (onApproachingLimit) onApproachingLimit(10);
+    }
+
     // 1. Continuous 4.5h rule
     if (drivingSeconds >= 14400 && !hosWarningRef.current.w30) {
       hosWarningRef.current.w30 = true;
@@ -159,7 +176,7 @@ export function useTacho(
     const dailyTotal = (tachoSummary.daily_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0));
     if (dailyTotal >= DAILY_LIMIT_9H && !hosWarningRef.current.daily9h) {
       hosWarningRef.current.daily9h = true;
-      const can10h = tachoSummary.daily_limit_h === 10; // Simple check if backend allowed 10h today
+      const can10h = tachoSummary.daily_limit_h === 10;
       if (can10h) {
         speak('Достигна 9 часа каране. Имаш още 1 час до максимума за днес.');
       } else {
@@ -169,20 +186,19 @@ export function useTacho(
 
     // 3. Weekly 56h limit
     const weeklyTotal = (tachoSummary.weekly_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0));
-    if (weeklyTotal >= 194400 && !hosWarningRef.current.weekly56h) { // 54h
+    if (weeklyTotal >= 194400 && !hosWarningRef.current.weekly56h) {
       hosWarningRef.current.weekly56h = true;
       speak('Внимание, наближаваш 56-часовия седмичен лимит.');
     }
 
     // 4. Reduced rests check
     if (tachoSummary.reduced_rests_remaining === 0 && !hosWarningRef.current.limit) {
-      // If we are at the end of a shift, remind about 11h
-      if (dailyTotal > DAILY_LIMIT_9H - 1800) { // 30 min before 9h
-         // We don't want to spam, so we use a ref or specific logic
+      if (dailyTotal > DAILY_LIMIT_9H - 1800) {
+        // placeholder — no spam
       }
     }
 
-  }, [drivingSeconds, navigating, speak, tachoSummary]);
+  }, [drivingSeconds, navigating, speak, tachoSummary, onApproachingLimit]);
 
   const resetSession = useCallback(() => {
     setDrivingSeconds(0);
@@ -195,6 +211,8 @@ export function useTacho(
       w30: false, w10: false, limit: false,
       daily9h: false, daily10h: false, weekly56h: false
     };
+    warned20Ref.current = false;
+    warned10Ref.current = false;
   }, []);
 
   const saveSession = useCallback(() => {
