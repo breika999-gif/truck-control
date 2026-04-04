@@ -149,9 +149,19 @@ export async function fetchRoute(
   truck?: TruckDimensions,
   departAt?: string,
   waypoints?: [number, number][],
+  signal?: AbortSignal,
 ): Promise<RouteResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timeoutId);
+      return null;
+    }
+    signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+
   try {
     const res = await fetch(`${BACKEND_URL}/api/routes/calculate`, {
       method: 'POST',

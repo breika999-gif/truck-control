@@ -828,11 +828,23 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
     return {"type": "LineString", "coordinates": coords}
 
 
+# Module-level in-memory cache for map-match results (L1, 5-minute TTL).
+# Keyed by route_hash; value is (result_coords, timestamp).
+_mm_mem_cache: dict = {}
+_MM_MEM_TTL_SEC = 300  # 5 minutes
+
+
 def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
     """Snap TomTom route coordinates to the Mapbox road network with caching.
 
-    - Uses SQLite persistent cache (TTL 7 days).
-    - If coords > max_points, only matches the first window, appends rest raw.
+    Cache layers:
+      L1 — in-memory dict (TTL 5 min) — avoids repeat calls within a session.
+      L2 — SQLite persistent cache (TTL 7 days) — survives server restarts.
+
+    NOTE: This is the only remaining Mapbox API call in the backend.
+    It uses the public token (pk.*) for the Map Matching v5 endpoint.
+    Mapbox Map Matching has no direct TomTom equivalent with the same
+    snapping behaviour, so it is kept but fully cached to minimise calls.
     """
     if not _MAPBOX_TOKEN or len(coords) < 2:
         return coords
@@ -842,6 +854,16 @@ def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
     route_sig = coords[:5] + coords[-5:] + [len(coords)]
     route_hash = hashlib.sha256(json.dumps(route_sig).encode()).hexdigest()
 
+    # L1 — in-memory
+    _now = time.time()
+    if route_hash in _mm_mem_cache:
+        cached_coords, cached_ts = _mm_mem_cache[route_hash]
+        if _now - cached_ts < _MM_MEM_TTL_SEC:
+            return cached_coords
+        else:
+            del _mm_mem_cache[route_hash]
+
+    # L2 — SQLite persistent cache
     try:
         with get_db() as db:
             row = db.execute(
@@ -851,7 +873,9 @@ def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
             if row:
                 created = datetime.fromisoformat(row["created_at"])
                 if (datetime.now(timezone.utc) - created.replace(tzinfo=timezone.utc)).days < 7:
-                    return json.loads(row["coords_json"])
+                    hit = json.loads(row["coords_json"])
+                    _mm_mem_cache[route_hash] = (hit, time.time())  # promote to L1
+                    return hit
     except Exception:
         pass
 
@@ -897,6 +921,7 @@ def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
     final_coords = snapped + tail if snapped else coords
 
     # ── 3. Save to Cache & Cleanup ──
+    _mm_mem_cache[route_hash] = (final_coords, time.time())  # L1
     try:
         with get_db() as db:
             db.execute(
@@ -1431,71 +1456,61 @@ def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> l
     results: list = []
     search_r = max(radius_m, 20_000)
     
-    def _search_mapbox(query):
-        try:
-            suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
-            params = {
-                "q":             query,
-                "access_token":  _MAPBOX_TOKEN,
-                "language":      "en,bg",
-                "types":         "poi",
-                "proximity":     f"{lng},{lat}",
-                "limit":         5,
-                "session_token": "truckai-park-session",
-            }
-            r = requests.get(suggest_url, params=params, timeout=5)
-            r.raise_for_status()
-            return r.json().get("suggestions", [])
-        except:
+    def _search_tomtom_parking(query):
+        """TomTom Fuzzy Search for truck parking queries — returns list of result dicts."""
+        if not _tomtom_ready:
             return []
-
-    def _retrieve_mapbox(mapbox_id):
         try:
-            ret_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
-            r = requests.get(
-                ret_url,
-                params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-park-session"},
-                timeout=4
-            )
+            url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
+            params = {
+                "key":       _TOMTOM_KEY,
+                "language":  "en-GB",
+                "limit":     5,
+                "typeahead": "true",
+                "lat":       lat,
+                "lon":       lng,
+                "radius":    max(search_r, 20_000),
+            }
+            r = requests.get(url, params=params, timeout=5)
             r.raise_for_status()
-            return r.json().get("features", [])
-        except:
+            return r.json().get("results", [])
+        except Exception:
             return []
 
     try:
-        queries = ("truck stop", "truck parking", "паркинг камион", "hgv parking")
+        queries = ("truck stop", "truck parking", "hgv parking", "паркинг камион")
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            all_suggestions = list(executor.map(_search_mapbox, queries))
-            
-            ids_to_fetch = []
-            seen_ids = set()
-            for suggestions in all_suggestions:
-                for s in suggestions:
-                    mid = s.get("mapbox_id")
-                    if mid and mid not in seen_ids:
-                        seen_ids.add(mid)
-                        ids_to_fetch.append(mid)
-            
-            # Fetch details in parallel
-            all_features = list(executor.map(_retrieve_mapbox, ids_to_fetch[:10]))
-            for features in all_features:
-                if not features: continue
-                feat = features[0]
-                c = feat["geometry"]["coordinates"]
-                el_lng, el_lat = c[0], c[1]
-                dist = round(_haversine_m(lat, lng, el_lat, el_lng))
-                props = feat.get("properties", {})
-                if dist > max(search_r * 15, 300_000): continue
-                results.append({
-                    "name":          props.get("name", "Truck Parking"),
-                    "lat":           el_lat,
-                    "lng":           el_lng,
-                    "paid":          False, "showers": False, "toilets": False, "wifi": False,
-                    "security":      False, "lighting": False, "capacity": None,
-                    "distance_m":    dist,
-                    "opening_hours": props.get("open_hours"),
-                    "phone":         props.get("phone"),
-                })
+            all_results = list(executor.map(_search_tomtom_parking, queries))
+
+            seen_coords: set = set()
+            for items in all_results:
+                for item in items:
+                    pos = item.get("position", {})
+                    el_lat = pos.get("lat")
+                    el_lng = pos.get("lon")
+                    if el_lat is None or el_lng is None:
+                        continue
+                    coord_key = (round(el_lat, 4), round(el_lng, 4))
+                    if coord_key in seen_coords:
+                        continue
+                    seen_coords.add(coord_key)
+                    dist = round(_haversine_m(lat, lng, el_lat, el_lng))
+                    if dist > max(search_r * 15, 300_000):
+                        continue
+                    poi   = item.get("poi") or {}
+                    addr  = item.get("address", {})
+                    name  = poi.get("name") or addr.get("freeformAddress", "Truck Parking")
+                    phone = (poi.get("phone") or "").strip() or None
+                    results.append({
+                        "name":          name,
+                        "lat":           el_lat,
+                        "lng":           el_lng,
+                        "paid":          False, "showers": False, "toilets": False, "wifi": False,
+                        "security":      False, "lighting": False, "capacity": None,
+                        "distance_m":    dist,
+                        "opening_hours": None,
+                        "phone":         phone,
+                    })
     except Exception:
         pass
 
@@ -1607,66 +1622,63 @@ def _tool_calculate_travel_matrix(
     points: list,           # [{"lat": float, "lng": float, "label": str}, ...]
     profile: str = "driving-traffic",
 ) -> dict:
-    """Mapbox Directions Matrix API — travel times/distances between N points.
+    """Haversine-based travel matrix — estimates distances and ETA for N points.
 
-    Used by GPT-4o to optimally order waypoints or estimate inter-stop travel.
+    Uses haversine distance with a truck average speed of 80 km/h.
+    No external API calls required.
     """
+    _TRUCK_SPEED_KMH = 80.0
+
     if len(points) < 2:
         return {"error": "Нужни са поне 2 точки"}
-    pts = points[:10]  # Mapbox free tier: max 10×10
+    pts = points[:10]
 
-    coords_str = ";".join(f"{p['lng']},{p['lat']}" for p in pts)
-    url = (
-        f"https://api.mapbox.com/directions-matrix/v1/mapbox/{profile}/{coords_str}"
-    )
-    try:
-        r = requests.get(
-            url,
-            params={"access_token": _MAPBOX_TOKEN, "annotations": "duration,distance"},
-            timeout=12,
-        )
-        r.raise_for_status()
-        data    = r.json()
-        durations = data.get("durations", [])
-        distances = data.get("distances", [])
+    # Build NxN distance matrix (km) using haversine
+    n = len(pts)
+    dist_matrix: list = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            if i == j:
+                row.append(0.0)
+            else:
+                d_m = _haversine_m(pts[i]["lat"], pts[i]["lng"], pts[j]["lat"], pts[j]["lng"])
+                row.append(round(d_m / 1000, 2))
+        dist_matrix.append(row)
 
-        pairs = []
-        for i, row in enumerate(durations):
-            for j, val in enumerate(row):
-                if i != j and val is not None:
-                    pairs.append({
-                        "from":        pts[i].get("label", f"Точка {i + 1}"),
-                        "to":          pts[j].get("label", f"Точка {j + 1}"),
-                        "duration_min": round(val / 60, 1),
-                        "distance_km": (
-                            round(distances[i][j] / 1000, 1)
-                            if distances and distances[i][j] is not None
-                            else None
-                        ),
-                    })
+    pairs = []
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                dist_km = dist_matrix[i][j]
+                pairs.append({
+                    "from":         pts[i].get("label", f"Точка {i + 1}"),
+                    "to":           pts[j].get("label", f"Точка {j + 1}"),
+                    "duration_min": round(dist_km / _TRUCK_SPEED_KMH * 60, 1),
+                    "distance_km":  dist_km,
+                })
 
-        # Nearest-neighbour order starting from first point (origin)
-        remaining = list(range(1, len(pts)))
-        order = [0]
-        while remaining:
-            last = order[-1]
-            nearest = min(remaining, key=lambda j: durations[last][j] or float("inf"))
-            order.append(nearest)
-            remaining.remove(nearest)
+    # Nearest-neighbour TSP heuristic starting from first point
+    remaining = list(range(1, n))
+    order = [0]
+    while remaining:
+        last = order[-1]
+        nearest = min(remaining, key=lambda j: dist_matrix[last][j])
+        order.append(nearest)
+        remaining.remove(nearest)
 
-        optimal_order = [pts[i].get("label", f"Точка {i + 1}") for i in order]
+    optimal_order = [pts[i].get("label", f"Точка {i + 1}") for i in order]
 
-        return {
-            "labels":        [p.get("label", f"Точка {i + 1}") for i, p in enumerate(pts)],
-            "pairs":         pairs,
-            "optimal_order": optimal_order,
-            "summary": (
-                f"Оптимален ред на спирките: {' → '.join(optimal_order)}. "
-                f"Изчислени {len(pairs)} двойки от {len(pts)} точки."
-            ),
-        }
-    except Exception as exc:
-        return {"error": str(exc)}
+    return {
+        "labels":        [p.get("label", f"Точка {i + 1}") for i, p in enumerate(pts)],
+        "pairs":         pairs,
+        "optimal_order": optimal_order,
+        "summary": (
+            f"Оптимален ред на спирките: {' → '.join(optimal_order)}. "
+            f"Изчислени {len(pairs)} двойки от {len(pts)} точки. "
+            f"(Приблизително, при средна скорост {int(_TRUCK_SPEED_KMH)} км/ч)"
+        ),
+    }
 
 
 def _tool_get_reachable_zone(
@@ -1675,57 +1687,36 @@ def _tool_get_reachable_zone(
     minutes: int = 30,
     profile: str = "driving-traffic",
 ) -> dict:
-    """Mapbox Isochrone API — area reachable within *minutes* from current position.
+    """Haversine-based reachable zone estimate — no external API call.
 
-    GPT-4o uses this when HOS time is limited — 'намери паркинг за 20 мин.'
+    Approximates the area reachable within *minutes* using a truck average
+    speed of 80 km/h. Returns a bounding box and radius suitable for nearby
+    POI searches.
     """
-    minutes = max(5, min(minutes, 60))   # Mapbox free: 1-60 min
-    url = (
-        f"https://api.mapbox.com/isochrone/v1/mapbox/{profile}"
-        f"/{lng},{lat}"
-    )
-    try:
-        r = requests.get(
-            url,
-            params={
-                "access_token":     _MAPBOX_TOKEN,
-                "contours_minutes": str(minutes),
-                "polygons":         "true",
-                "denoise":          "1",
-            },
-            timeout=12,
-        )
-        r.raise_for_status()
-        features = r.json().get("features", [])
-        if not features:
-            return {"error": "Няма данни за достижимата зона"}
+    _TRUCK_SPEED_KMH = 80.0
+    minutes = max(5, min(minutes, 120))
+    approx_radius_km = round(_TRUCK_SPEED_KMH * (minutes / 60), 1)
 
-        coords = features[0]["geometry"]["coordinates"][0]  # outer ring
-        lats_  = [c[1] for c in coords]
-        lngs_  = [c[0] for c in coords]
+    # 1 degree latitude ≈ 111 km; longitude degree varies with cos(lat)
+    import math
+    lat_delta = approx_radius_km / 111.0
+    lng_delta = approx_radius_km / (111.0 * math.cos(math.radians(lat)))
 
-        # Approximate reachable radius from bounding box
-        approx_radius_km = round(
-            max(max(lats_) - min(lats_), max(lngs_) - min(lngs_)) * 111 / 2, 1
-        )
-
-        return {
-            "center":           {"lat": lat, "lng": lng},
-            "minutes":          minutes,
-            "approx_radius_km": approx_radius_km,
-            "bbox": {
-                "min_lat": round(min(lats_), 4),
-                "max_lat": round(max(lats_), 4),
-                "min_lng": round(min(lngs_), 4),
-                "max_lng": round(max(lngs_), 4),
-            },
-            "summary": (
-                f"За {minutes} мин. шофиране можеш да достигнеш зона с "
-                f"приблизителен радиус ~{approx_radius_km} км около теб."
-            ),
-        }
-    except Exception as exc:
-        return {"error": str(exc)}
+    return {
+        "center":           {"lat": lat, "lng": lng},
+        "minutes":          minutes,
+        "approx_radius_km": approx_radius_km,
+        "bbox": {
+            "min_lat": round(lat - lat_delta, 4),
+            "max_lat": round(lat + lat_delta, 4),
+            "min_lng": round(lng - lng_delta, 4),
+            "max_lng": round(lng + lng_delta, 4),
+        },
+        "summary": (
+            f"За {minutes} мин. шофиране при средна скорост {int(_TRUCK_SPEED_KMH)} км/ч "
+            f"можеш да достигнеш зона с приблизителен радиус ~{approx_radius_km} км около теб."
+        ),
+    }
 
 
 def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> dict:
@@ -2035,36 +2026,56 @@ def _enrich_business_with_places(biz: dict) -> dict:
 def _tool_check_traffic(
     origin_lng: float, origin_lat: float, dest_lng: float, dest_lat: float
 ) -> dict:
+    """Check traffic using TomTom Routing API with traffic model.
+
+    Falls back to haversine ETA estimate (80 km/h) if TomTom is unavailable.
+    """
+    _TRUCK_SPEED_KMH = 80.0
+
+    def _haversine_eta() -> dict:
+        dist_km = _haversine_m(origin_lat, origin_lng, dest_lat, dest_lng) / 1000
+        eta_min = round(dist_km / _TRUCK_SPEED_KMH * 60, 1)
+        return {
+            "has_delay":    False,
+            "delay_min":    0,
+            "duration_min": eta_min,
+            "alternative_available": False,
+            "note": "Приблизително (без трафик данни)",
+        }
+
+    if not _tomtom_ready:
+        return _haversine_eta()
+
     try:
         url = (
-            f"https://api.mapbox.com/directions/v5/mapbox/driving-traffic"
-            f"/{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
+            f"https://api.tomtom.com/routing/1/calculateRoute"
+            f"/{origin_lat},{origin_lng}:{dest_lat},{dest_lng}/json"
         )
         params = {
-            "access_token": _MAPBOX_TOKEN,
-            "alternatives": "true",
-            "overview":     "simplified",
+            "key":          _TOMTOM_KEY,
+            "routeType":    "fastest",
+            "traffic":      "true",
+            "travelMode":   "truck",
+            "vehicleMaxSpeed": 90,
         }
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         routes = r.json().get("routes", [])
         if not routes:
-            return {"error": "Няма маршрут"}
+            return _haversine_eta()
 
-        primary  = routes[0]
-        duration = primary.get("duration", 0)
-        typical  = primary.get("duration_typical", duration)
+        summary  = routes[0].get("summary", {})
+        duration = summary.get("travelTimeInSeconds", 0)
+        typical  = summary.get("historicTrafficTravelTimeInSeconds", duration)
         delay    = max(0, duration - typical)
 
-        result: dict = {
+        return {
             "has_delay":    delay > 1200,
             "delay_min":    round(delay / 60),
             "duration_min": round(duration / 60),
-            "alternative_available": len(routes) > 1 and delay > 1200,
+            "distance_km":  round(summary.get("lengthInMeters", 0) / 1000, 1),
+            "alternative_available": False,
         }
-        if result["alternative_available"]:
-            result["alternative_duration_min"] = round(routes[1]["duration"] / 60)
-        return result
     except Exception as exc:
         return {"error": str(exc)}
 
@@ -2114,40 +2125,39 @@ out 10;
 
 
 def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
-    """Search for a POI/place and return it as an intermediate waypoint."""
+    """Search for a POI/place via TomTom Fuzzy Search and return it as a waypoint."""
+    if not _tomtom_ready:
+        return {"error": "TomTom API не е конфигуриран"}
     try:
-        suggest_url = "https://api.mapbox.com/search/searchbox/v1/suggest"
+        url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
         params = {
-            "q":             query,
-            "access_token":  _MAPBOX_TOKEN,
-            "language":      "bg,en",
-            "types":         "poi,address,place",
-            "proximity":     f"{lng},{lat}",
-            "limit":         1,
-            "session_token": "truckai-waypoint-session",
+            "key":       _TOMTOM_KEY,
+            "language":  "bg-BG",
+            "limit":     1,
+            "typeahead": "true",
+            "lat":       lat,
+            "lon":       lng,
+            "radius":    200_000,
         }
-        r = requests.get(suggest_url, params=params, timeout=8)
+        r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
-        suggestions = r.json().get("suggestions", [])
-        if not suggestions:
+        results = r.json().get("results", [])
+        if not results:
             return {"error": f"Не намерих '{query}'"}
 
-        mapbox_id = suggestions[0].get("mapbox_id")
-        name = suggestions[0].get("name", query)
-
-        retrieve_url = f"https://api.mapbox.com/search/searchbox/v1/retrieve/{mapbox_id}"
-        r2 = requests.get(
-            retrieve_url,
-            params={"access_token": _MAPBOX_TOKEN, "session_token": "truckai-waypoint-session"},
-            timeout=8,
-        )
-        r2.raise_for_status()
-        features = r2.json().get("features", [])
-        if not features:
+        item    = results[0]
+        pos     = item.get("position", {})
+        item_lat = pos.get("lat")
+        item_lng = pos.get("lon")
+        if item_lat is None or item_lng is None:
             return {"error": "Не намерих координати"}
 
-        coords = features[0]["geometry"]["coordinates"]  # [lng, lat]
-        return {"name": name, "coords": coords}
+        poi  = item.get("poi") or {}
+        addr = item.get("address", {})
+        name = poi.get("name") or addr.get("freeformAddress", query)
+
+        # TomTom returns lat/lng; frontend expects [lng, lat] (GeoJSON order)
+        return {"name": name, "coords": [item_lng, item_lat]}
     except Exception as exc:
         return {"error": str(exc)}
 

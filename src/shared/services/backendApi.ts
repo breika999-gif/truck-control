@@ -31,6 +31,8 @@ export interface POICard {
   lat: number;
   lng: number;
   distance_m: number;
+  travel_time?: number; // seconds from current location
+  detour_time?: number; // detour seconds
   // truck_stop fields
   paid?: boolean;
   showers?: boolean;
@@ -115,6 +117,7 @@ export interface ChatResponse {
   action?: MapAction;
   reply?: string; // kept for backward compat — use action.message instead
   app_intent?: AppIntent;
+  remember?: Array<{ category: string; text: string }>;
 }
 
 export interface ChatContext {
@@ -124,6 +127,14 @@ export interface ChatContext {
   speed_kmh?: number;
   profile?: VehicleProfile;
   last_message?: string;
+  // WTD (Working Time Directive) — raw facts, Gemini does the math
+  shift_start_iso?: string;         // когато е тръгнал (ISO timestamp)
+  reduced_rests_remaining?: number; // оставащи намалени почивки
+  daily_driving_limit_h?: number;   // 9 или 10 часа каране
+  tacho_log?: object;               // daily activity log from TachoEventLog
+  tacho_week?: object;              // weekly/biweekly EU HOS summary from TachoEventLog
+  user_memory?: string[];           // driver preferences/facts remembered across conversations
+  driver_habits?: object | null;    // last-14-days driving pattern stats
 }
 
 /** Backward-compat alias — parking cards now use POICard */
@@ -188,6 +199,8 @@ export interface TachoSummary {
   weekly_limit_h: number;
   date: string;
   week_start: string;
+  /** WTD (Working Time Directive) shift tracking — raw fact only, Gemini computes the rest */
+  shift_start_iso?: string;   // ISO timestamp of first activity after 9h+ rest
 }
 
 export interface ProximityAlerts {
@@ -248,6 +261,15 @@ export async function fetchHealth(): Promise<BackendHealth | null> {
     return await apiRequest<BackendHealth>('/api/health');
   } catch {
     return null;
+  }
+}
+
+/** Fire-and-forget wake-up ping — call on app start to warm Railway/Render cold starts. */
+export async function pingBackend(): Promise<void> {
+  try {
+    await fetch(`${BACKEND_URL}/api/health`, { method: 'GET' });
+  } catch {
+    // silent — just waking up the server
   }
 }
 

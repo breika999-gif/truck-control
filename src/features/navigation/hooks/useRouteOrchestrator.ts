@@ -163,7 +163,7 @@ export function useRouteOrchestrator({
           ? { avoidUnpaved: true, adr_tunnel: 'none' as const }
           : undefined;
 
-      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg);
+      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg, signal);
       if (!isMountedRef.current) return; // unmount guard
 
       setBackendOnline(!!result);
@@ -241,6 +241,7 @@ export function useRouteOrchestrator({
         if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
       }
     } catch (err) {
+      setBackendOnline(false);
       if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
     } finally {
       // REROUTING → NAVIGATING; SEARCHING → ROUTE_PREVIEW

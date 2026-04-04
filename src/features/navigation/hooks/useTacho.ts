@@ -1,28 +1,41 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleAccount } from '../../../shared/services/accountManager';
 import { saveTachoSession, fetchTachoSummary, TachoSummary } from '../../../shared/services/backendApi';
+import { checkHosViolations, HosViolation, getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
+import { recordDailyStats } from '../utils/driverHabits';
 
 const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
 const DAILY_LIMIT_9H = 32400; // 9h
 const DAILY_LIMIT_10H = 36000; // 10h
 
 export function useTacho(
-  navigating: boolean, 
+  navigating: boolean,
   isDrivingRef: React.MutableRefObject<boolean>,
   googleUserRef: React.MutableRefObject<GoogleAccount | null>,
-  speak: (text: string) => void
+  speak: (text: string) => void,
+  onEndOfDay?: () => void,
 ) {
   const [drivingSeconds, setDrivingSeconds] = useState(0);
   const [tachoSummary, setTachoSummary] = useState<TachoSummary | null>(null);
-  
+  const [hosViolations, setHosViolations] = useState<HosViolation[]>([]);
+
   const drivingSecondsRef = useRef(0);
   const sessionStartRef = useRef<string | null>(null);
   const hosIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hosWarningRef = useRef({ 
+  const hosCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endOfDayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track current activity for end-of-day detection (0=REST,1=AVAIL,2=WORK,3=DRIVING)
+  const currentActivityRef = useRef<number>(-1);
+  // Track first drive time for driverHabits
+  const firstDriveTimeRef = useRef<number | null>(null);
+  const lastStopTimeRef = useRef<number | null>(null);
+  const hosWarningRef = useRef({
     w30: false, w10: false, limit: false,
-    daily9h: false, daily10h: false, weekly56h: false 
+    daily9h: false, daily10h: false, weekly56h: false
   });
   const isMountedRef = useRef(true);
+  // WTD shift start: timestamp (ms) when the shift began (first activity after rest)
+  const shiftStartRef = useRef<number | null>(null);
 
   // Sync ref
   useEffect(() => { drivingSecondsRef.current = drivingSeconds; }, [drivingSeconds]);
@@ -60,6 +73,73 @@ export function useTacho(
       if (hosIntervalRef.current) clearInterval(hosIntervalRef.current);
     };
   }, [navigating, isDrivingRef]);
+
+  // ── Offline HOS violation check every 60 seconds ──
+  useEffect(() => {
+    if (hosCheckIntervalRef.current) clearInterval(hosCheckIntervalRef.current);
+    hosCheckIntervalRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+      checkHosViolations().then(result => {
+        if (isMountedRef.current) setHosViolations(result);
+      }).catch(() => {/* silent */});
+    }, 60_000);
+    return () => {
+      if (hosCheckIntervalRef.current) clearInterval(hosCheckIntervalRef.current);
+    };
+  }, []);
+
+  // ── WTD shift start detection ──
+  // Record shift start when driving first begins (drivingSeconds goes from 0 → positive)
+  useEffect(() => {
+    if (drivingSeconds > 0 && shiftStartRef.current === null) {
+      shiftStartRef.current = Date.now();
+    }
+  }, [drivingSeconds]);
+
+  // ── Track first drive time for driverHabits ──
+  useEffect(() => {
+    if (drivingSeconds > 0 && firstDriveTimeRef.current === null) {
+      firstDriveTimeRef.current = Date.now();
+    }
+  }, [drivingSeconds]);
+
+  // ── End-of-day detection: start 5-min timer when navigation stops ──
+  useEffect(() => {
+    if (navigating) {
+      // Cancel any pending end-of-day timer while still navigating
+      if (endOfDayTimerRef.current) {
+        clearTimeout(endOfDayTimerRef.current);
+        endOfDayTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Not navigating — if we have driven seconds today, start the end-of-day countdown
+    if (drivingSecondsRef.current > 0) {
+      if (endOfDayTimerRef.current) clearTimeout(endOfDayTimerRef.current);
+      endOfDayTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        lastStopTimeRef.current = Date.now();
+        // Record daily stats for driver habits
+        if (firstDriveTimeRef.current !== null) {
+          const today = new Date().toISOString().slice(0, 10);
+          const firstDriveHour = new Date(firstDriveTimeRef.current).getHours();
+          const lastStopHour = new Date().getHours();
+          const totalDrivenMin = Math.round(drivingSecondsRef.current / 60);
+          recordDailyStats({ date: today, firstDriveHour, lastStopHour, totalDrivenMin }).catch(() => {/* silent */});
+        }
+        if (onEndOfDay) onEndOfDay();
+      }, 5 * 60 * 1000); // 5 minutes
+    }
+
+    return () => {
+      if (endOfDayTimerRef.current) {
+        clearTimeout(endOfDayTimerRef.current);
+        endOfDayTimerRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigating]);
 
   // ── Expert EU 561/2006 voice warnings ──
   useEffect(() => {
@@ -107,9 +187,13 @@ export function useTacho(
   const resetSession = useCallback(() => {
     setDrivingSeconds(0);
     sessionStartRef.current = new Date().toISOString();
-    hosWarningRef.current = { 
+    // Record shift start if not already set
+    if (shiftStartRef.current === null) {
+      shiftStartRef.current = Date.now();
+    }
+    hosWarningRef.current = {
       w30: false, w10: false, limit: false,
-      daily9h: false, daily10h: false, weekly56h: false 
+      daily9h: false, daily10h: false, weekly56h: false
     };
   }, []);
 
@@ -129,12 +213,22 @@ export function useTacho(
     }
   }, [googleUserRef]);
 
+  // ── Attach shift_start_iso (raw fact) to tachoSummary ──
+  const shiftStartIso = shiftStartRef.current
+    ? new Date(shiftStartRef.current).toISOString()
+    : undefined;
+
+  const tachoSummaryWithShift: TachoSummary | null = tachoSummary
+    ? { ...tachoSummary, shift_start_iso: shiftStartIso }
+    : null;
+
   return {
     drivingSeconds,
-    tachoSummary,
+    tachoSummary: tachoSummaryWithShift,
     setTachoSummary,
     resetSession,
     saveSession,
     HOS_LIMIT_S,
+    hosViolations,
   };
 }

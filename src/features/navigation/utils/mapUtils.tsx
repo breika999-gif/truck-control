@@ -25,9 +25,24 @@ export const ICON_CAMERA        = require('../../../shared/assets/icon_camera.pn
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_DESTINATION   = require('../../../shared/assets/icon_destination.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_START         = require('../../../shared/assets/icon_start.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_WAYPOINT      = require('../../../shared/assets/icon_waypoint.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_BIZ           = require('../../../shared/assets/icon_biz.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_NO_OVERTAKING = require('../../../shared/assets/icon_no_overtaking.png') as number;
+
+// ── Maneuver arrow icons (TomTom originals) ───────────────────────────────────
+export const ARROW_STRAIGHT      = require('../../../shared/assets/maneuver/arrow_straight.png') as number;
+export const ARROW_RIGHT         = require('../../../shared/assets/maneuver/arrow_right.png') as number;
+export const ARROW_LEFT          = require('../../../shared/assets/maneuver/arrow_left.png') as number;
+export const ARROW_SLIGHT_RIGHT  = require('../../../shared/assets/maneuver/arrow_slight_right.png') as number;
+export const ARROW_SLIGHT_LEFT   = require('../../../shared/assets/maneuver/arrow_slight_left.png') as number;
+export const ARROW_SHARP_RIGHT   = require('../../../shared/assets/maneuver/arrow_sharp_right.png') as number;
+export const ARROW_SHARP_LEFT    = require('../../../shared/assets/maneuver/arrow_sharp_left.png') as number;
+export const ARROW_UTURN         = require('../../../shared/assets/maneuver/arrow_uturn.png') as number;
+export const ARROW_ROUNDABOUT    = require('../../../shared/assets/maneuver/arrow_roundabout.png') as number;
 
 // ── Camera padding constants ──────────────────────────────────────────────────
 export const NAV_PADDING: CameraPadding  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
@@ -107,13 +122,48 @@ export function ttsSpeak(text: string): void {
   try { Tts.speak(text); } catch { /* TTS engine not initialised */ }
 }
 
+// ── Truck speed limits lookup ─────────────────────────────────────────────────
+
+/** Truck speed limits (km/h) by country code and road type.
+ *  road_type: 'motorway' | 'trunk' | 'primary' | 'other'
+ */
+const TRUCK_LIMITS: Record<string, Record<string, number>> = {
+  BG:      { motorway: 100, trunk: 80,  primary: 70, other: 50 },
+  DE:      { motorway: 80,  trunk: 80,  primary: 60, other: 50 },
+  FR:      { motorway: 90,  trunk: 80,  primary: 80, other: 50 },
+  RO:      { motorway: 110, trunk: 90,  primary: 80, other: 50 },
+  TR:      { motorway: 90,  trunk: 80,  primary: 70, other: 50 },
+  GR:      { motorway: 80,  trunk: 80,  primary: 70, other: 50 },
+  RS:      { motorway: 80,  trunk: 80,  primary: 70, other: 50 },
+  AT:      { motorway: 80,  trunk: 70,  primary: 60, other: 50 },
+  HU:      { motorway: 80,  trunk: 70,  primary: 70, other: 50 },
+  DEFAULT: { motorway: 80,  trunk: 70,  primary: 60, other: 50 },
+};
+
+/** Return the legal truck speed limit (km/h) for a given country + road type. */
+export function getTruckSpeedLimit(countryCode: string, roadType: string): number {
+  const country = TRUCK_LIMITS[countryCode.toUpperCase()] ?? TRUCK_LIMITS.DEFAULT;
+  return country[roadType] ?? (country.other ?? 50);
+}
+
 /** Convert a raw backend string to clean chat-bubble text. */
 export function parseBubbleText(raw: string): string {
   // Strip "action:xxx\n" prefix that GPT sometimes prepends
-  const s = raw.trim().replace(/^action:\w+\n/, '');
-  if (!s.startsWith('{')) return s;
-  try {
-    const obj = JSON.parse(s) as Record<string, unknown>;
+  let s = raw.trim().replace(/^action:\w+\n/, '');
+
+  // Try to parse as JSON (with or without outer braces)
+  const tryParse = (str: string): Record<string, unknown> | null => {
+    try { return JSON.parse(str) as Record<string, unknown>; } catch { return null; }
+  };
+
+  let obj = s.startsWith('{') ? tryParse(s) : null;
+
+  // Gemini sometimes returns JSON content without outer braces: "action": "message", "text": "..."
+  if (!obj && s.includes('"action"') && s.includes('"text"')) {
+    obj = tryParse(`{${s}}`);
+  }
+
+  if (obj) {
     const explicit = String(obj.text ?? obj.message ?? obj.reply ?? '').trim();
     if (explicit) return explicit;
     const dest = String(obj.destination ?? 'дестинацията');
@@ -122,11 +172,11 @@ export function parseBubbleText(raw: string): string {
       case 'show_routes': return `Варианти за маршрут до ${dest}.`;
       case 'show_pois':   return `Търся наблизо…`;
       case 'tachograph':  return 'Проверка на тахографа.';
-      default:            return '';
+      default:            return s;
     }
-  } catch {
-    return s;
   }
+
+  return s;
 }
 
 /** Build clean, emoji-free TTS confirmation for each GPT action. */

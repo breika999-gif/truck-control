@@ -9,6 +9,8 @@ export interface TruckPOI {
   coordinates: [number, number];
   address: string;
   brand?: string;
+  detourTime?: number; // detour time in seconds
+  travelTime?: number; // travel time from current location in seconds
 }
 
 export const POI_META: Record<POICategory, { emoji: string; label: string; iconName: string }> = {
@@ -63,6 +65,8 @@ export async function searchNearbyPOI(
       coordinates: [r.position.lon, r.position.lat] as [number, number],
       address:     r.address?.freeformAddress ?? '',
       brand:       r.poi?.brands?.[0]?.name,
+      detourTime:  r.detourTime,
+      travelTime:  r.travelTime,
     }));
   } catch {
     return [];
@@ -126,6 +130,8 @@ export async function searchAlongRoute(
       coordinates: [r.position.lon, r.position.lat] as [number, number],
       address:     r.address?.freeformAddress ?? '',
       brand:       r.poi?.brands?.[0]?.name,
+      detourTime:  r.detourTime,
+      travelTime:  r.travelTime,
     }));
   } catch {
     return [];

@@ -12,6 +12,7 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
 import { BACKEND_URL } from '../../../shared/constants/config';
+import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
 
 async function requestBlePermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
@@ -34,8 +35,11 @@ export interface TachoBleState {
   isConnected: boolean;
 }
 
+const REST_THROTTLE_MS = 30_000; // 30 seconds between updates during REST
+
 export function useTachoBluetooth() {
   const serviceRef = useRef<TachoBleService | null>(null);
+  const lastActiveUpdateRef = useRef<number>(0);
 
   const [state, setState] = useState<TachoBleState>({
     status: 'idle',
@@ -45,9 +49,10 @@ export function useTachoBluetooth() {
     isConnected: false,
   });
 
-  // ── Init BLE service once ──────────────────────────────────────────
+  // ── Init BLE service once + clean old log entries ─────────────────
   useEffect(() => {
     serviceRef.current = new TachoBleService();
+    cleanup();
     return () => {
       serviceRef.current?.destroy();
     };
@@ -63,9 +68,20 @@ export function useTachoBluetooth() {
     }));
   }, []);
 
-  // ── Live data callback — update state + send to backend ───────────
+  // ── Live data callback — update state + log event + send to backend
   const handleData = useCallback((data: TachoLiveData) => {
+    const isResting = data.activityCode === 0; // 0 = REST
+    if (isResting) {
+      const now = Date.now();
+      if (now - lastActiveUpdateRef.current < REST_THROTTLE_MS) return; // skip — battery saving
+    }
+    lastActiveUpdateRef.current = Date.now();
+
     setState(prev => ({ ...prev, liveData: data }));
+
+    // Persist activity change to local event log (only on change)
+    logEvent(data.activityCode as ActivityCode, data.drivingTimeLeftMin, data.dailyDrivenMin)
+      .catch(() => {/* silent */});
 
     // Push live context to backend → Gemini system prompt gets updated
     _sendToBackend(data).catch(() => {/* silent — не блокираме UI */});

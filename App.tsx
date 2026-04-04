@@ -16,6 +16,8 @@ import TruckBansScreen from './src/features/navigation/screens/TruckBansScreen';
 import TruckParkingScreen from './src/features/navigation/screens/TruckParkingScreen';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
+// Disable telemetry to prevent billing for Search Box sessions
+if (Mapbox.setTelemetryEnabled) Mapbox.setTelemetryEnabled(false);
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 

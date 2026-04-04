@@ -12,6 +12,7 @@ import {
 import { colors, spacing, typography } from '../../../shared/constants/theme';
 import {
   suggestPlaces,
+  suggestPlacesGoogle,
   retrievePlace,
   type GeoPlace,
   type SearchSuggestion,
@@ -91,7 +92,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     setOriginQuery(s.name);
     setOriginFocused(false);
     Keyboard.dismiss();
-    const place = await retrievePlace(s.mapbox_id);
+    const place = await retrievePlace(s.place_id);
     if (place) { setOriginLabel(place.text); onOriginChange?.(place); }
   }, [onOriginChange]);
 
@@ -130,9 +131,14 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
         setSuggestions([]);
       }, SEARCH_TIMEOUT_MS);
 
-      suggestPlaces(text, ctrl.signal).then(results => {
+      suggestPlaces(text, ctrl.signal).then(async results => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        setSuggestions(results);
+        if (results.length === 0) {
+          const googleResults = await suggestPlacesGoogle(text, ctrl.signal);
+          setSuggestions(googleResults);
+        } else {
+          setSuggestions(results);
+        }
         setLoading(false);
       });
     }, DEBOUNCE_MS);
@@ -145,7 +151,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     Keyboard.dismiss();
     setRetrieving(true);
     try {
-      const place = await retrievePlace(s.mapbox_id);
+      const place = await retrievePlace(s.place_id);
       if (place) onSelect(place);
     } finally {
       setRetrieving(false);
@@ -194,7 +200,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
             <FlatList
               style={styles.dropdown}
               data={originSuggestions}
-              keyExtractor={(item) => item.mapbox_id}
+              keyExtractor={(item) => item.place_id}
               keyboardShouldPersistTaps="handled"
               scrollEnabled
               nestedScrollEnabled
@@ -246,7 +252,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
         <FlatList
           style={styles.dropdown}
           data={suggestions}
-          keyExtractor={(item) => item.mapbox_id}
+          keyExtractor={(item) => item.place_id}
           keyboardShouldPersistTaps="handled"
           scrollEnabled
           nestedScrollEnabled
@@ -255,9 +261,12 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
               style={styles.resultItem}
               onPress={() => handleSelect(item)}
             >
-              <Text style={styles.resultText} numberOfLines={1}>
-                {item.name}
-              </Text>
+              <View style={styles.resultNameRow}>
+                <Text style={styles.resultText} numberOfLines={1}>{item.name}</Text>
+                {item.feature_type === 'google' && (
+                  <Text style={styles.googleBadge}>G</Text>
+                )}
+              </View>
               {(item.full_address ?? item.place_formatted) ? (
                 <Text style={styles.resultSubtext} numberOfLines={1}>
                   {item.full_address ?? item.place_formatted}
@@ -357,5 +366,20 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(0,191,255,0.15)',
     marginHorizontal: spacing.md,
+  },
+  resultNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  googleBadge: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    color: '#4285F4',
+    backgroundColor: 'rgba(66,133,244,0.12)',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    overflow: 'hidden',
   },
 });

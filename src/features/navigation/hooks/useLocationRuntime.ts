@@ -70,6 +70,8 @@ export const useLocationRuntime = ({
   const [gpsReady, setGpsReady] = useState(false);
   const [speed, setSpeed] = useState(0);
   const isDrivingRef = useRef(false);
+  const lastRestrictionCoordsRef = useRef<[number, number] | null>(null);
+  const lastSpeedLimitCoordsRef = useRef<[number, number] | null>(null);
 
   const isSimulatingRef = useRef(false);
   const simIndexRef = useRef(0);
@@ -126,9 +128,14 @@ export const useLocationRuntime = ({
           if (!isNav || !cur) return;
 
           const profR = profileRef.current;
-          const restrictInterval = kmh < 50 ? 45_000 : kmh < 100 ? 30_000 : 20_000;
+          const restrictInterval = kmh < 50 ? 60_000 : kmh < 100 ? 90_000 : 120_000;
           if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
+            if (lastRestrictionCoordsRef.current) {
+              const distMoved = haversineMeters([tqLng, tqLat], lastRestrictionCoordsRef.current);
+              if (distMoved < 300) { /* not moved enough — skip */ return; }
+            }
             lastRestrictionRef.current = tqNow;
+            lastRestrictionCoordsRef.current = [tqLng, tqLat];
             fetchNearbyRestrictions(tqLng, tqLat, 800).then(r => {
               if (!isMountedRef.current) return;
               if (r.hasTunnel) {
@@ -196,11 +203,16 @@ export const useLocationRuntime = ({
     if (navigating || !userCoords) return;
     const interval = setInterval(async () => {
       const now = Date.now();
-      if (now - speedLimitFetchRef.current < 10_000) return;
+      if (now - speedLimitFetchRef.current < 60_000) return;
+      if (lastSpeedLimitCoordsRef.current) {
+        const dist = haversineMeters(userCoords, lastSpeedLimitCoordsRef.current);
+        if (dist < 100) return; // not moved enough — skip API call
+      }
       speedLimitFetchRef.current = now;
+      lastSpeedLimitCoordsRef.current = userCoords;
       const limit = await fetchSpeedLimitAtPoint(userCoords[0], userCoords[1]);
       if (isMountedRef.current) setSpeedLimit(limit);
-    }, 10_000);
+    }, 60_000);
     return () => clearInterval(interval);
   }, [navigating, userCoords, setSpeedLimit, isMountedRef]);
 

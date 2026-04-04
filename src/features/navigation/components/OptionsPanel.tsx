@@ -348,8 +348,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 icon="parking"
                 label="Паркинги на живо"
                 onPress={() => {
+                  navigation.navigate('TruckParking', { userCoords: userCoords || undefined });
                   close();
-                  openInBrowser('https://truckerapps.eu/transparking/pl/map/');
                 }}
                 iconColor="#4FC3F7"
                 iconBg="rgba(79,195,247,0.15)"

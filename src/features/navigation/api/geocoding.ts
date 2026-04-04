@@ -1,4 +1,4 @@
-import { TOMTOM_API_KEY, MAP_CENTER } from '../../../shared/constants/config';
+import { TOMTOM_API_KEY, MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
 
 export interface GeoPlace {
   id: string;
@@ -9,7 +9,7 @@ export interface GeoPlace {
 
 export interface SearchSuggestion {
   name: string;
-  mapbox_id: string;          // reused as opaque ID — stores TomTom result id
+  place_id: string;          // opaque ID — stores TomTom/Google result id
   place_formatted?: string;
   full_address?: string;
   feature_type?: string;
@@ -65,7 +65,7 @@ export async function suggestPlaces(
       }
       return {
         name,
-        mapbox_id:       id,
+        place_id:        id,
         place_formatted: address,
         full_address:    address,
         feature_type:    r.type,
@@ -77,14 +77,51 @@ export async function suggestPlaces(
 }
 
 /**
+ * Google Places fallback — called only when TomTom returns 0 results.
+ * Results are tagged with source='google' so the UI can show a subtle badge.
+ */
+export async function suggestPlacesGoogle(
+  query: string,
+  signal?: AbortSignal,
+  proximity?: [number, number],
+): Promise<SearchSuggestion[]> {
+  if (query.trim().length < 2) return [];
+
+  const [lng, lat] = proximity ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
+  const params = new URLSearchParams({ q: query.trim(), lat: String(lat), lng: String(lng) });
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/places/search?${params}`, { signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    return (data.results ?? []).map((r: any) => {
+      const id = `google_${r.lat}_${r.lng}_${Math.random()}`;
+      // Cache for retrievePlace
+      _ttCache.set(id, { lat: r.lat, lon: r.lng, name: r.name ?? '', address: r.address ?? '' });
+      return {
+        name:            r.name ?? '',
+        place_id:        id,
+        place_formatted: r.address,
+        full_address:    r.address,
+        feature_type:    'google',
+      } as SearchSuggestion;
+    });
+  } catch {
+    return [];
+  }
+}
+
+
+/**
  * Step 2 — retrieve exact coordinates for a suggestion.
  * Resolves from _ttCache (populated in suggestPlaces) — no extra network call.
  */
-export async function retrievePlace(mapbox_id: string): Promise<GeoPlace | null> {
-  const cached = _ttCache.get(mapbox_id);
+export async function retrievePlace(place_id: string): Promise<GeoPlace | null> {
+  const cached = _ttCache.get(place_id);
   if (cached) {
     return {
-      id:         mapbox_id,
+      id:         place_id,
       text:       cached.name,
       place_name: cached.address,
       center:     [cached.lon, cached.lat],

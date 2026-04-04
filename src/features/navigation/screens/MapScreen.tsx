@@ -32,7 +32,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { colors, radius, spacing, typography } from '../../../shared/constants/theme';
-import { MAP_CENTER } from '../../../shared/constants/config';
+import { MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
 import { useVehicleStore } from '../../../store/vehicleStore';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
@@ -87,6 +87,7 @@ import {
   checkTruckRestrictions,
   saveTachoSession,
   fetchProximityAlerts,
+  pingBackend,
   type ChatMessage,
   type ChatContext,
   type SavedPOI,
@@ -98,6 +99,7 @@ import {
   type TachoSummary,
   type ProximityAlerts,
 } from '../../../shared/services/backendApi';
+import { getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 
@@ -319,9 +321,26 @@ const MapScreen: React.FC = () => {
   } = useVoice(navigating, currentStep, route);
 
   // 2. Tacho & HOS
+  const handleEndOfDay = useCallback(async () => {
+    try {
+      const [daySummary, weeklySummary] = await Promise.all([getDaySummary(), getWeeklySummary()]);
+      const prompt =
+        `Направи кратко гласово обобщение на работния ден за шофьора. Използвай тези данни: ${JSON.stringify(daySummary)} и седмични: ${JSON.stringify(weeklySummary)}. ` +
+        'Формат: "Днес изкара X км, Y часа каране. Следващата ти почивка трябва да е поне Z часа. Можеш да тръгнеш утре след HH:MM." ' +
+        'Отговори само с текста за четене, без форматиране.';
+      const response = await sendGeminiMessage(prompt, [], {}, 'system');
+      if (response.ok) {
+        const text = (response.reply ?? '').trim();
+        if (text) { ttsSpeak(text); }
+      }
+    } catch {
+      // silent — end-of-day summary is non-critical
+    }
+  }, []);
+
   const {
-    drivingSeconds, tachoSummary, setTachoSummary, resetSession, saveSession
-  } = useTacho(navigating, isDrivingRef, googleUserRef, speak);
+    drivingSeconds, tachoSummary, setTachoSummary, resetSession, saveSession, hosViolations
+  } = useTacho(navigating, isDrivingRef, googleUserRef, speak, handleEndOfDay);
   useLayoutEffect(() => { setTachoSummaryRef.current = setTachoSummary; });
 
   // 3. POI Search (Nearby & Along Route)
@@ -351,7 +370,7 @@ const MapScreen: React.FC = () => {
   const {
     gptLoading, geminiLoading, sendGptText, sendGeminiText
   } = useChat({
-    userCoords, drivingSeconds, speed, profile,
+    userCoords, drivingSeconds, speed, profile, tachoSummary,
     gptHistory, setGptHistory,
     geminiHistory, setGeminiHistory,
     googleUser,
@@ -600,10 +619,13 @@ const MapScreen: React.FC = () => {
     setLightMode(isDay);
   }, [setLightMode]);
 
-  // ── Wake up Render on app start (free tier sleeps after 15 min) ──────────────
+  // ── Wake up backend on app start + periodic health poll ──────────────────────
   useEffect(() => {
+    // Fire-and-forget wake-up ping (warms Railway/Render cold starts)
+    pingBackend();
+
     const checkBackend = () => {
-      fetch('https://truckexpoai.onrender.com/api/health', { method: 'GET' })
+      fetch(`${BACKEND_URL}/api/health`, { method: 'GET' })
         .then(r => { if (r.ok) setBackendOnline(true); else setBackendOnline(false); })
         .catch(() => setBackendOnline(false));
     };
@@ -1133,6 +1155,13 @@ const MapScreen: React.FC = () => {
         </View>
       )}
 
+      {hosViolations.length > 0 && (
+        <View style={{ position: 'absolute', top: backendOnline ? 40 : 80, left: 16, right: 16,
+          backgroundColor: '#E65100', borderRadius: 8, padding: 10, zIndex: 998 }}
+          pointerEvents="none">
+          <Text style={{ color: '#fff', fontWeight: '700' }}>⚠️ {hosViolations[0].message}</Text>
+        </View>
+      )}
 
       {/* ── Map ── */}
       <Mapbox.MapView
@@ -1170,15 +1199,15 @@ const MapScreen: React.FC = () => {
             'biz-icon':      ICON_BIZ,
             'no-overtaking': ICON_NO_OVERTAKING,
             'dest-flag':     ICON_DESTINATION,
-            'arrow-straight':     ARROW_STRAIGHT,
-            'arrow-right':        ARROW_RIGHT,
-            'arrow-left':         ARROW_LEFT,
-            'arrow-slight-right': ARROW_SLIGHT_RIGHT,
-            'arrow-slight-left':  ARROW_SLIGHT_LEFT,
-            'arrow-sharp-right':  ARROW_SHARP_RIGHT,
-            'arrow-sharp-left':   ARROW_SHARP_LEFT,
-            'arrow-uturn':        ARROW_UTURN,
-            'arrow-roundabout':   ARROW_ROUNDABOUT,
+            'arrow-straight':     { sdf: true, image: ARROW_STRAIGHT },
+            'arrow-right':        { sdf: true, image: ARROW_RIGHT },
+            'arrow-left':         { sdf: true, image: ARROW_LEFT },
+            'arrow-slight-right': { sdf: true, image: ARROW_SLIGHT_RIGHT },
+            'arrow-slight-left':  { sdf: true, image: ARROW_SLIGHT_LEFT },
+            'arrow-sharp-right':  { sdf: true, image: ARROW_SHARP_RIGHT },
+            'arrow-sharp-left':   { sdf: true, image: ARROW_SHARP_LEFT },
+            'arrow-uturn':        { sdf: true, image: ARROW_UTURN },
+            'arrow-roundabout':   { sdf: true, image: ARROW_ROUNDABOUT },
           }}
           onImageMissing={(imageKey) => {
             console.warn('[Mapbox] missing image in atlas:', imageKey);
@@ -1258,6 +1287,8 @@ const MapScreen: React.FC = () => {
           voiceMutedRef={voiceMutedRef}
           restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
           currentStep={currentStep}
+          drivingSeconds={drivingSeconds}
+          hosLimitS={HOS_LIMIT_S}
         />
 
       </Mapbox.MapView>
@@ -1293,10 +1324,38 @@ const MapScreen: React.FC = () => {
           </View>
 
           {/* Distance + hours */}
-          <Text style={styles.parkingBubbleDist}>
-            {fmtDistance(selectedParking.distance_m)}
-            {selectedParking.opening_hours ? `  ·  ${selectedParking.opening_hours}` : ''}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={styles.parkingBubbleDist}>
+              {fmtDistance(selectedParking.distance_m)}
+              {selectedParking.opening_hours ? `  ·  ${selectedParking.opening_hours}` : ''}
+            </Text>
+            {selectedParking.travel_time && (
+              <View style={[
+                styles.pkBadge, 
+                { marginLeft: 8, backgroundColor: 'rgba(0,0,0,0.3)' },
+                (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time < 900) && { borderColor: '#FFC107', borderWidth: 1 },
+                (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time < 0) && { borderColor: '#F44336', borderWidth: 1 }
+              ]}>
+                <Text style={[styles.pkBadgeTxt, { fontSize: 11 }]}>
+                  ⏱️ {Math.round(selectedParking.travel_time / 60)} мин
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Tacho reachability text */}
+          {selectedParking.travel_time && (
+            <Text style={[
+              { fontSize: 12, marginBottom: 8, fontWeight: '600' },
+              (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 900) ? { color: '#4CAF50' } :
+              (HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 0) ? { color: '#FFC107' } :
+              { color: '#F44336' }
+            ]}>
+              {(HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time > 0) 
+                ? `Резерв: ${Math.round((HOS_LIMIT_S - drivingSeconds - selectedParking.travel_time) / 60)} мин`
+                : `ВНИМАНИЕ: Превишаване с ${Math.round((selectedParking.travel_time - (HOS_LIMIT_S - drivingSeconds)) / 60)} мин!`}
+            </Text>
+          )}
 
           {/* Amenity badge row */}
           <View style={styles.parkingBubbleBadgeRow}>
