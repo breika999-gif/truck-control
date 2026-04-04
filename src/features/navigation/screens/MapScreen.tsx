@@ -1791,45 +1791,6 @@ const MapScreen: React.FC = () => {
           topOffset={searchTop + 58}
         />
       )}
-                <View style={styles.tachDivider} />
-                {/* Weekly daily-rest breakdown */}
-                <Text style={styles.tachRow}>
-                  ??? ������� ���� �������:
-                </Text>
-                <Text style={styles.tachRow}>
-                  {'  '}? 11� (�������): {tachoSummary.weekly_regular_rests}
-                  {'   '}
-                  <Text style={tachoSummary.weekly_reduced_rests > 0 ? styles.tachOk : undefined}>
-                    ?? 9� (��������): {tachoSummary.weekly_reduced_rests}/3
-                  </Text>
-                </Text>
-                {tachoSummary.reduced_rests_remaining === 0 ? (
-                  <Text style={styles.tachWarn}>
-                    ?? ��������� �������� ������� � ���������� ������ �� � 11�!
-                  </Text>
-                ) : (
-                  <Text style={styles.tachOk}>
-                    ����� ��� {tachoSummary.reduced_rests_remaining}x 9� �������
-                  </Text>
-                )}
-              </>
-            )}
-            {tachographResult.suggestedStop && (
-              <TouchableOpacity
-                style={styles.tachStopBtn}
-                activeOpacity={0.8}
-                onPress={() => {
-                  const s = tachographResult.suggestedStop!;
-                  setTachographResult(null);
-                  navigateTo([s.lng, s.lat], s.name);
-                }}
-              >
-                <Text style={styles.tachStopTxt}>??? {tachographResult.suggestedStop.name} ></Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      )}
 
       {/* -- Business / place results from GPT-4o search -- */}
       {!navigating && businessResults.length > 0 && (
