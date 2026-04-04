@@ -3,7 +3,6 @@ import {
   View,
   TouchableOpacity,
   Text,
-  TextInput,
   ActivityIndicator,
   PermissionsAndroid,
   Platform,
@@ -16,7 +15,6 @@ import {
 } from 'react-native';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
-import Geolocation from 'react-native-geolocation-service';
 import Mapbox, { locationManager, LocationPuck } from '@rnmapbox/maps';
 
 import { useVoice } from '../hooks/useVoice';
@@ -37,7 +35,6 @@ import { useVehicleStore } from '../../../store/vehicleStore';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import SearchBar from '../components/SearchBar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';
@@ -108,6 +105,7 @@ const EMPTY_RESTRICTIONS: never[] = [];
 import MapLayers from '../components/MapLayers';
 import ParkingBubble from '../components/ParkingBubble';
 import MapLongPressMenu from '../components/MapLongPressMenu';
+import TachoResultCard from '../components/TachoResultCard';
 import { styles, NEON, NEON_DIM } from './MapScreen.styles';
 import {
   NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
@@ -1771,53 +1769,14 @@ const MapScreen: React.FC = () => {
 
       {/* -- Tachograph card from GPT-4o -- */}
       {tachographResult && (
-        <View style={[styles.tachPanel, { top: searchTop + 58 }]}>
-          <View style={styles.parkingPanelHeader}>
-            <Text style={styles.tachTitle}>?? ��������</Text>
-            <TouchableOpacity
-              onPress={() => setTachographResult(null)}
-              style={styles.parkingDismissBtn}
-            >
-              <Text style={styles.parkingDismissTxt}>?</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.tachCard}>
-            {/* Continuous session */}
-            <Text style={styles.tachRow}>?? ������������: {tachographResult.drivenHours.toFixed(1)} �</Text>
-            <Text style={[styles.tachRow, tachographResult.breakNeeded && styles.tachWarn]}>
-              {tachographResult.breakNeeded
-                ? '?? ���� � ������������ 45 ��� �������!'
-                : tachographResult.remainingHours < 0.5
-                ? `?? ���� ${Math.round(tachographResult.remainingHours * 60)} ��� �� �������!`
-                : `? ������� ${tachographResult.remainingHours.toFixed(1)} �`}
-            </Text>
-            {/* Daily / Weekly from persistent DB */}
-            {tachoSummary && (
-              <>
-                <View style={styles.tachDivider} />
-                <Text style={styles.tachRow}>
-                  ?? ����: {tachoSummary.daily_driven_h.toFixed(1)} / {tachoSummary.daily_limit_h} �
-                  {'  '}
-                  <Text style={tachoSummary.daily_remaining_h < 1 ? styles.tachWarn : styles.tachOk}>
-                    (������� {tachoSummary.daily_remaining_h.toFixed(1)} �)
-                  </Text>
-                </Text>
-                <Text style={styles.tachRow}>
-                  ?? ��������: {tachoSummary.weekly_driven_h.toFixed(1)} / {tachoSummary.weekly_limit_h} �
-                  {'  '}
-                  <Text style={tachoSummary.weekly_remaining_h < 4 ? styles.tachWarn : styles.tachOk}>
-                    (������� {tachoSummary.weekly_remaining_h.toFixed(1)} �)
-                  </Text>
-                </Text>
-                {tachoSummary.biweekly_driven_h !== undefined && (
-                  <Text style={styles.tachRow}>
-                    ???? 2 ����.: {tachoSummary.biweekly_driven_h.toFixed(1)} / {tachoSummary.biweekly_limit_h} �
-                    {'  '}
-                    <Text style={tachoSummary.biweekly_remaining_h < 5 ? styles.tachWarn : styles.tachOk}>
-                      (������� {tachoSummary.biweekly_remaining_h.toFixed(1)} �)
-                    </Text>
-                  </Text>
-                )}
+        <TachoResultCard
+          result={tachographResult}
+          tachoSummary={tachoSummary}
+          onClose={() => setTachographResult(null)}
+          onNavigate={navigateTo}
+          topOffset={searchTop + 58}
+        />
+      )}
                 <View style={styles.tachDivider} />
                 {/* Weekly daily-rest breakdown */}
                 <Text style={styles.tachRow}>
