@@ -671,17 +671,14 @@ def _transparking_cache_refresh() -> None:
             if row:
                 last_refreshed = datetime.fromisoformat(row["refreshed_at"])
                 if (datetime.now(timezone.utc) - last_refreshed.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
-                    print("[Transparking] cache still fresh, skipping refresh")
                     return
 
-        print("[Transparking] fetching points from truckerapps.eu ...")
         url = "https://truckerapps.eu/transparking/points.php?action=list"
         r = requests.get(url, timeout=60)
         r.raise_for_status()
         data = r.json()
 
         features = data.get("features", [])
-        print(f"[Transparking] got {len(features)} features")
         if not features:
             return
 
@@ -705,11 +702,8 @@ def _transparking_cache_refresh() -> None:
                 inserted += 1
                 if inserted % 5000 == 0:
                     db.commit()
-                    print(f"[Transparking] inserted {inserted}...")
             db.commit()
-        print(f"[Transparking] cache ready — {inserted} spots")
     except Exception as e:
-        print(f"[Transparking] refresh FAILED: {e}")
 
 
 def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | None:
@@ -2752,9 +2746,7 @@ def gemini_chat():
                 )
                 return resp.text or ""
             except Exception as gemini_exc:
-                print(f"[Gemini] generate_content failed: {gemini_exc}", flush=True)
                 if _gpt4o_ready:
-                    print("[Gemini] falling back to GPT-4o", flush=True)
                     result = _run_gpt4o_internal(user_msg, history, context)
                     return result.get("reply", "") if isinstance(result, dict) else ""
                 raise
@@ -2776,7 +2768,6 @@ def gemini_chat():
         try:
             gemini_text = future_gemini.result()
         except Exception as exc:
-            print(f"[Gemini Parallel] Error: {str(exc)}", flush=True)
             return jsonify({"ok": False, "error": f"Gemini error: {str(exc)[:100]}"}), 500
 
     # Process Results
@@ -3519,7 +3510,6 @@ def gemini_transcribe():
         text = (resp.text or "").strip()
         return jsonify({"ok": bool(text), "text": text})
     except Exception as exc:
-        print(f"[Gemini Transcribe] Error: {str(exc)}", flush=True)
         return jsonify({"ok": False, "error": "Gemini transcription unavailable"}), 500
 
 
@@ -3708,7 +3698,6 @@ def get_truck_bans():
                 if (now - fetched_at).total_seconds() < 604800: # 7 days
                     return jsonify({"bans": json.loads(row["data"])})
     except Exception as e:
-        print(f"Truck bans cache check error: {e}")
 
     # 2. Live fetch from trafficban.com
     session = requests.Session()
@@ -3780,7 +3769,6 @@ def get_truck_bans():
         return jsonify({"bans": bans})
 
     except Exception as e:
-        print(f"Trafficban.com fetch error: {e}")
         return jsonify({"bans": [], "error": "source unavailable"})
 
 
@@ -3814,7 +3802,4 @@ def places_search():
 if __name__ == "__main__":
     port  = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))
     debug = os.getenv("FLASK_DEBUG", "true").lower() == "true"
-    print(f"TruckAI Pro backend @ http://0.0.0.0:{port}")
-    print(f"GPT-4o ready: {_gpt4o_ready}")
-    print(f"Gemini model: {_GEMINI_MODEL}")
     app.run(host="0.0.0.0", port=port, debug=debug)
