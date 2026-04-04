@@ -123,8 +123,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       const iconKey = maneuverIconKey(mType, step.maneuver?.modifier);
 
-      // Use bearing_after from the routing engine — exact outgoing direction after the maneuver
-      const rotation = step.maneuver?.bearing_after ?? 0;
+      // Use bearing_before — incoming direction aligns the arrow icon with the approach road
+      const rotation = step.maneuver?.bearing_before ?? 0;
 
       features.push({ 
         type: 'Feature', 
