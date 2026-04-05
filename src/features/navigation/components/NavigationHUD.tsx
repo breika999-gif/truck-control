@@ -64,6 +64,7 @@ interface NavigationHUDProps {
   nearestParkingM?: number | null;
   onFetchElevation?: () => void;
   onFetchWeather?: () => void;
+  onOptimize?: () => void;
 }
 
 const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
@@ -103,6 +104,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   nearestParkingM,
   onFetchElevation,
   onFetchWeather,
+  onOptimize,
 }) => {
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
   const panelHeightRef       = useRef(0);
@@ -445,10 +447,13 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             <TouchableOpacity
               style={styles.optimizeBtn}
               onPress={() => {
-                if (!optimizeWaypointOrder || !userCoords || !setWaypoints || !navigateTo || !destination) return;
-                const optimized = optimizeWaypointOrder(userCoords, waypoints);
-                setWaypoints(optimized);
-                navigateTo(destination, destinationName, optimized);
+                if (onOptimize) {
+                  onOptimize();
+                } else if (optimizeWaypointOrder && userCoords && setWaypoints && navigateTo && destination) {
+                  const optimized = optimizeWaypointOrder(userCoords, waypoints);
+                  setWaypoints(optimized);
+                  navigateTo(destination, destinationName, optimized);
+                }
               }}
             >
               <Text style={styles.optimizeBtnText}>⚡ Оптимизирай спирките</Text>

@@ -217,6 +217,13 @@ export function voiceText(act: MapAction): string {
   }
 }
 
+/** Format distance in meters to human-readable string (e.g. "1.2 km", "350 м") */
+export function fmtDistance(m: number | null | undefined): string {
+  if (m == null) return '';
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} км`;
+  return `${Math.round(m)} м`;
+}
+
 /** Remaining HOS time formatted as H:MM */
 export function fmtHOS(drivenSeconds: number): string {
   const rem = Math.max(0, HOS_LIMIT_S - drivenSeconds);

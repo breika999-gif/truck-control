@@ -347,7 +347,7 @@ const MapScreen: React.FC = () => {
       ttsSpeak(`Колега, остават ${remMin} минути каране. Търся паркинг...`);
       if (userCoords) {
         fetchNearbyParking(userCoords[1], userCoords[0], 20000)
-          .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5)); })
+          .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5).map(s => ({ ...s, distance_m: s.distance }))); })
           .catch(() => {});
       }
     }
@@ -1757,6 +1757,10 @@ const MapScreen: React.FC = () => {
         onStart={handleStart}
         onFetchElevation={() => route && buildElevProfile(route)}
         onFetchWeather={() => route && fetchWeatherForRoute(route)}
+        onOptimize={() => {
+          const dest = destinationRef.current;
+          if (dest) navigateTo(dest, destinationNameRef.current, waypointsRef.current, true, true);
+        }}
         profile={profile}
         dominantCongestion={dominantCongestion}
         elevProfile={elevProfile}

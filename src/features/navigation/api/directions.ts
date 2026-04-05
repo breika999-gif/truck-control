@@ -78,6 +78,8 @@ export interface RouteResult {
   restrictions: RestrictionPoint[];
   /** Alternative routes (simplified, no steps) returned alongside primary */
   alternatives?: import('../../../shared/services/backendApi').RouteOption[];
+  /** Reordered waypoint indices from TomTom computeBestOrder (null if not optimized) */
+  optimizedWaypointOrder?: number[] | null;
 }
 
 /**
@@ -150,6 +152,7 @@ export async function fetchRoute(
   departAt?: string,
   waypoints?: [number, number][],
   signal?: AbortSignal,
+  optimizeWaypoints: boolean = false,
 ): Promise<RouteResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
@@ -175,6 +178,7 @@ export async function fetchRoute(
         avoid_unpaved: truck?.avoidUnpaved ?? false,
         adr_tunnel_code: truck?.adr_tunnel ?? 'none',
         depart_at: departAt ?? null,
+        optimize: optimizeWaypoints,
       }),
     });
     clearTimeout(timeoutId);
@@ -196,15 +200,16 @@ export async function fetchRoute(
     }));
 
     return {
-      geometry:          data.geometry,
-      distance:          data.distance,
-      duration:          data.duration,
-      maxspeeds:         data.maxspeeds ?? [],
-      congestion:        [],
-      congestionGeoJSON: data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
+      geometry:               data.geometry,
+      distance:               data.distance,
+      duration:               data.duration,
+      maxspeeds:              data.maxspeeds ?? [],
+      congestion:             [],
+      congestionGeoJSON:      data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
       steps,
-      restrictions:      data.restrictions ?? [],
-      alternatives:      data.alternatives ?? [],
+      restrictions:           data.restrictions ?? [],
+      alternatives:           data.alternatives ?? [],
+      optimizedWaypointOrder: data.optimizedWaypointOrder ?? null,
     };
   } catch {
     return null;

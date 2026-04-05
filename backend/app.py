@@ -2884,6 +2884,7 @@ def calculate_route():
     waypoints   = data.get("waypoints", [])
     truck       = data.get("truck", {})
     depart_at   = data.get("depart_at")
+    optimize    = data.get("optimize", False)
     adr_tunnel_code = data.get("adr_tunnel_code", "none")
 
     if not origin or not destination:
@@ -2911,7 +2912,7 @@ def calculate_route():
     avoid_key = ",".join(sorted(avoid_parts))
     # Include truck dimensions in cache key for correctness
     truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
-    cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{avoid_key}:{str(waypoints)}:{truck_key}"
+    cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{avoid_key}:{str(waypoints)}:{truck_key}:opt={optimize}"
 
     now = _cache_time.time()
     if cache_key in _route_cache:
@@ -2933,6 +2934,9 @@ def calculate_route():
         "language":             "bg-BG",
         "sectionType":          "traffic",
     }
+
+    if optimize:
+        params["computeBestOrder"] = "true"
 
 
     if truck.get("max_height"):  params["vehicleHeight"]       = truck["max_height"]
@@ -2962,6 +2966,13 @@ def calculate_route():
         rt       = routes_data[0]
         summary  = rt.get("summary", {})
         geometry = _tomtom_route_to_geojson(rt)
+
+        # Extract optimized waypoint order (only present when computeBestOrder=true)
+        optimized_wp_order = None
+        if optimize:
+            raw_opt = rt.get("optimizedWaypoints", [])
+            if raw_opt:
+                optimized_wp_order = [w.get("providedIndex") for w in raw_opt]
 
         # Build steps from TomTom guidance instructions (at route level, not inside legs)
         instructions = rt.get("guidance", {}).get("instructions", [])
@@ -3022,16 +3033,17 @@ def calculate_route():
             })
 
         final_res = {
-            "geometry":          geometry,
-            "distance":          summary.get("lengthInMeters", 0),
-            "duration":          summary.get("travelTimeInSeconds", 0),
-            "traffic_delay":     summary.get("trafficDelayInSeconds", 0),
-            "steps":             steps,
-            "maxspeeds":         _tomtom_speed_limits(rt),
-            "congestionGeoJSON": _tomtom_congestion_geojson(rt, geometry),
-            "traffic_alerts":    _tomtom_traffic_alerts(rt, geometry),
-            "restrictions":      _extract_route_restrictions(geometry),
-            "alternatives":      alternatives,
+            "geometry":               geometry,
+            "distance":               summary.get("lengthInMeters", 0),
+            "duration":               summary.get("travelTimeInSeconds", 0),
+            "traffic_delay":          summary.get("trafficDelayInSeconds", 0),
+            "steps":                  steps,
+            "maxspeeds":              _tomtom_speed_limits(rt),
+            "congestionGeoJSON":      _tomtom_congestion_geojson(rt, geometry),
+            "traffic_alerts":         _tomtom_traffic_alerts(rt, geometry),
+            "restrictions":           _extract_route_restrictions(geometry),
+            "alternatives":           alternatives,
+            "optimizedWaypointOrder": optimized_wp_order,
         }
         
         # Store in cache

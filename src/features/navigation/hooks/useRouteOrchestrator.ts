@@ -124,7 +124,13 @@ export function useRouteOrchestrator({
   // Single source of truth for fetching a route and fitting the camera.
   // All data read via refs → deps:[] → stable identity across renders.
   // isMountedRef guard prevents setState after component unmounts.
-  const navigateTo = useCallback(async (dest: Coords, name: string, waypointsArg?: Coords[], autoStart = false) => {
+  const navigateTo = useCallback(async (
+    dest: Coords,
+    name: string,
+    waypointsArg?: Coords[],
+    autoStart = false,
+    optimizeWaypoints = false,
+  ) => {
     // Cancel previous POI fetches if any
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -163,10 +169,29 @@ export function useRouteOrchestrator({
           ? { avoidUnpaved: true, adr_tunnel: 'none' as const }
           : undefined;
 
-      const result = await fetchRoute(origin, dest, truck, departAtRef.current ?? undefined, waypointsArg, signal);
+      const result = await fetchRoute(
+        origin,
+        dest,
+        truck,
+        departAtRef.current ?? undefined,
+        waypointsArg,
+        signal,
+        optimizeWaypoints,
+      );
       if (!isMountedRef.current) return; // unmount guard
 
       setBackendOnline(!!result);
+
+      // Apply TomTom's optimal waypoint order if requested
+      if (optimizeWaypoints && result?.optimizedWaypointOrder && waypointsArg) {
+        const order = result.optimizedWaypointOrder;
+        const reorderedWps = order.map(i => waypointsArg[i]).filter(Boolean) as Coords[];
+        const names = waypointNamesRef.current;
+        const reorderedNames = order.map(i => names[i] ?? '');
+        setWaypoints(reorderedWps);
+        setWaypointNames(reorderedNames);
+        waypointsRef.current = reorderedWps;
+      }
 
       setRoute(result);
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)
