@@ -88,28 +88,34 @@ export function useChat({
     }
 
     if (act.action === 'route') {
-      navigateTo(act.coords, act.destination, act.waypoints, true);
+      if (Array.isArray(act.coords) && act.coords.length === 2 && act.destination) {
+        navigateTo(act.coords, act.destination, act.waypoints, true);
+      }
     } else if (act.action === 'add_waypoint') {
-      addWaypoint(act.coords, act.name);
+      if (Array.isArray(act.coords) && act.coords.length === 2) {
+        addWaypoint(act.coords, act.name ?? '');
+      }
     } else if (act.action === 'show_pois') {
       if (act.category === 'truck_stop') {
-        setParkingResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 5));
+        setParkingResults((act.cards ?? []).filter((c: any) => c.lat && c.lng).slice(0, 5));
         setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       } else if (act.category === 'fuel') {
-        setFuelResults(act.cards.slice(0, 4));
+        setFuelResults((act.cards ?? []).slice(0, 4));
         setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       } else if (act.category === 'speed_camera') {
-        setCameraResults(act.cards);
+        setCameraResults(act.cards ?? []);
         setParkingResults([]); setFuelResults([]); setBusinessResults([]);
       } else if (act.category === 'business') {
-        setBusinessResults(act.cards.filter((c: any) => c.lat && c.lng).slice(0, 6));
+        setBusinessResults((act.cards ?? []).filter((c: any) => c.lat && c.lng).slice(0, 6));
         setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
       }
     } else if (act.action === 'show_routes') {
-      setRouteOptions(act.options);
-      setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
-      setRoute(null);
-      setDestination(null);
+      if (Array.isArray(act.options) && act.options.length > 0) {
+        setRouteOptions(act.options);
+        setRouteOptDest({ name: act.destination, coords: act.dest_coords, waypoints: act.waypoints });
+        setRoute(null);
+        setDestination(null);
+      }
     } else if (act.action === 'tachograph') {
       setTachographResult({
         drivenHours:    act.driven_hours,
