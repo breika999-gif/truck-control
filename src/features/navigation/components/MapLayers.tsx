@@ -94,47 +94,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
   drivingSeconds = 0,
   hosLimitS = 16200,
 }) => {
-  const turnArrowsGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
-    if (!route || !navigating) return { type: 'FeatureCollection', features: [] };
-    const isTurnManeuver = (t: string) =>
-      /turn|ramp|fork|merge|roundabout|rotary|keep|bear|sharp|u.turn/i.test(t);
-    const maneuverIconKey = (type: string, modifier?: string): string => {
-      const t = (type ?? '').toUpperCase();
-      const m = (modifier ?? '').toLowerCase();
-      if (/U.TURN|UTURN/.test(t) || m === 'uturn')               return '↩';
-      if (/ROUNDABOUT|ROTARY/.test(t))                            return '↻';
-      if (/(SHARP_LEFT|TURN_SHARP_LEFT)/.test(t) || m === 'sharp left')    return '↰';
-      if (/(SHARP_RIGHT|TURN_SHARP_RIGHT)/.test(t) || m === 'sharp right') return '↱';
-      if (/(KEEP_LEFT|BEAR_LEFT|SLIGHT.LEFT)/.test(t) || m === 'slight left')    return '↖';
-      if (/(KEEP_RIGHT|BEAR_RIGHT|SLIGHT.RIGHT)/.test(t) || m === 'slight right') return '↗';
-      if (/(TURN_LEFT)/.test(t) || m === 'left')                  return '←';
-      if (/(TURN_RIGHT)/.test(t) || m === 'right')                return '→';
-      if (/left/.test(m))  return '←';
-      if (/right/.test(m)) return '→';
-      return '↑';
-    };
-    const features: GeoJSON.Feature[] = [];
-    const coords = route.geometry.coordinates;
-
-    route.steps.slice(currentStep).forEach((step: any, i: number) => {
-      const loc = step.intersections?.[0]?.location;
-      const mType = step.maneuver?.type ?? '';
-      if (!loc || !isTurnManeuver(mType)) return;
-
-      const iconKey = maneuverIconKey(mType, step.maneuver?.modifier);
-
-      // Use bearing_before — incoming direction aligns the arrow icon with the approach road
-      const rotation = step.maneuver?.bearing_before ?? 0;
-
-      features.push({ 
-        type: 'Feature', 
-        id: `arrow-${i}`, 
-        geometry: { type: 'Point', coordinates: loc }, 
-        properties: { iconKey, rotation } 
-      });
-    });
-    return { type: 'FeatureCollection', features };
-  }, [route, navigating, currentStep]);
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
@@ -434,25 +393,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* ── Turn Guidance Arrows (TomTom original icons) ── */}
-      {mapIsLoaded && navigating && turnArrowsGeoJSON.features.length > 0 && (
-        <Mapbox.ShapeSource id="turn-arrows-source" shape={turnArrowsGeoJSON}>
-          <Mapbox.SymbolLayer
-            id="turn-arrows-layer"
-            slot="top"
-            style={{
-              textField: ['get', 'iconKey'],
-              textSize: ['interpolate', ['linear'], ['zoom'], 11, 14, 14, 20, 17, 28],
-              textColor: '#ffffff',
-              textHaloColor: '#000000',
-              textHaloWidth: 2,
-              textAllowOverlap: true,
-              textIgnorePlacement: true,
-              textOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1],
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
 
       {/* ── Pins & Labels ── */}
       {mapIsLoaded && navigating && exitsGeoJSON.features.length > 0 && (
