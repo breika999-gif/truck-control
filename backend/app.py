@@ -3042,7 +3042,7 @@ def calculate_route():
             })
 
         # Build simplified alternatives (geometry + duration + distance only)
-        alt_colors = ["#FF8C00", "#9B59B6"]
+        alt_colors = ["#B922FF", "#08F384"]
         alt_labels = ["Алтернатива 1", "Алтернатива 2"]
         alt_routes_data = routes_data[1:3]
         alt_geoms_raw = [_tomtom_route_to_geojson(ar) for ar in alt_routes_data]

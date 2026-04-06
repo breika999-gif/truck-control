@@ -201,7 +201,7 @@ export function useRouteOrchestrator({
       if (result?.alternatives?.length && !navigatingRef.current) {
         const primary: import('../../../shared/services/backendApi').RouteOption = {
           label: 'Най-бърз',
-          color: '#00BFFF',
+          color: '#13BDFF',
           duration: result.duration,
           distance: result.distance,
           traffic: 'low',

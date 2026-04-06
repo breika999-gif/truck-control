@@ -47,7 +47,7 @@ interface MapLayersProps {
   hosLimitS?: number;
 }
 
-const NEON = '#00f7ff';
+const NEON = '#13BDFF';
 const SAFE_GREEN = '#4CAF50';
 const WARN_YELLOW = '#FFC107';
 const DANGER_RED = '#F44336';
@@ -101,17 +101,17 @@ const MapLayers: React.FC<MapLayersProps> = ({
     const maneuverIconKey = (type: string, modifier?: string): string => {
       const t = (type ?? '').toUpperCase();
       const m = (modifier ?? '').toLowerCase();
-      if (/U.TURN|UTURN/.test(t) || m === 'uturn')               return 'arrow-uturn';
-      if (/ROUNDABOUT|ROTARY/.test(t))                            return 'arrow-roundabout';
-      if (/(SHARP_LEFT|TURN_SHARP_LEFT)/.test(t) || m === 'sharp left')    return 'arrow-sharp-left';
-      if (/(SHARP_RIGHT|TURN_SHARP_RIGHT)/.test(t) || m === 'sharp right') return 'arrow-sharp-right';
-      if (/(KEEP_LEFT|BEAR_LEFT|SLIGHT.LEFT)/.test(t) || m === 'slight left')    return 'arrow-slight-left';
-      if (/(KEEP_RIGHT|BEAR_RIGHT|SLIGHT.RIGHT)/.test(t) || m === 'slight right') return 'arrow-slight-right';
-      if (/(TURN_LEFT)/.test(t) || m === 'left')                  return 'arrow-left';
-      if (/(TURN_RIGHT)/.test(t) || m === 'right')                return 'arrow-right';
-      if (/left/.test(m))  return 'arrow-left';
-      if (/right/.test(m)) return 'arrow-right';
-      return 'arrow-straight';
+      if (/U.TURN|UTURN/.test(t) || m === 'uturn')               return '↩';
+      if (/ROUNDABOUT|ROTARY/.test(t))                            return '↻';
+      if (/(SHARP_LEFT|TURN_SHARP_LEFT)/.test(t) || m === 'sharp left')    return '↰';
+      if (/(SHARP_RIGHT|TURN_SHARP_RIGHT)/.test(t) || m === 'sharp right') return '↱';
+      if (/(KEEP_LEFT|BEAR_LEFT|SLIGHT.LEFT)/.test(t) || m === 'slight left')    return '↖';
+      if (/(KEEP_RIGHT|BEAR_RIGHT|SLIGHT.RIGHT)/.test(t) || m === 'slight right') return '↗';
+      if (/(TURN_LEFT)/.test(t) || m === 'left')                  return '←';
+      if (/(TURN_RIGHT)/.test(t) || m === 'right')                return '→';
+      if (/left/.test(m))  return '←';
+      if (/right/.test(m)) return '→';
+      return '↑';
     };
     const features: GeoJSON.Feature[] = [];
     const coords = route.geometry.coordinates;
@@ -383,11 +383,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
             slot="middle"
             style={{
               lineColor: ['match', ['get', 'congestion'],
-                'low', lightMode ? routeLineColor : '#00f7ff',
+                'low', lightMode ? routeLineColor : '#13BDFF',
                 'moderate', '#FFBC40',
                 'heavy', '#FF9100',
                 'severe', '#FA0000',
-                lightMode ? routeLineColor : '#00f7ff',
+                lightMode ? routeLineColor : '#13BDFF',
               ],
               lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
               lineCap: 'round',
@@ -441,16 +441,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="turn-arrows-layer"
             slot="top"
             style={{
-              iconImage: ['get', 'iconKey'],
-              iconRotate: ['get', 'rotation'],
-              iconRotationAlignment: 'map',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 11, 0.8, 14, 1.2, 17, 1.8],
-              iconColor: '#ffffff',
-              iconHaloColor: '#000000',
-              iconHaloWidth: 2,
-              iconAllowOverlap: true,
-              iconIgnorePlacement: true,
-              iconOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1],
+              textField: ['get', 'iconKey'],
+              textSize: ['interpolate', ['linear'], ['zoom'], 11, 14, 14, 20, 17, 28],
+              textColor: '#ffffff',
+              textHaloColor: '#000000',
+              textHaloWidth: 2,
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+              textOpacity: ['interpolate', ['linear'], ['zoom'], 11, 0, 12, 1],
             }}
           />
         </Mapbox.ShapeSource>
@@ -530,7 +528,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           }}
         >
           <Mapbox.SymbolLayer
-            id="parking-symbols" slot="top" minZoomLevel={6}
+            id="parking-symbols" slot="top" minZoomLevel={8}
             style={{
               textField: ['step', ['zoom'], 'P', 14, ['concat', 'P', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
@@ -543,7 +541,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
                 'safe', SAFE_GREEN,
                 'warning', WARN_YELLOW,
                 'danger', DANGER_RED,
-                '#00f7ff'
+                '#13BDFF'
               ],
               textHaloWidth: 1.8,
               textHaloBlur: 0.5,
