@@ -369,7 +369,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
           <Mapbox.LineLayer
             id="route-casing"
-            slot="top"
+            slot="middle"
             style={{
               lineColor: lightMode ? '#0a0a1a' : '#003d6b',
               lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 6, 10, 10, 15, 12],
@@ -380,7 +380,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           />
           <Mapbox.LineLayer
             id="route-line"
-            slot="top"
+            slot="middle"
             style={{
               lineColor: ['match', ['get', 'congestion'],
                 'low', lightMode ? routeLineColor : '#00f7ff',
@@ -424,7 +424,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         <Mapbox.ShapeSource id="route-arrows-source" shape={{ type: 'Feature', properties: {}, geometry: route.geometry }}>
           <Mapbox.SymbolLayer
             id="route-direction-arrows"
-            slot="middle"
+            slot="top"
             style={{
               symbolPlacement: 'line', symbolSpacing: 80, textField: '▲', textSize: 14,
               textColor: 'rgba(255,255,255,0.85)', textHaloColor: 'rgba(0,0,0,0.30)', textHaloWidth: 1,
@@ -572,7 +572,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           }}
         >
           <Mapbox.SymbolLayer
-            id="fuel-symbols" slot="top" minZoomLevel={10}
+            id="fuel-symbols" slot="top" minZoomLevel={7}
             style={{
               textField: ['step', ['zoom'], '⛽', 14, ['concat', '⛽', '\n', ['case',
                 ['>', ['coalesce', ['get', 'distance_m'], 0], 0],

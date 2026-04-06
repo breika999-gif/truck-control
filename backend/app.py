@@ -16,6 +16,7 @@ import math
 import os
 import re
 import sqlite3
+import sys
 import time
 import threading
 from collections import defaultdict
@@ -2160,6 +2161,7 @@ def health():
     return jsonify({
         "status":        "ok",
         "version":       "3.4-MAP-MATCH-CACHE",
+        "python":        sys.version,
         "gpt4o_ready":   _gpt4o_ready,
         "gemini_ready":  _gemini_ready,
         "tomtom_ready":  _tomtom_ready,
@@ -2181,6 +2183,14 @@ def match_window():
     if not coords or from_idx >= len(coords):
         return jsonify({"coords": []})
     
+    # Validation
+    try:
+        for c in coords:
+            float(c[0])
+            float(c[1])
+    except (TypeError, ValueError, IndexError):
+        return jsonify({"error": "Invalid coordinates format"}), 400
+
     # Take window starting from from_idx
     window = coords[from_idx : from_idx + 800]
     matched = _mapbox_map_match(window, max_points=800)
@@ -2243,8 +2253,17 @@ def poi_along_route_v2():
     category = data.get("category", "truck_stop")
     if not coords or len(coords) < 2:
         return jsonify({"pois": []})
+    
+    # Validation
+    try:
+        for c in coords:
+            float(c[0])
+            float(c[1])
+    except (TypeError, ValueError, IndexError):
+        return jsonify({"error": "Invalid coordinates format"}), 400
+
     query = "truck stop" if category == "truck_stop" else "petrol station"
-    results = _tomtom_along_route(coords, query, limit=12)
+    results = _tomtom_along_route(coords, query, max_detour_s=900, limit=40)
     for r in results:
         r["category"] = category
         if category == "truck_stop":
@@ -2256,35 +2275,60 @@ def poi_along_route_v2():
 
 @app.post("/api/cameras-along-route")
 def cameras_along_route_v2():
-    """Fetch speed cameras within bounding box of route."""
+    """Fetch speed cameras along route, splitting into segments to avoid Overpass timeout."""
     data = _get_body()
     coords = data.get("coords", [])
     if not coords or len(coords) < 2:
         return jsonify({"cameras": []})
-    lats = [c[1] for c in coords]
-    lngs = [c[0] for c in coords]
-    pad = 0.008
-    bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
-    query = (
-        f'[out:json][timeout:25];'
-        f'('
-        f'node["highway"="speed_camera"]({bbox});'
-        f'node["enforcement"="speed"]({bbox});'
-        f'node["man_made"="surveillance"]["surveillance:type"="camera"]({bbox});'
-        f');'
-        f'out body;'
-    )
     try:
-        resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=22)
-        elements = resp.json().get("elements", [])
-    except Exception:
-        return jsonify({"cameras": []})
+        for c in coords:
+            float(c[0])
+            float(c[1])
+    except (TypeError, ValueError, IndexError):
+        return jsonify({"error": "Invalid coordinates format"}), 400
+
+    # Split route into segments of ~150 points to keep each bbox small
+    SEG_SIZE = 150
+    segments = [coords[i:i + SEG_SIZE] for i in range(0, len(coords), SEG_SIZE)]
+    # Overlap segments so cameras near boundaries aren't missed
+    overlapped = []
+    for i, seg in enumerate(segments):
+        if i > 0:
+            overlapped.append(segments[i - 1][-20:] + seg)
+        else:
+            overlapped.append(seg)
+
+    seen_ids: set = set()
     cameras = []
-    for el in elements:
-        tags = el.get("tags", {})
-        speed = tags.get("maxspeed", "")
-        name = f"📷 Радар {speed} км/ч" if speed else "📷 Радар"
-        cameras.append({"lat": el["lat"], "lng": el["lon"], "name": name, "maxspeed": speed, "distance_m": 0, "category": "speed_camera"})
+    pad = 0.008
+
+    for seg in overlapped:
+        lats = [c[1] for c in seg]
+        lngs = [c[0] for c in seg]
+        bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
+        query = (
+            f'[out:json][timeout:20];'
+            f'('
+            f'node["highway"="speed_camera"]({bbox});'
+            f'node["enforcement"="speed"]({bbox});'
+            f'node["man_made"="surveillance"]["surveillance:type"="camera"]({bbox});'
+            f');'
+            f'out body;'
+        )
+        try:
+            resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=18)
+            elements = resp.json().get("elements", [])
+        except Exception:
+            continue
+        for el in elements:
+            if el["id"] in seen_ids:
+                continue
+            seen_ids.add(el["id"])
+            tags = el.get("tags", {})
+            speed = tags.get("maxspeed", "")
+            name = f"📷 Радар {speed} км/ч" if speed else "📷 Радар"
+            cameras.append({"lat": el["lat"], "lng": el["lon"], "name": name, "maxspeed": speed, "distance_m": 0, "category": "speed_camera"})
+
     return jsonify({"cameras": cameras})
 
 

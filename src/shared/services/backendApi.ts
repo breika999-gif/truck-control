@@ -400,30 +400,27 @@ export async function transcribeGemini(
   }
 }
 
-/** Transcribe audio via OpenAI Whisper (fallback). */
+/** Transcribe audio via Gemini multimodal (primary) with Whisper fallback. */
 export async function transcribeAudio(audioPath: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const form = new FormData();
-    form.append('audio', {
-      uri:  audioPath.startsWith('file://') ? audioPath : `file://${audioPath}`,
-      type: 'audio/m4a',
-      name: 'recording.m4a',
-    } as unknown as Blob);
+  const uri = audioPath.startsWith('file://') ? audioPath : `file://${audioPath}`;
 
-    const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
-      method:  'POST',
-      body:    form,
-      signal:  controller.signal,
-    });
-    const data = (await res.json()) as { ok: boolean; text?: string; error?: string };
-    return data.ok && data.text ? data.text : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+  const tryEndpoint = async (endpoint: string): Promise<string | null> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const form = new FormData();
+      form.append('audio', { uri, type: 'audio/m4a', name: 'recording.m4a' } as unknown as Blob);
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, { method: 'POST', body: form, signal: controller.signal });
+      const data = (await res.json()) as { ok: boolean; text?: string; error?: string };
+      return data.ok && data.text ? data.text : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  return (await tryEndpoint('/api/gemini/transcribe')) ?? (await tryEndpoint('/api/transcribe'));
 }
 
 // ── POI CRUD ─────────────────────────────────────────────────────────────────

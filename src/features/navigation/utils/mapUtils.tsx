@@ -148,31 +148,53 @@ export function getTruckSpeedLimit(countryCode: string, roadType: string): numbe
 
 /** Convert a raw backend string to clean chat-bubble text. */
 export function parseBubbleText(raw: string): string {
-  // Strip "action:xxx\n" prefix that GPT sometimes prepends
-  let s = raw.trim().replace(/^action:\w+\n/, '');
+  if (!raw) return '';
+  let s = raw.trim();
 
-  // Try to parse as JSON (with or without outer braces)
-  const tryParse = (str: string): Record<string, unknown> | null => {
-    try { return JSON.parse(str) as Record<string, unknown>; } catch { return null; }
+  // 1. Strip common prefixes like "action:xxx\n" or Markdown code blocks
+  s = s.replace(/^action:\w+\n/i, '');
+  s = s.replace(/^```json\n?/, '').replace(/\n?```$/, '');
+
+  // 2. Try to parse as JSON
+  const tryParse = (str: string): Record<string, any> | null => {
+    try {
+      // Clean leading/trailing junk that might surround the JSON object
+      const start = str.indexOf('{');
+      const end = str.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        return JSON.parse(str.substring(start, end + 1));
+      }
+      return JSON.parse(str);
+    } catch {
+      return null;
+    }
   };
 
-  let obj = s.startsWith('{') ? tryParse(s) : null;
+  let obj = tryParse(s);
 
-  // Gemini sometimes returns JSON content without outer braces: "action": "message", "text": "..."
-  if (!obj && s.includes('"action"') && s.includes('"text"')) {
+  // 3. If failed but looks like partial JSON (e.g. "action": "message"...), wrap it
+  if (!obj && s.includes('"action"') && (s.includes('"text"') || s.includes('"message"'))) {
     obj = tryParse(`{${s}}`);
   }
 
   if (obj) {
-    const explicit = String(obj.text ?? obj.message ?? obj.reply ?? '').trim();
-    if (explicit) return explicit;
-    const dest = String(obj.destination ?? 'дестинацията');
-    switch (String(obj.action ?? '')) {
+    // Priority: text -> message -> reply -> reply.text
+    const explicit = String(obj.text ?? obj.message ?? obj.reply?.text ?? obj.reply ?? '').trim();
+    if (explicit && explicit !== '[object Object]') return explicit;
+
+    const dest = String(obj.destination ?? obj.dest_name ?? 'дестинацията');
+    const action = String(obj.action ?? '');
+
+    switch (action) {
       case 'route':       return `Пътуваме към ${dest}. Приятен път!`;
       case 'show_routes': return `Варианти за маршрут до ${dest}.`;
-      case 'show_pois':   return `Търся наблизо…`;
-      case 'tachograph':  return 'Проверка на тахографа.';
-      default:            return s;
+      case 'show_pois':   return `Търся ${obj.category === 'fuel' ? 'бензиностанции' : 'места за спиране'} наблизо…`;
+      case 'tachograph':  return 'Проверка на тахографа и времето за почивка.';
+      case 'add_waypoint': return `Добавям ${obj.name ?? 'спирка'} към маршрута.`;
+      default:
+        // If it's a message action but text was missing
+        if (action === 'message' && !explicit) return 'Как мога да помогна?';
+        return s;
     }
   }
 
