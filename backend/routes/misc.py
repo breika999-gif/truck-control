@@ -116,22 +116,22 @@ def get_truck_bans():
     }
 
     try:
-        # Try direct fetch first
-        url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?d={date_str}"
-        bans_resp = session.get(url, headers=headers, timeout=10)
-        
-        # If it doesn't work, it might need the param_name but not necessarily a "key"
-        if not bans_resp.ok or not isinstance(bans_resp.json(), list):
-            # Fallback: find the dynamic parameter name but try without key
-            js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
-            m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
-            param_name = m.group(1) if m else "KHcYF42A"
-            url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}=&d={date_str}"
-            bans_resp = session.get(url, headers=headers, timeout=10)
-
+        # Step 1: get cookies
+        session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        # Step 2: get dynamic param name from JS
+        js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
+        m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
+        param_name = m.group(1) if m else "KHcYF42A"
+        # Step 3: get session key (requires Sec-Fetch headers to pass SHA check)
+        key_resp = session.get(f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}", headers=headers, timeout=10)
+        key = key_resp.json().get("key")
+        if not key:
+            raise ValueError(f"no key: {key_resp.text[:100]}")
+        # Step 4: get bans
+        bans_resp = session.get(f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}", headers=headers, timeout=10)
         raw_bans = bans_resp.json()
         if not isinstance(raw_bans, list):
-            raise ValueError("Response is not a list")
+            raise ValueError(f"not a list: {bans_resp.text[:100]}")
 
         formatted = []
         for b in raw_bans:
