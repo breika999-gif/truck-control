@@ -39,18 +39,54 @@ def gemini_chat():
             for h in history[-6:]:
                 role = "user" if h.get("role") == "user" else "model"
                 contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
-            ctx_note = f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]" if context.get("lat") else ""
+
+            ctx_note = ""
+            if context.get("lat"):
+                ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+
             tacho = _tacho_summary(user_email)
             min_rem_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
-            ctx_note += f" [ТАХОГРАФ: шофирано-непрекъснато {tacho['continuous_driven_h']}ч/4.5ч; днес {tacho['daily_driven_h']}ч/9ч; ефективно-остава {min_rem_h}ч ≈ {round(min_rem_h * 80)}км]"
-            if context.get("user_memory"): ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
-            if context.get("driver_habits"): ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+            est_km = round(min_rem_h * 80)
+            
+            # Reconstruct detailed tacho note from original implementation
+            ctx_note += (
+                f" [ТАХОГРАФ: шофирано-непрекъснато {tacho['continuous_remaining_h']}ч/4.5ч; "
+                f"днес {tacho['daily_driven_h']}ч/{tacho['daily_limit_h']}ч; "
+                f"оставащо днес {tacho['daily_remaining_h']}ч; "
+                f"седмично {tacho['weekly_driven_h']}ч/56ч; "
+                f"ефективно-остава {min_rem_h}ч ≈ {est_km}км при 80км/ч]"
+            )
+
+            # Inject frontend overrides if present
+            fe_ctx = ""
+            if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
+            if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
+            if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
+
+            if context.get("user_memory"):
+                ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
+            
+            if context.get("driver_habits"):
+                ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+
             if _has_nav_intent(user_msg) and context.get("destination") and _gpt4o_ready:
                 rd = _get_gpt_route_insight(str(context["destination"]), context)
                 if rd: ctx_note += f" [gpt_route_data: {json.dumps(rd, ensure_ascii=False)}]"
+
             contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
-            resp = _gemini_client.models.generate_content(model=GEMINI_MODEL, contents=contents, config={"system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(), "temperature": 0.65, "max_output_tokens": 300})
-            return resp.text or ""
+            
+            try:
+                resp = _gemini_client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                    config={"system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(), "temperature": 0.65, "max_output_tokens": 300}
+                )
+                return resp.text or ""
+            except Exception as e:
+                if _gpt4o_ready:
+                    res = _run_gpt4o_internal(user_msg, history, context)
+                    return res.get("reply", "") if isinstance(res, dict) else ""
+                return f"Грешка: {str(e)}"
 
         _NAV_HINTS = ["карай до", "навигирай", "маршрут до", "отиди до", "паркинг", "гориво", "бензиностанция", "дизел", "добави спирка", "заобиколи", "тунел", "navigate to", "route to", "go to", "find parking", "find fuel", "avoid"]
         likely_nav = any(h in user_msg.lower() for h in _NAV_HINTS)
