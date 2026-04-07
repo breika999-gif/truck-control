@@ -78,47 +78,85 @@ def orchestrate():
         return jsonify({"ok": True, "answer": synth_resp.content[0].text.strip(), "tasks": [{"task": t.get("task", ""), "result": worker_results[i]} for i, t in enumerate(tasks)]})
     except Exception as e: return jsonify({"ok": False, "error": str(e)}), 500
 
-@misc_bp.delete("/api/truck-bans/cache")
+@misc_bp.route("/api/truck-bans/cache", methods=["DELETE", "POST"])
 def clear_truck_bans_cache():
-    with get_db() as conn:
-        conn.execute("DELETE FROM truck_bans_cache")
-        conn.commit()
-    return jsonify({"ok": True})
+    try:
+        with get_db() as conn:
+            conn.execute("DELETE FROM truck_bans_cache")
+            conn.commit()
+        return jsonify({"ok": True, "message": "Cache cleared"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 @misc_bp.route("/api/truck-bans", methods=["GET"])
 def get_truck_bans():
     date_str = request.args.get("date")
-    if not date_str: return jsonify({"bans": []}), 400
+    if not date_str: return jsonify({"bans": [], "error": "date required"}), 400
+    
+    # Try cache first
     try:
         with get_db() as conn:
             row = conn.execute("SELECT data, fetched_at FROM truck_bans_cache WHERE date=?", (date_str,)).fetchone()
-            if row and (datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=timezone.utc)).total_seconds() < 604800:
-                return jsonify({"bans": json.loads(row["data"])})
+            if row:
+                diff = (datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=timezone.utc)).total_seconds()
+                if diff < 604800: # 1 week
+                    return jsonify({"bans": json.loads(row["data"]), "source": "cache"})
     except: pass
+
     session = requests.Session()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
         "X-Requested-With": "XMLHttpRequest",
         "Referer": "https://www.trafficban.com/",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
     }
+
     try:
+        # 1. Get initial cookies
         session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        
+        # 2. Find the dynamic parameter name from the main JS
         js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
-        m = re.search(r'\?([K][a-zA-Z0-9]+)=', js_resp.text)
+        # Look for something like ?KHcYF42A=
+        m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
         param_name = m.group(1) if m else "KHcYF42A"
-        key_resp = session.get(f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}", headers=headers, timeout=10)
-        key = key_resp.json().get("key")
-        if not key: raise ValueError("no key")
-        bans_resp = session.get(f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}", headers=headers, timeout=10)
-        formatted = [{"flag": b.get("fl"), "country": b.get("cr"), "time": b.get("tm"), "alert": bool(b.get("al")), "note": "Важна забрана" if b.get("al") else ""} for b in bans_resp.json()]
-        with get_db() as conn: conn.execute("INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)", (date_str, json.dumps(formatted), now_iso()))
-        return jsonify({"bans": formatted})
-    except: return jsonify({"bans": [], "error": "source unavailable"})
+        
+        # 3. Get the session key for the date
+        key_url = f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}"
+        key_resp = session.get(key_url, headers=headers, timeout=10)
+        key_data = key_resp.json()
+        key = key_data.get("key")
+        
+        if not key:
+            return jsonify({"bans": [], "error": "Failed to get session key", "debug": key_data}), 502
+
+        # 4. Get the actual bans
+        bans_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}"
+        bans_resp = session.get(bans_url, headers=headers, timeout=10)
+        raw_bans = bans_resp.json()
+
+        formatted = []
+        for b in raw_bans:
+            formatted.append({
+                "flag": b.get("fl"),
+                "country": b.get("cr"),
+                "time": b.get("tm"),
+                "alert": bool(b.get("al")),
+                "note": "Важна забрана" if b.get("al") else ""
+            })
+
+        # Save to cache
+        try:
+            with get_db() as conn:
+                conn.execute("INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)", 
+                             (date_str, json.dumps(formatted), now_iso()))
+                conn.commit()
+        except: pass
+
+        return jsonify({"bans": formatted, "source": "live"})
+
+    except Exception as e:
+        return jsonify({"bans": [], "error": "Scraper error", "details": str(e)}), 502
 
 def _extract_route_restrictions(geometry: dict) -> list:
     coords = geometry.get("coordinates", [])
