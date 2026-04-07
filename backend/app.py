@@ -123,6 +123,9 @@ except ImportError:
     _gemini_client = None
     _gemini_ready = False
 
+# Cache personal-key Gemini clients so we don't allocate a new Client per request
+_personal_gemini_clients: dict = {}
+
 
 def _get_body() -> dict:
     """Helper to get JSON body from request safely."""
@@ -2798,10 +2801,13 @@ def gemini_chat():
                 raise
 
         # Task 2: GPT-4o pre-fetch only if message looks like nav intent
-        _NAV_HINTS = ["карай", "навигирай", "маршрут", "отиди", "намери", "паркинг",
-                      "гориво", "бензин", "дизел", "спирка", "заобиколи", "тунел",
-                      "navigate", "route", "go to", "find", "parking", "fuel", "avoid"]
-        _likely_nav = any(h in user_msg.lower() for h in _NAV_HINTS)
+        # Stricter nav-intent check — whole-word / phrase match to avoid false positives
+        _NAV_HINTS = ["карай до", "навигирай", "маршрут до", "отиди до", "паркинг за камион",
+                      "намери паркинг", "намери гориво", "гориво наблизо", "бензиностанция",
+                      "дизел наблизо", "добави спирка", "заобиколи", "тунел",
+                      "navigate to", "route to", "go to", "find parking", "find fuel", "avoid"]
+        _msg_lower = user_msg.lower()
+        _likely_nav = any(h in _msg_lower for h in _NAV_HINTS)
 
         def call_gpt_task():
             if not _gpt4o_ready or not _likely_nav:
@@ -2822,7 +2828,10 @@ def gemini_chat():
     action = None
 
     if nav_command and _gpt4o_ready:
-        gpt_result = future_gpt.result()
+        try:
+            gpt_result = future_gpt.result()
+        except Exception:
+            gpt_result = None
         if gpt_result and gpt_result.get("ok"):
             action = gpt_result.get("action")
             if not clean_reply:
@@ -3543,13 +3552,14 @@ def gemini_transcribe():
         return jsonify({"ok": False, "error": "No audio file provided."}), 400
 
     personal_key = (request.form.get("user_api_key") or "").strip()
-    is_personal = bool(personal_key)
-    
-    if is_personal:
-        try:
-            gemini_client_to_use = _google_genai.Client(api_key=personal_key)
-        except Exception:
-            gemini_client_to_use = _gemini_client
+
+    if personal_key:
+        if personal_key not in _personal_gemini_clients:
+            try:
+                _personal_gemini_clients[personal_key] = _google_genai.Client(api_key=personal_key)
+            except Exception:
+                _personal_gemini_clients[personal_key] = _gemini_client
+        gemini_client_to_use = _personal_gemini_clients[personal_key]
     else:
         gemini_client_to_use = _gemini_client
 
@@ -3568,6 +3578,7 @@ def gemini_transcribe():
         text = (resp.text or "").strip()
         return jsonify({"ok": bool(text), "text": text})
     except Exception as exc:
+        print(f"[gemini_transcribe] error: {exc}")
         return jsonify({"ok": False, "error": "Gemini transcription unavailable"}), 500
 
 

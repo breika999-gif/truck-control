@@ -201,7 +201,7 @@ export function useChat({
 
     const response = await sendGeminiMessage(
       text,
-      geminiHistory.slice(-4),
+      geminiHistory.slice(-6),
       context,
       googleUser?.email || undefined
     );
@@ -217,7 +217,11 @@ export function useChat({
     if (response.action && response.action.action !== 'message') {
       processAction(response.action, newHistory, setGeminiHistory, response);
     } else {
-      const replyText = (response.action?.action === 'message' ? response.action.text : response.reply ?? '').trim();
+      const replyText = (
+        response.action?.action === 'message'
+          ? (response.action.text ?? response.reply ?? '')
+          : (response.reply ?? '')
+      ).trim();
       if (replyText) {
         setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
         speak(replyText);
