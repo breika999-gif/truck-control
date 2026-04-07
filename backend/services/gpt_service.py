@@ -99,22 +99,73 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                     if "origin_lat" not in args and context.get("lat"): args["origin_lat"], args["origin_lng"] = context["lat"], context["lng"]
                     res = _tool_suggest_routes(args["destination"], args.get("origin_lat", 42.70), args.get("origin_lng", 23.32), args.get("avoid"), truck_profile=args.get("truck_profile") or context.get("profile"))
                     if "options" in res: tool_act = {"action": "show_routes", "destination": res["destination"], "dest_coords": res["dest_coords"], "options": res["options"], "waypoints": _get_avoidance_waypoints(args.get("origin_lat"), args.get("origin_lng"), res["dest_coords"][0], args.get("avoid"))}
+                elif fn == "find_truck_parking":
+                    from services.poi_service import _tool_find_truck_parking
+                    from utils.helpers import _build_voice_desc
+                    raw = _tool_find_truck_parking(args["lat"], args["lng"], args.get("radius_m", 5000))
+                    res = raw
+                    cards = [{"name": p["name"], "lat": p["lat"], "lng": p["lng"], "distance_m": p["distance_m"],
+                              "paid": p.get("paid", False), "showers": p.get("showers", False),
+                              "toilets": p.get("toilets", False), "wifi": p.get("wifi", False),
+                              "security": p.get("security", False), "lighting": p.get("lighting", False),
+                              "capacity": p.get("capacity"), "website": p.get("website"),
+                              "opening_hours": p.get("opening_hours"), "phone": p.get("phone"),
+                              "voice_desc": _build_voice_desc(p)} for p in raw[:5]]
+                    tool_act = {"action": "show_pois", "category": "truck_stop", "cards": cards}
+                elif fn == "find_fuel_stations":
+                    from services.poi_service import _tool_find_fuel
+                    raw = _tool_find_fuel(args["dest_lat"], args["dest_lng"], args.get("radius_m", 50000))
+                    res = raw
+                    cards = [{"name": s.get("name", "Бензиностанция"), "lat": s["lat"], "lng": s["lng"],
+                              "distance_m": s.get("distance_m", 0), "brand": s.get("brand"),
+                              "truck_lane": s.get("truck_lane", False), "opening_hours": s.get("opening_hours"),
+                              "phone": s.get("phone")} for s in raw[:4] if "lat" in s]
+                    tool_act = {"action": "show_pois", "category": "fuel", "cards": cards}
+                elif fn == "find_speed_cameras":
+                    from services.poi_service import _tool_find_speed_cameras
+                    res = _tool_find_speed_cameras(args["lat"], args["lng"], args.get("radius_m", 10000))
+                    cards = [{"name": "📷 Камера {} км/ч".format(cam["maxspeed"]) if cam.get("maxspeed") else "📷 Камера",
+                              "lat": cam["lat"], "lng": cam["lng"], "distance_m": cam["distance_m"],
+                              "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
+                    tool_act = {"action": "show_pois", "category": "speed_camera", "cards": cards, "nearest_m": res.get("nearest_m", -1)}
                 elif fn == "search_business":
                     from services.poi_service import _enrich_business_with_places
                     from config import GOOGLE_PLACES_KEY
                     res = _tomtom_search(f"{args['query']} {args.get('city', '')}".strip(), args["lat"], args["lng"])
-                    cards = [{"name": b.get("name", ""), "lat": b["lat"], "lng": b["lng"], "distance_m": b.get("distance_m", 0), "info": b.get("address", "")} for b in res[:6]]
+                    valid = [b for b in res[:6] if b.get("lat")]
+                    enriched = list(ThreadPoolExecutor(6).map(_enrich_business_with_places, valid)) if GOOGLE_PLACES_KEY and valid else valid
+                    cards = [{"name": b.get("name", ""), "lat": b["lat"], "lng": b["lng"],
+                              "distance_m": b.get("distance_m", 0), "info": b.get("address", ""),
+                              "photo_url": b.get("photo_url"), "open_now": b.get("open_now"),
+                              "needs_confirm": b.get("needs_confirm", False)} for b in enriched]
                     tool_act = {"action": "show_pois", "category": "business", "cards": cards}
                 elif fn == "add_waypoint":
                     from services.poi_service import _tool_add_waypoint
                     res = _tool_add_waypoint(args["query"], args["lat"], args["lng"])
                     if "coords" in res: tool_act = {"action": "add_waypoint", "name": res["name"], "coords": res["coords"]}
+                    else: tool_act = {"action": "message", "text": res.get("error", "Не намерих спирката.")}
                 elif fn == "calculate_hos_reach":
                     from services.tacho_service import _tool_calculate_hos_reach
+                    from services.poi_service import _tool_find_truck_parking
                     res = _tool_calculate_hos_reach(args["driven_seconds"], args["speed_kmh"])
-                    tool_act = {"action": "tachograph", "driven_hours": round(args.get("driven_seconds", 0)/3600, 1), "remaining_hours": round(res["remaining_h"] + res["remaining_min"]/60, 2), "break_needed": res["break_needed"]}
+                    rem_h = res["remaining_h"] + res["remaining_min"] / 60
+                    suggested_stop = None
+                    if rem_h < 0.5 or res["break_needed"]:
+                        p_lat, p_lng = context.get("lat"), context.get("lng")
+                        if p_lat and p_lng:
+                            parkings = _tool_find_truck_parking(p_lat, p_lng, 30_000)
+                            if parkings: suggested_stop = {"lat": parkings[0]["lat"], "lng": parkings[0]["lng"], "name": parkings[0]["name"]}
+                    tool_act = {"action": "tachograph", "driven_hours": round(args.get("driven_seconds", 0)/3600, 1),
+                                "remaining_hours": round(rem_h, 2), "break_needed": res["break_needed"],
+                                "suggested_stop": suggested_stop}
+                elif fn == "calculate_travel_matrix":
+                    from services.tomtom_service import _tool_check_traffic
+                    res = {"status": "ok", "note": "matrix not implemented"}
+                elif fn == "check_traffic_route":
+                    res = _tool_check_traffic(args["origin_lng"], args["origin_lat"], args["dest_lng"], args["dest_lat"])
                 elif fn == "launch_app":
                     tool_act = {"action": "app", "data": {"app": args["app_name"], "query": args.get("query", "")}}
+                    res = {"status": "success", "app": args["app_name"]}
                 
                 if tool_act: turn_action = tool_act if tool_act.get("action") in ("route", "add_waypoint") or not turn_action else turn_action
                 turn_results.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(res, ensure_ascii=False)})
