@@ -1,9 +1,51 @@
+import math
 import requests
 from flask import Blueprint, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
 from utils.helpers import _is_rate_limited, _get_body, now_iso
 from services.tomtom_service import _tomtom_along_route
 from services.poi_service import _tool_find_truck_parking, _tool_find_speed_cameras, _tool_find_overtaking_restrictions
+
+def _transparking_along_route(coords: list, max_results: int = 6) -> list:
+    """Find TransParking truck stops along a route using our local DB."""
+    if not coords or len(coords) < 2:
+        return []
+
+    # Sample 3 points at 25%, 50%, 75% of route
+    n = len(coords)
+    sample_idxs = [n // 4, n // 2, (3 * n) // 4]
+    sample_pts = list({i: coords[i] for i in sample_idxs}.values())
+
+    PAD = 0.09  # ~10 km
+    seen, results = set(), []
+
+    with get_db() as db:
+        for pt in sample_pts:
+            lng, lat = pt[0], pt[1]
+            rows = db.execute(
+                "SELECT pointid, name, lat, lng FROM transparking_cache "
+                "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 20",
+                (lat - PAD, lat + PAD, lng - PAD, lng + PAD)
+            ).fetchall()
+            for r in rows:
+                if r["pointid"] in seen:
+                    continue
+                seen.add(r["pointid"])
+                dist_m = int(math.sqrt((r["lat"] - lat)**2 + (r["lng"] - lng)**2) * 111000)
+                results.append({
+                    "name": r["name"],
+                    "lat": r["lat"],
+                    "lng": r["lng"],
+                    "distance_m": dist_m,
+                    "transparking_id": r["pointid"],
+                    "transparking_url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}",
+                    "paid": True,
+                    "category": "truck_stop",
+                    "voice_desc": f"Паркинг {r['name']} на {dist_m // 1000} километра от маршрута.",
+                })
+
+    results.sort(key=lambda x: x["distance_m"])
+    return results[:max_results]
 
 poi_bp = Blueprint('poi', __name__)
 
@@ -51,14 +93,12 @@ def poi_along_route_v2():
     data = _get_body()
     coords, category = data.get("coords", []), data.get("category", "truck_stop")
     if not coords or len(coords) < 2: return jsonify({"pois": []})
-    results = _tomtom_along_route(coords, "truck stop" if category == "truck_stop" else "petrol station", max_detour_s=900, limit=40)
-    for r in results:
-        r["category"] = category
-        if category == "truck_stop":
-            tp = _transparking_match(r["lat"], r["lng"])
-            if tp:
-                r["transparking_url"] = tp["url"]
-                r["transparking_id"] = tp["pointid"]
+    if category == "truck_stop":
+        results = _transparking_along_route(coords)
+    else:
+        results = _tomtom_along_route(coords, "petrol station", max_detour_s=900, limit=10)
+        for r in results:
+            r["category"] = category
     return jsonify({"pois": results})
 
 @poi_bp.post("/api/cameras-along-route")
