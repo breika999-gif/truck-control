@@ -117,21 +117,43 @@ def get_truck_bans():
 
     try:
         # Step 1: get cookies
-        session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        root_resp = session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        
         # Step 2: get dynamic param name from JS
         js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
         m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
         param_name = m.group(1) if m else "KHcYF42A"
-        # Step 3: get session key (requires Sec-Fetch headers to pass SHA check)
+        
+        # Step 3: try session key
         key_resp = session.get(f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}", headers=headers, timeout=10)
-        key = key_resp.json().get("key")
-        if not key:
-            raise ValueError(f"no key: {key_resp.text[:100]}")
-        # Step 4: get bans
-        bans_resp = session.get(f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}", headers=headers, timeout=10)
-        raw_bans = bans_resp.json()
+        key_data = {}
+        try: key_data = key_resp.json()
+        except: pass
+        key = key_data.get("key")
+        
+        # Step 4: try fetch (with key or without)
+        fetch_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key or ''}&d={date_str}"
+        bans_resp = session.get(fetch_url, headers=headers, timeout=10)
+        
+        debug_info = {
+            "root_status": root_resp.status_code,
+            "key_status": key_resp.status_code,
+            "bans_status": bans_resp.status_code,
+            "has_key": bool(key),
+            "content_type": bans_resp.headers.get('Content-Type'),
+            "sample": bans_resp.text[:500] if bans_resp.text else "empty"
+        }
+
+        if not bans_resp.ok:
+            return jsonify({"bans": [], "error": f"HTTP {bans_resp.status_code}", "debug": debug_info}), 502
+
+        try:
+            raw_bans = bans_resp.json()
+        except:
+            return jsonify({"bans": [], "error": "Not JSON", "debug": debug_info}), 502
+
         if not isinstance(raw_bans, list):
-            raise ValueError(f"not a list: {bans_resp.text[:100]}")
+            return jsonify({"bans": [], "error": "Not a list", "debug": debug_info}), 502
 
         formatted = []
         for b in raw_bans:
@@ -151,10 +173,10 @@ def get_truck_bans():
                 conn.commit()
         except: pass
 
-        return jsonify({"bans": formatted, "source": "live"})
+        return jsonify({"bans": formatted, "source": "live", "debug": debug_info})
 
     except Exception as e:
-        return jsonify({"bans": [], "error": "Scraper error", "details": str(e)}), 502
+        return jsonify({"bans": [], "error": "Request failed", "details": str(e)}), 502
 
 def _extract_route_restrictions(geometry: dict) -> list:
     coords = geometry.get("coordinates", [])
