@@ -71,7 +71,7 @@ def cameras_along_route_v2():
         bbox = f"{min(lats)-pad},{min(lngs)-pad},{max(lats)+pad},{max(lngs)+pad}"
         q = f'[out:json][timeout:20];(node["highway"="speed_camera"]({bbox});node["enforcement"="speed"]({bbox});node["man_made"="surveillance"]["surveillance:type"="camera"]({bbox}););out body;'
         try:
-            resp = requests.post("https://overpass-api.de/api/interpreter", data=query, timeout=18)
+            resp = requests.post("https://overpass-api.de/api/interpreter", data=q, timeout=18)
             for el in resp.json().get("elements", []):
                 if el["id"] in seen_ids: continue
                 seen_ids.add(el["id"])
