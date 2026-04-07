@@ -56,7 +56,9 @@ def poi_along_route_v2():
         r["category"] = category
         if category == "truck_stop":
             tp = _transparking_match(r["lat"], r["lng"])
-            if tp: r["transparking_url"] = tp["url"]
+            if tp:
+                r["transparking_url"] = tp["url"]
+                r["transparking_id"] = tp["pointid"]
     return jsonify({"pois": results})
 
 @poi_bp.post("/api/cameras-along-route")
