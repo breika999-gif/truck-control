@@ -129,15 +129,19 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                               "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
                     tool_act = {"action": "show_pois", "category": "speed_camera", "cards": cards, "nearest_m": res.get("nearest_m", -1)}
                 elif fn == "search_business":
-                    from services.poi_service import _enrich_business_with_places
-                    from config import GOOGLE_PLACES_KEY
-                    res = _tomtom_search(f"{args['query']} {args.get('city', '')}".strip(), args["lat"], args["lng"])
+                    from services.poi_service import _google_places_fallback
+                    from database import _poi_cache_get, _poi_cache_set
+                    q = f"{args['query']} {args.get('city', '')}".strip()
+                    _ck = f"biz:{q.lower()}:{round(args['lat'],2)}:{round(args['lng'],2)}"
+                    res = _poi_cache_get(_ck) or _tomtom_search(q, args["lat"], args["lng"])
+                    if not res: res = _google_places_fallback(q, args["lat"], args["lng"])
+                    _poi_cache_set(_ck, res)
+                    
                     valid = [b for b in res[:6] if b.get("lat")]
-                    enriched = list(ThreadPoolExecutor(6).map(_enrich_business_with_places, valid)) if GOOGLE_PLACES_KEY and valid else valid
                     cards = [{"name": b.get("name", ""), "lat": b["lat"], "lng": b["lng"],
                               "distance_m": b.get("distance_m", 0), "info": b.get("address", ""),
                               "photo_url": b.get("photo_url"), "open_now": b.get("open_now"),
-                              "needs_confirm": b.get("needs_confirm", False)} for b in enriched]
+                              "needs_confirm": b.get("needs_confirm", False)} for b in valid]
                     tool_act = {"action": "show_pois", "category": "business", "cards": cards}
                 elif fn == "add_waypoint":
                     from services.poi_service import _tool_add_waypoint
@@ -159,8 +163,21 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
                                 "remaining_hours": round(rem_h, 2), "break_needed": res["break_needed"],
                                 "suggested_stop": suggested_stop}
                 elif fn == "calculate_travel_matrix":
-                    from services.tomtom_service import _tool_check_traffic
-                    res = {"status": "ok", "note": "matrix not implemented"}
+                    from utils.helpers import _haversine_m
+                    pts = args.get("points", [])[:10]
+                    if len(pts) < 2:
+                        res = {"error": "Нужни са поне 2 точки"}
+                    else:
+                        n = len(pts)
+                        dist_matrix = [[round(_haversine_m(pts[i]["lat"],pts[i]["lng"],pts[j]["lat"],pts[j]["lng"])/1000,2) if i!=j else 0.0 for j in range(n)] for i in range(n)]
+                        remaining, order = list(range(1,n)), [0]
+                        while remaining:
+                            last = order[-1]
+                            nearest = min(remaining, key=lambda j: dist_matrix[last][j])
+                            order.append(nearest)
+                            remaining.remove(nearest)
+                        optimal = [pts[i].get("label",f"Точка {i+1}") for i in order]
+                        res = {"optimal_order": optimal, "summary": f"Оптимален ред: {' → '.join(optimal)}"}
                 elif fn == "check_traffic_route":
                     res = _tool_check_traffic(args["origin_lng"], args["origin_lat"], args["dest_lng"], args["dest_lat"])
                 elif fn == "launch_app":
@@ -178,7 +195,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     if action:
         act_type = action.get("action")
         if act_type == "route": display_text = f"Прокладвам маршрут до {action.get('destination', '')}."
-        elif act_type == "show_pois": display_text = f"Намерих {len(action.get('cards', []))} резултата."
+        elif act_type == "show_pois":
+            count = len(action.get("cards", []))
+            cat = action.get("category", "")
+            if cat == "truck_stop": display_text = f"Намерих {count} паркинга за камиони наблизо."
+            elif cat == "fuel": display_text = f"Намерих {count} бензиностанции по маршрута."
+            elif cat == "speed_camera": display_text = f"Намерих {count} камери наблизо."
+            elif cat == "business": display_text = f"Намерих {count} резултата."
+            else: display_text = f"Намерих {count} обекта."
         elif act_type == "show_routes": display_text = f"Намерих варианти до {action.get('destination', '')}."
         elif act_type == "add_waypoint": display_text = f"Добавена спирка: {action.get('name', '')}."
         else: display_text = reply
