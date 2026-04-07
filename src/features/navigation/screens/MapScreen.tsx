@@ -441,6 +441,8 @@ const MapScreen: React.FC = () => {
       await audioRecorderPlayer.startRecorder();
       audioRecorderPlayer.addRecordBackListener(() => {});
     } catch (err) {
+      setIsRecording(false);
+      console.warn('[Mic] startRecorder failed:', err);
     }
   }, [audioRecorderPlayer]);
 
@@ -460,6 +462,7 @@ const MapScreen: React.FC = () => {
         setTimeout(() => handleChat(), 200);
       }
     } catch (err) {
+      console.warn('[Mic] stopRecorder failed:', err);
     } finally {
       setMicLoading(false);
     }
@@ -1163,6 +1166,109 @@ const MapScreen: React.FC = () => {
           <Text style={styles.noInternetText}>⚠️ Сървърът не отговаря — AI функциите са изключени</Text>
         </View>
       )}
+
+      {/* ── Map ── */}
+      <Mapbox.MapView
+        style={styles.map}
+        styleURL={mapStyleURL}
+        pitchEnabled
+        scaleBarEnabled={false}
+        attributionPosition={{ bottom: 8, left: 8 }}
+        onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
+        onLongPress={handleMapLongPress}
+        onRegionWillChange={(feature: any) => {
+          if (navigating && isTracking && feature?.properties?.isUserInteraction) {
+            setIsTracking(false);
+          }
+        }}
+        onPress={() => {
+          if (gptChatOpen) setGptChatOpen(false);
+          if (geminiChatOpen) setGeminiChatOpen(false);
+          if (longPressCoord) setLongPressCoord(null);
+          if (selectedParking) setSelectedParking(null);
+        }}
+      >
+        <Mapbox.Images
+          images={{
+            'nav-arrow':     NAV_ARROW,
+            'sign-closed':   SIGN_CLOSED,
+            'sign-danger-0': SIGN_DANGER0,
+            'star-icon':     STAR_ICON,
+            'parking-icon':  ICON_PARKING,
+            'fuel-icon':     ICON_FUEL,
+            'camera-icon':   ICON_CAMERA,
+            'biz-icon':      ICON_BIZ,
+            'no-overtaking': ICON_NO_OVERTAKING,
+            'dest-flag':     ICON_DESTINATION,
+          }}
+          onImageMissing={(imageKey) => {
+            console.warn('[Mapbox] missing image in atlas:', imageKey);
+          }}
+        />
+
+        <StableCamera
+          cameraRef={cameraRef}
+          navigating={navigating}
+          mapLoaded={mapIsLoaded}
+          speed={speed}
+          isTracking={isTracking}
+        />
+
+        <Mapbox.UserLocation visible={false} />
+
+        <LocationPuck
+          puckBearingEnabled
+          puckBearing="course"
+          topImage="nav-arrow"
+          bearingImage="nav-arrow"
+          shadowImage="nav-arrow"
+          scale={puckScale}
+          pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
+          visible
+        />
+
+        <MapLayers
+          mapIsLoaded={mapIsLoaded}
+          mapMode={mapMode}
+          showTraffic={showTraffic}
+          showIncidents={showIncidents}
+          showRestrictions={showRestrictions}
+          showStarredLayer={showStarredLayer}
+          navigating={navigating}
+          trafficKey={trafficKey}
+          lightMode={lightMode}
+          route={route}
+          routeShape={routeShape}
+          routeLineColor={routeLineColor}
+          exitsGeoJSON={exitsGeoJSON}
+          navTrafficAlerts={navTrafficAlerts}
+          starGeoJSON={starGeoJSON}
+          starredPOIs={starredPOIs}
+          customOriginRef={customOriginRef}
+          userCoords={userCoords}
+          destination={destination}
+          parkingResults={parkingResults}
+          fuelResults={fuelResults}
+          businessResults={businessResults}
+          businessGeoJSON={businessGeoJSON}
+          cameraResults={cameraResults}
+          cameraGeoJSON={cameraGeoJSON}
+          overtakingResults={overtakingResults}
+          overtakingGeoJSON={overtakingGeoJSON}
+          navCongestionVisible={navCongestionVisible}
+          routeOptions={routeOptions}
+          selectedRouteIdx={selectedRouteIdx}
+          navigateTo={navigateTo}
+          setSelectedParking={setSelectedParking}
+          setSelectedFuel={setSelectedFuel}
+          handleSelectRouteOption={handleSelectRouteOption}
+          ttsSpeak={ttsSpeak}
+          voiceMutedRef={voiceMutedRef}
+          restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
+          currentStep={currentStep}
+        />
+
+      </Mapbox.MapView>
 
       {/* ── Search bar (hidden during navigation) ── */}
       {!navigating && (
