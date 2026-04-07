@@ -116,28 +116,22 @@ def get_truck_bans():
     }
 
     try:
-        # 1. Get initial cookies
-        session.get("https://www.trafficban.com/", headers=headers, timeout=10)
+        # Try direct fetch first
+        url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?d={date_str}"
+        bans_resp = session.get(url, headers=headers, timeout=10)
         
-        # 2. Find the dynamic parameter name from the main JS
-        js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
-        # Look for something like ?KHcYF42A=
-        m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
-        param_name = m.group(1) if m else "KHcYF42A"
-        
-        # 3. Get the session key for the date
-        key_url = f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}"
-        key_resp = session.get(key_url, headers=headers, timeout=10)
-        key_data = key_resp.json()
-        key = key_data.get("key")
-        
-        if not key:
-            return jsonify({"bans": [], "error": "Failed to get session key", "debug": key_data}), 502
+        # If it doesn't work, it might need the param_name but not necessarily a "key"
+        if not bans_resp.ok or not isinstance(bans_resp.json(), list):
+            # Fallback: find the dynamic parameter name but try without key
+            js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
+            m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
+            param_name = m.group(1) if m else "KHcYF42A"
+            url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}=&d={date_str}"
+            bans_resp = session.get(url, headers=headers, timeout=10)
 
-        # 4. Get the actual bans
-        bans_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}"
-        bans_resp = session.get(bans_url, headers=headers, timeout=10)
         raw_bans = bans_resp.json()
+        if not isinstance(raw_bans, list):
+            raise ValueError("Response is not a list")
 
         formatted = []
         for b in raw_bans:
