@@ -36,7 +36,7 @@ def gemini_chat():
     with ThreadPoolExecutor(max_workers=2) as executor:
         def call_gemini_task():
             contents = []
-            for h in history[-4:]:
+            for h in history[-6:]:
                 role = "user" if h.get("role") == "user" else "model"
                 contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
             ctx_note = f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]" if context.get("lat") else ""
@@ -62,7 +62,12 @@ def gemini_chat():
 
     nav_cmd, clean_reply = _extract_nav_intent(gemini_text)
     app_intent, clean_reply = _extract_app_intent(clean_reply)
-    action = f_gpt.result().get("action") if nav_cmd and _gpt4o_ready and f_gpt.result() else None
+    
+    try:
+        gpt_res = f_gpt.result()
+    except Exception:
+        gpt_res = None
+    action = gpt_res.get("action") if nav_cmd and _gpt4o_ready and gpt_res else None
     
     rem_tags = re.findall(r'<remember\s+category="(\w+)">(.*?)</remember>', clean_reply, re.DOTALL)
     clean_reply = re.sub(r'<remember[^>]*>.*?</remember>', '', clean_reply, flags=re.DOTALL).strip()
