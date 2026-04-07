@@ -35,7 +35,6 @@ import { useVehicleStore } from '../../../store/vehicleStore';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import SearchBar from '../components/SearchBar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import SignRenderer, { SIGN_TRIGGER_M } from '../components/SignRenderer';
 import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';

@@ -123,10 +123,12 @@ export function useChat({
         breakNeeded:    act.break_needed ?? false,
         suggestedStop:  act.suggested_stop,
       });
+    } else if (act.action === 'app') {
+      handleAppIntent(act.data ?? act);
     }
-  }, [navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults, 
-      setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination, 
-      setTachographResult, speak]);
+  }, [navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults,
+      setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination,
+      setTachographResult, handleAppIntent, speak]);
 
   // ── GPT-4o logic ──────────────────────────────────────────────────────────
   const sendGptText = useCallback(async (text: string) => {
