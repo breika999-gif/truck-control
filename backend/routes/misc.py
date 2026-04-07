@@ -78,6 +78,13 @@ def orchestrate():
         return jsonify({"ok": True, "answer": synth_resp.content[0].text.strip(), "tasks": [{"task": t.get("task", ""), "result": worker_results[i]} for i, t in enumerate(tasks)]})
     except Exception as e: return jsonify({"ok": False, "error": str(e)}), 500
 
+@misc_bp.delete("/api/truck-bans/cache")
+def clear_truck_bans_cache():
+    with get_db() as conn:
+        conn.execute("DELETE FROM truck_bans_cache")
+        conn.commit()
+    return jsonify({"ok": True})
+
 @misc_bp.route("/api/truck-bans", methods=["GET"])
 def get_truck_bans():
     date_str = request.args.get("date")
