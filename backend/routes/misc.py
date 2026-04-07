@@ -88,13 +88,25 @@ def get_truck_bans():
             if row and (datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=timezone.utc)).total_seconds() < 604800:
                 return jsonify({"bans": json.loads(row["data"])})
     except: pass
-    session, headers = requests.Session(), {"User-Agent": "Mozilla/5.0", "Referer": "https://www.trafficban.com/"}
+    session = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://www.trafficban.com/",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
     try:
         session.get("https://www.trafficban.com/", headers=headers, timeout=10)
         js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
-        param_name = re.search(r'\?([K][a-zA-Z0-9]+)=', js_resp.text).group(1)
+        m = re.search(r'\?([K][a-zA-Z0-9]+)=', js_resp.text)
+        param_name = m.group(1) if m else "KHcYF42A"
         key_resp = session.get(f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}", headers=headers, timeout=10)
         key = key_resp.json().get("key")
+        if not key: raise ValueError("no key")
         bans_resp = session.get(f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date_str}", headers=headers, timeout=10)
         formatted = [{"flag": b.get("fl"), "country": b.get("cr"), "time": b.get("tm"), "alert": bool(b.get("al")), "note": "Важна забрана" if b.get("al") else ""} for b in bans_resp.json()]
         with get_db() as conn: conn.execute("INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)", (date_str, json.dumps(formatted), now_iso()))
