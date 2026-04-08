@@ -96,7 +96,7 @@ def poi_along_route_v2():
     if category == "truck_stop":
         results = _transparking_along_route(coords)
     else:
-        results = _tomtom_along_route(coords, "petrol station", max_detour_s=900, limit=10)
+        results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=10)
         for r in results:
             r["category"] = category
     return jsonify({"pois": results})
