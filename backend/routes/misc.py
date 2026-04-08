@@ -4,12 +4,12 @@ from flask import Blueprint, jsonify, request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import (
     OPENAI_API_KEY, TOMTOM_API_KEY, _ORCHESTRATOR_SYSTEM, _SYNTHESIZER_SYSTEM,
-    MAPBOX_TOKEN, ANTHROPIC_API_KEY
+    ANTHROPIC_API_KEY
 )
 from database import get_db, row_to_poi, DB_PATH
 from utils.helpers import _is_rate_limited, _get_body, now_iso, _strip_md_fence
 from services.tomtom_service import (
-    _mapbox_map_match, _tomtom_route_to_geojson, _tomtom_lane_banner,
+    _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
     _adr_to_tunnel_code
 )
@@ -32,14 +32,6 @@ _ROUTE_CACHE_TTL = 300
 @misc_bp.get("/api/health")
 def health():
     return jsonify({"status": "ok", "version": "modular-v1.1", "python": sys.version, "gpt4o_ready": _gpt4o_ready, "gemini_ready": _gemini_ready, "tomtom_ready": bool(TOMTOM_API_KEY), "db": DB_PATH, "timestamp": now_iso()})
-
-@misc_bp.post("/api/routes/match-window")
-def match_window():
-    data = _get_body()
-    coords, from_idx = data.get("coords", []), data.get("from_index", 0)
-    if not coords or from_idx >= len(coords): return jsonify({"coords": []})
-    window = coords[from_idx : from_idx + 800]
-    return jsonify({"coords": _mapbox_map_match(window, max_points=800)})
 
 @misc_bp.route("/api/google-sync", methods=["GET", "POST"])
 def google_sync():
@@ -207,7 +199,7 @@ def calculate_route():
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
-    o_lat, o_lng, d_lat, d_lng = round(origin[1], 3), round(origin[0], 3), round(destination[1], 3), round(destination[0], 3)
+    o_lat, o_lng, d_lat, d_lng = round(origin[1], 6), round(origin[0], 6), round(destination[1], 6), round(destination[0], 6)
     truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
     cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}"
     if cache_key in _route_cache:
@@ -237,8 +229,6 @@ def calculate_route():
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
         alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
-        mm_pts = 200 if total_m > 1000000 else 400 if total_m > 500000 else 800 if total_m > 200000 else 1600
-        geom["coordinates"] = _mapbox_map_match(geom["coordinates"], max_points=mm_pts)
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": _tomtom_congestion_geojson(rt, geom), "traffic_alerts": _tomtom_traffic_alerts(rt, geom), "restrictions": _extract_route_restrictions(geom), "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)
