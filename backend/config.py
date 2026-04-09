@@ -14,12 +14,6 @@ TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-preview-04-17")
 
-MAPBOX_TOKEN = (
-    "pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ"
-    ".hprmbhb8EVFSfF7cqc4lkw"
-)
-_MAPBOX_TOKEN = MAPBOX_TOKEN  # alias used in tomtom_service
-
 # ── Flask Configuration ─────────────────────────────────────────────────────
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "true").lower() == "true"

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,18 +12,10 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { colors, spacing, radius } from '../../../shared/constants/theme';
-import { BACKEND_URL } from '../../../shared/constants/config';
+import { useTruckBans, type Ban } from '../hooks/useTruckBans';
 
 const NEON = '#00f7ff';
 const NEON_DIM = 'rgba(0,247,255,0.08)';
-
-interface Ban {
-  flag: string;
-  country: string;
-  time: string;
-  alert: boolean;
-  note?: string;
-}
 
 const FLAG_MAP: Record<string, string> = {
   AT: '🇦🇹', BE: '🇧🇪', BG: '🇧🇬', CH: '🇨🇭', CZ: '🇨🇿',
@@ -42,7 +34,7 @@ const COUNTRY_BG: Record<string, string> = {
   Liechtenstein: 'Лихтенщайн', Luxembourg: 'Люксембург', Netherlands: 'Холандия',
   Norway: 'Норвегия', Poland: 'Полша', Portugal: 'Португалия',
   Romania: 'Румъния', Serbia: 'Сърбия', Sweden: 'Швеция',
-  Slovenia: 'Словения', Slovakia: 'Словакия', Turkey: 'Турция', Ukraine: 'Украйна',
+  Slovenia: 'Словения', Slovakia: 'Словения', Turkey: 'Турция', Ukraine: 'Украйна',
 };
 
 const DAYS_BG = ['Нед', 'Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб'];
@@ -57,9 +49,8 @@ const TODAY = toISO(new Date());
 export default function TruckBansScreen() {
   const navigation = useNavigation();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [bans, setBans] = useState<Ban[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  
+  const { bans, loading, error, refetch } = useTruckBans(toISO(selectedDate));
 
   const dates = useMemo(() => {
     return Array.from({ length: 14 }, (_, i) => {
@@ -68,23 +59,6 @@ export default function TruckBansScreen() {
       return d;
     });
   }, []);
-
-  useEffect(() => { fetchBans(); }, [selectedDate]);
-
-  const fetchBans = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/truck-bans?date=${toISO(selectedDate)}`);
-      const data = await res.json();
-      if (data.error) setError(data.error);
-      else setBans(data.bans || []);
-    } catch {
-      setError('Грешка при зареждане');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const renderBan = ({ item }: { item: Ban }) => {
     const code = item.flag.toUpperCase();
@@ -155,7 +129,7 @@ export default function TruckBansScreen() {
       ) : error ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>⚠️ {error}</Text>
-          <TouchableOpacity onPress={fetchBans} style={styles.retryBtn}>
+          <TouchableOpacity onPress={refetch} style={styles.retryBtn}>
             <Text style={styles.retryText}>Опитай пак</Text>
           </TouchableOpacity>
         </View>

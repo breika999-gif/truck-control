@@ -1,9 +1,12 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, Linking } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { POICard } from '../../../shared/services/backendApi';
 import { styles, NEON } from '../screens/MapScreen.styles';
-import { fmtDistance, ttsSpeak, detectCountryCode, openInBrowser } from '../utils/mapUtils';
+import { fmtDistance, ttsSpeak, openInBrowser, getTransParkingUrl } from '../utils/mapUtils';
+import type { RootStackParamList } from '../../../shared/types/navigation';
 
 interface ParkingBubbleProps {
   parking: POICard;
@@ -16,6 +19,8 @@ interface ParkingBubbleProps {
   topOffset: number;
 }
 
+type NavProp = NativeStackNavigationProp<RootStackParamList>;
+
 const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   parking,
   onClose,
@@ -26,7 +31,9 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   hosLimitS,
   topOffset,
 }) => {
+  const navigation = useNavigation<NavProp>();
   const remainAfterTravel = hosLimitS - drivingSeconds - (parking.travel_time ?? 0);
+  const [tpLoading, setTpLoading] = useState(false);
 
   return (
     <View style={[styles.parkingBubble, { top: topOffset }]}>
@@ -111,35 +118,36 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
           <Text style={styles.parkingBubbleWpBtnTxt}>+ Спирка</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.pkWebBtn}
-          activeOpacity={0.8}
-          onPress={() => {
-            if (parking.transparking_id) {
-              const cc = detectCountryCode(parking.lat, parking.lng);
-              openInBrowser(`https://truckerapps.eu/transparking/${cc}/map/poi/${parking.transparking_id}`);
-            } else if (parking.website) {
-              openInBrowser(parking.website);
-            } else {
-              const cc = detectCountryCode(parking.lat, parking.lng);
-              openInBrowser(`https://truckerapps.eu/transparking/${cc}/map/`);
-            }
-          }}
-        >
-          <Icon name="open-in-new" size={12} color={NEON} />
-          <Text style={styles.pkWebBtnTxt}>Уеб</Text>
-        </TouchableOpacity>
-
-        {parking.transparking_url && (
+        {parking.transparking_id ? (
           <TouchableOpacity
-            style={[styles.parkingBubbleWebBtn, { backgroundColor: 'rgba(0,255,136,0.12)', borderColor: '#00ff88' }]}
+            style={[styles.pkWebBtn, { backgroundColor: 'rgba(0,255,136,0.12)', borderColor: '#00ff88', minWidth: 100 }]}
             activeOpacity={0.8}
-            onPress={() => Linking.openURL(parking.transparking_url!)}
+            disabled={tpLoading}
+            onPress={async () => {
+              setTpLoading(true);
+              const url = await getTransParkingUrl(parking.transparking_id!);
+              setTpLoading(false);
+              navigation.navigate('TruckParking', { url });
+            }}
           >
-            <Icon name="comment-text-multiple" size={16} color="#00ff88" />
-            <Text style={[styles.parkingBubbleWebBtnTxt, { color: '#00ff88' }]}>Отзиви</Text>
+            {tpLoading
+              ? <ActivityIndicator size="small" color="#00ff88" />
+              : <>
+                  <Icon name="comment-text-multiple" size={13} color="#00ff88" />
+                  <Text style={[styles.pkWebBtnTxt, { color: '#00ff88' }]}>TransParking</Text>
+                </>
+            }
           </TouchableOpacity>
-        )}
+        ) : parking.website ? (
+          <TouchableOpacity
+            style={styles.pkWebBtn}
+            activeOpacity={0.8}
+            onPress={() => openInBrowser(parking.website!)}
+          >
+            <Icon name="open-in-new" size={12} color={NEON} />
+            <Text style={styles.pkWebBtnTxt}>Уеб</Text>
+          </TouchableOpacity>
+        ) : null}
 
         {parking.voice_desc && (
           <TouchableOpacity

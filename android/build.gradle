@@ -6,9 +6,8 @@ buildscript {
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
         kotlinVersion = "2.1.20"
-        // Force react-native-geolocation-service to compile against the same
-        // play-services-location version used at runtime (by Mapbox etc.).
-        // Without this it defaults to 18.0.0 → IncompatibleClassChangeError on SettingsClient.
+        // Force react-native-geolocation-service to compile against the same SDK version.
+        // Without this it defaults to 18.0.0 -> IncompatibleClassChangeError on SettingsClient.
         googlePlayServicesVersion = "21.3.0"
     }
     repositories {
@@ -28,15 +27,5 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        maven {
-            url 'https://api.mapbox.com/downloads/v2/releases/maven'
-            credentials {
-                username = "mapbox"
-                password = project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: ""
-            }
-            authentication {
-                basic(BasicAuthentication)
-            }
-        }
     }
 }

@@ -207,7 +207,7 @@ def calculate_route():
         if _cache_time.time() < exp: return jsonify(res)
     all_points = [origin] + waypoints + [destination]
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1}
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "minDeviationDistance": 0}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]

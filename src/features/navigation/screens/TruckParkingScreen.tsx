@@ -23,12 +23,8 @@ const NEON = '#00bfff';
 const TruckParkingScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<TruckParkingRouteProp>();
-  const { userCoords } = route.params || {};
-
-  // Transparking map URL. 
-  // We can try to center it via URL if they support it, but they usually auto-locate.
-  // Using the English version of the map.
-  const transparkingUrl = 'https://truckerapps.eu/transparking/en/map/';
+  const { url } = route.params || {};
+  const transparkingUrl = url ?? 'https://truckerapps.eu/transparking/en/map/';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -59,6 +55,7 @@ const TruckParkingScreen: React.FC = () => {
           geolocationEnabled={true}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         />
       </View>
     </SafeAreaView>

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, type MutableRefObject } from 'react';
-import Mapbox from '@rnmapbox/maps';
+
 import type * as GeoJSON from 'geojson';
 
 import { MAP_CENTER } from '../../../shared/constants/config';
@@ -11,7 +11,7 @@ import {
   type RouteResult,
 } from '../api/directions';
 import type { NavPhase } from './useNavigationState';
-import { fetchCamerasAlongRoute, fetchPOIsAlongRoute } from '../../../shared/services/backendApi';
+import { fetchCamerasAlongRoute } from '../../../shared/services/backendApi';
 import type { POICard } from '../../../shared/services/backendApi';
 
 export type Coords = [number, number];
@@ -22,7 +22,7 @@ type UseRouteOrchestratorProps = {
   routeRef: MutableRefObject<RouteResult | null>;
   profileRef: MutableRefObject<VehicleProfile | null>;
   userCoordsRef: MutableRefObject<Coords | null>;
-  cameraRef: MutableRefObject<Mapbox.Camera | null>;
+  cameraRef: MutableRefObject<any>;
   profile: VehicleProfile | null;
   departAt: string | null;
   avoidUnpaved: boolean;
@@ -227,15 +227,7 @@ export function useRouteOrchestrator({
             .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
             .catch(() => { poisFetchedRef.current = false; });
 
-          // 2. Truck Parking — no signal
-          fetchPOIsAlongRoute(routeCoords, 'truck_stop')
-            .then(pois => { if (isMountedRef.current) setParkingResults(pois); })
-            .catch(() => { poisFetchedRef.current = false; });
-
-          // 3. Fuel Stations — no signal
-          fetchPOIsAlongRoute(routeCoords, 'fuel')
-            .then(pois => { if (isMountedRef.current) setFuelResults(pois); })
-            .catch(() => { poisFetchedRef.current = false; });
+          // 2 & 3. Truck Parking + Fuel — handled by handleSARSearch in MapScreen useEffect (no duplication)
         }
 
         const coords = result.geometry.coordinates;
@@ -251,11 +243,9 @@ export function useRouteOrchestrator({
         // Only fit bounds if we are NOT navigating.
         // During navigation, the StableCamera followUserLocation takes over.
         if (!navigatingRef.current && !autoStart) {
-          cameraRef.current?.fitBounds(
-            [maxLng, maxLat],
-            [minLng, minLat],
-            [120, 40, 220, 40],
-            1000,
+          cameraRef.current?.fitToCoordinates(
+            [{ latitude: minLat, longitude: minLng }, { latitude: maxLat, longitude: maxLng }],
+            { edgePadding: { top: 120, right: 40, bottom: 220, left: 40 }, animated: true },
           );
         }
 
@@ -263,11 +253,11 @@ export function useRouteOrchestrator({
           handleStartRef.current();
         }
       } else {
-        if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
+        if (!navigatingRef.current) cameraRef.current?.animateToRegion({ latitude: dest[1], longitude: dest[0], latitudeDelta: 0.05, longitudeDelta: 0.05 }, 800);
       }
     } catch (err) {
       setBackendOnline(false);
-      if (!navigatingRef.current) cameraRef.current?.flyTo(dest, 800);
+      if (!navigatingRef.current) cameraRef.current?.animateToRegion({ latitude: dest[1], longitude: dest[0], latitudeDelta: 0.05, longitudeDelta: 0.05 }, 800);
     } finally {
       // REROUTING → NAVIGATING; SEARCHING → ROUTE_PREVIEW
       if (isMountedRef.current) {

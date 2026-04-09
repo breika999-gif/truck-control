@@ -1,7 +1,7 @@
 import React from 'react';
 import { Platform, Linking } from 'react-native';
 import Tts from 'react-native-tts';
-import Mapbox, { type CameraPadding } from '@rnmapbox/maps';
+import type MapView from 'react-native-maps';
 
 import { MAP_CENTER } from '../../../shared/constants/config';
 import type { MapAction } from '../../../shared/services/backendApi';
@@ -45,8 +45,8 @@ export const ARROW_UTURN         = require('../../../shared/assets/maneuver/arro
 export const ARROW_ROUNDABOUT    = require('../../../shared/assets/maneuver/arrow_roundabout.png') as number;
 
 // ── Camera padding constants ──────────────────────────────────────────────────
-export const NAV_PADDING: CameraPadding  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
-export const ZERO_PADDING: CameraPadding = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
+export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
+export const ZERO_PADDING = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
 
 // ── App deep-link URL builders ────────────────────────────────────────────────
 export const APP_URL_MAP: Record<string, (query?: string) => string> = {
@@ -301,6 +301,26 @@ export function detectCountryCode(lat: number, lng: number): string {
   return 'eu';
 }
 
+/** Fetch the TransParking detail page URL for a given pointid. */
+export async function getTransParkingUrl(id: string): Promise<string> {
+  try {
+    const res = await fetch('https://truckerapps.eu/transparking/get_infowindow_content.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://truckerapps.eu/transparking/en/map/',
+      },
+      body: `pointid=${id}&lang=lang.en.php`,
+    });
+    const html = await res.text();
+    const match = html.match(/href="(https:\/\/truckerapps\.eu\/transparking\/[^"]+\.html)"/);
+    return match ? match[1] : 'https://truckerapps.eu/transparking/en/map/';
+  } catch {
+    return 'https://truckerapps.eu/transparking/en/map/';
+  }
+}
+
 /** Open a URL in the external browser, forcing Chrome on Android if available. */
 export function openInBrowser(url: string): void {
   if (Platform.OS === 'android') {
@@ -316,46 +336,32 @@ export function openInBrowser(url: string): void {
 }
 
 // ── StableCamera ──────────────────────────────────────────────────────────────
+// Follows user location during navigation with 3D pitch
 interface StableCameraProps {
-  cameraRef: React.RefObject<Mapbox.Camera | null>;
+  cameraRef: React.RefObject<any>;
   navigating: boolean;
   mapLoaded: boolean;
   speed?: number;
   isTracking?: boolean;
+  userCoords?: [number, number] | null;
+  userHeading?: number | null;
 }
 
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded, speed, isTracking }: StableCameraProps) => {
-    // Issue 1: Speed-based zoom level
-    let targetZoom = 17;
-    if (speed !== undefined && speed > 0) {
-      if (speed < 30) targetZoom = 17;
-      else if (speed < 70) targetZoom = 16;
-      else if (speed < 110) targetZoom = 15;
-      else targetZoom = 14;
-    }
-
-    const adaptivePitch = !navigating ? 0 : (speed ?? 0) >= 80 ? 30 : (speed ?? 0) >= 50 ? 45 : 60;
-
-    return (
-      <Mapbox.Camera
-        ref={cameraRef}
-        defaultSettings={{
-          centerCoordinate: [MAP_CENTER.longitude, MAP_CENTER.latitude],
-          zoomLevel: MAP_CENTER.zoomLevel,
-        }}
-        // Issue 2/3: Pause follow if not tracking
-        followUserLocation={navigating && mapLoaded && isTracking !== false}
-        followUserMode={Mapbox.UserTrackingMode.FollowWithCourse}
-        followZoomLevel={targetZoom}
-        followPitch={adaptivePitch}
-        followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
-      />
-    );
+  ({ cameraRef, navigating, mapLoaded, isTracking, userCoords, userHeading }: StableCameraProps) => {
+    React.useEffect(() => {
+      if (!navigating || !mapLoaded || !isTracking || !userCoords || !cameraRef.current) return;
+      cameraRef.current.animateCamera(
+        {
+          center: { latitude: userCoords[1], longitude: userCoords[0] },
+          heading: userHeading ?? 0,
+          pitch: 30,
+          zoom: 17,
+        },
+        { duration: 600 },
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userCoords, navigating, isTracking]);
+    return null;
   },
-  (prev, next) =>
-    prev.navigating === next.navigating &&
-    prev.mapLoaded === next.mapLoaded &&
-    prev.speed === next.speed &&
-    prev.isTracking === next.isTracking,
 );

@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, type MutableRefObject } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
-import { locationManager } from '@rnmapbox/maps';
 import {
   fetchNearbyRestrictions,
   fetchSpeedLimitAtPoint,
@@ -86,8 +85,6 @@ export const useLocationRuntime = ({
     let watchId: number | null = null;
 
     const startWatch = () => {
-      locationManager.start();
-
       Geolocation.getCurrentPosition(
         (pos) => {
           if (!isMountedRef.current) return;
@@ -192,7 +189,6 @@ export const useLocationRuntime = ({
 
     return () => {
       if (watchId !== null) Geolocation.clearWatch(watchId);
-      locationManager.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

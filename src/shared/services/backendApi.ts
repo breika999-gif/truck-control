@@ -521,6 +521,23 @@ export async function fetchProximityAlerts(
   }
 }
 
+/** Report a new speed camera. */
+export async function reportCamera(
+  lat: number,
+  lng: number,
+  userEmail?: string,
+): Promise<boolean> {
+  try {
+    const res = await apiRequest<{ ok: boolean }>('/api/cameras/report', {
+      method: 'POST',
+      body: JSON.stringify({ lat, lng, user_email: userEmail }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchCamerasAlongRoute(
   coords: [number, number][],
   signal?: AbortSignal,
