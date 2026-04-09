@@ -244,8 +244,9 @@ def calculate_route():
     if code: params["vehicleAdrTunnelRestrictionCode"] = code
     try:
         r = requests.get(f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json", params=params, timeout=15)
-        routes = r.json().get("routes", [])
-        if not routes: return jsonify({"error": "Няма маршрут"}), 404
+        resp_json = r.json()
+        routes = resp_json.get("routes", [])
+        if not routes: return jsonify({"error": "Няма маршрут", "tomtom_raw": resp_json}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
         geom = _tomtom_route_to_geojson(rt)
 
