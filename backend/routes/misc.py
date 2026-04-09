@@ -193,6 +193,32 @@ def _extract_route_restrictions(geometry: dict) -> list:
         return results
     except: return []
 
+def _snap_to_google_roads(coords: list) -> list:
+    """Snap [lng, lat] coordinates to the nearest road using Google Roads API."""
+    api_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+    if not api_key or not coords:
+        return coords
+    
+    all_snapped = []
+    # Batch by 99 points (API limit is 100)
+    for i in range(0, len(coords), 99):
+        batch = coords[i : i + 99]
+        path_str = "|".join([f"{c[1]},{c[0]}" for c in batch])
+        url = "https://roads.googleapis.com/v1/snapToRoads"
+        params = {"path": path_str, "interpolate": "true", "key": api_key}
+        try:
+            r = requests.get(url, params=params, timeout=10)
+            r.raise_for_status()
+            points = r.json().get("snappedPoints", [])
+            for p in points:
+                loc = p.get("location", {})
+                if "longitude" in loc and "latitude" in loc:
+                    all_snapped.append([loc["longitude"], loc["latitude"]])
+        except Exception:
+            # Fallback to original coords for this batch if API fails
+            all_snapped.extend(batch)
+    return all_snapped if all_snapped else coords
+
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
 def calculate_route():
     data = request.json or {}
@@ -222,6 +248,7 @@ def calculate_route():
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
         geom = _tomtom_route_to_geojson(rt)
+
         instructions = rt.get("guidance", {}).get("instructions", [])
         total_m, steps = summary.get("lengthInMeters", 0), []
         for i, instr in enumerate(instructions):
@@ -229,7 +256,20 @@ def calculate_route():
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
         alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
-        final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": _tomtom_congestion_geojson(rt, geom), "traffic_alerts": _tomtom_traffic_alerts(rt, geom), "restrictions": _extract_route_restrictions(geom), "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
+
+        # Calculate congestion/traffic BEFORE snapping (uses point indices from TomTom)
+        congestion_geojson = _tomtom_congestion_geojson(rt, geom)
+        traffic_alerts = _tomtom_traffic_alerts(rt, geom)
+        restrictions = _extract_route_restrictions(geom)
+
+        # Snap route to Google Roads AFTER traffic data is computed
+        google_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+        if google_key:
+            snapped = _snap_to_google_roads(geom['coordinates'])
+            if snapped:
+                geom['coordinates'] = snapped
+
+        final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)
     except Exception as e: return jsonify({"error": str(e)}), 500
