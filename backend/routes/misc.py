@@ -205,7 +205,7 @@ def _snap_to_google_roads(coords: list) -> list:
         batch = coords[i : i + 99]
         path_str = "|".join([f"{c[1]},{c[0]}" for c in batch])
         url = "https://roads.googleapis.com/v1/snapToRoads"
-        params = {"path": path_str, "interpolate": "true", "key": api_key}
+        params = {"path": path_str, "interpolate": "false", "key": api_key}
         try:
             r = requests.get(url, params=params, timeout=10)
             r.raise_for_status()
