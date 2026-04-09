@@ -195,7 +195,7 @@ def _extract_route_restrictions(geometry: dict) -> list:
 
 def _snap_to_google_roads(coords: list) -> list:
     """Snap [lng, lat] coordinates to the nearest road using Google Roads API."""
-    api_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+    api_key = os.environ.get('GOOGLE_MAPS_API_KEY') or os.environ.get('GOOGLE_PLACES_KEY', '')
     if not api_key or not coords:
         return coords
     
@@ -263,7 +263,7 @@ def calculate_route():
         restrictions = _extract_route_restrictions(geom)
 
         # Snap route to Google Roads AFTER traffic data is computed
-        google_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+        google_key = os.environ.get('GOOGLE_MAPS_API_KEY') or os.environ.get('GOOGLE_PLACES_KEY', '')
         if google_key:
             snapped = _snap_to_google_roads(geom['coordinates'])
             if snapped:
