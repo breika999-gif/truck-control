@@ -233,7 +233,7 @@ def calculate_route():
         if _cache_time.time() < exp: return jsonify(res)
     all_points = [origin] + waypoints + [destination]
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "minDeviationDistance": 0}
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline"}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]
@@ -244,9 +244,8 @@ def calculate_route():
     if code: params["vehicleAdrTunnelRestrictionCode"] = code
     try:
         r = requests.get(f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json", params=params, timeout=15)
-        resp_json = r.json()
-        routes = resp_json.get("routes", [])
-        if not routes: return jsonify({"error": "Няма маршрут", "tomtom_raw": resp_json}), 404
+        routes = r.json().get("routes", [])
+        if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
         geom = _tomtom_route_to_geojson(rt)
 
