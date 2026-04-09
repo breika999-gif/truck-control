@@ -304,11 +304,13 @@ def calculate_route():
         traffic_alerts = _tomtom_traffic_alerts(rt, geom)
         restrictions = _extract_route_restrictions(geom)
 
-        # Re-route through Google Directions for pixel-perfect road alignment on Google Maps
-        wps = _sample_tomtom_waypoints(instructions)
-        google_coords = _google_directions_polyline(origin, destination, wps)
-        if google_coords:
-            geom['coordinates'] = google_coords
+        # Re-route through Google Directions only for short/urban routes (<150 km)
+        # Long routes (highway/international) stay on TomTom coords — Google loses accuracy with sparse waypoints
+        if total_m < 150_000:
+            wps = _sample_tomtom_waypoints(instructions)
+            google_coords = _google_directions_polyline(origin, destination, wps)
+            if google_coords:
+                geom['coordinates'] = google_coords
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
