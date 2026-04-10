@@ -948,7 +948,7 @@ const MapScreen: React.FC = () => {
         provider={PROVIDER_GOOGLE}
         mapType={mapMode === 'hybrid' ? 'hybrid' : 'standard'}
         showsBuildings={true}
-        showsUserLocation={true}
+        showsUserLocation={false}
         showsMyLocationButton={false}
         showsCompass={false}
         showsTraffic={showTraffic}
