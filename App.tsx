@@ -14,6 +14,7 @@ import POIListScreen from './src/features/navigation/screens/POIListScreen';
 import TachoScreen from './src/features/tacho/screens/TachoScreen';
 import TruckBansScreen from './src/features/navigation/screens/TruckBansScreen';
 import TruckParkingScreen from './src/features/navigation/screens/TruckParkingScreen';
+import TachoCryptoScreen from './src/features/tacho/screens/TachoCryptoScreen';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 // Disable telemetry to prevent billing for Search Box sessions
@@ -66,6 +67,16 @@ export default function App() {
           options={{
             headerShown: true,
             title: 'Тахограф',
+            headerStyle: { backgroundColor: colors.bgSecondary },
+            headerTintColor: colors.text,
+          }}
+        />
+        <Stack.Screen
+          name="TachoCrypto"
+          component={TachoCryptoScreen}
+          options={{
+            headerShown: true,
+            title: 'Тахограф & Крипто',
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
           }}
