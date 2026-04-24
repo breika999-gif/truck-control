@@ -120,19 +120,23 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           {history.length === 0 && (
             <Text style={styles.chatPlaceholder}>{placeholder}</Text>
           )}
-          {history.map((msg, i) => (
-            <View
-              key={i}
-              style={[
-                styles.chatBubble,
-                msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
-              ]}
-            >
-              <Text style={msg.role === 'user' ? styles.chatBubbleText : styles.chatBubbleTextModel}>
-                {parseBubbleText(msg.text)}
-              </Text>
-            </View>
-          ))}
+          {history.map((msg, i) => {
+            const bubbleText = parseBubbleText(msg.text);
+            if (!bubbleText) return null;
+            return (
+              <View
+                key={i}
+                style={[
+                  styles.chatBubble,
+                  msg.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleModel,
+                ]}
+              >
+                <Text style={msg.role === 'user' ? styles.chatBubbleText : styles.chatBubbleTextModel}>
+                  {bubbleText}
+                </Text>
+              </View>
+            );
+          })}
           {loading && (
             <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 8 }} />
           )}

@@ -41,11 +41,11 @@ export async function suggestPlaces(
     typeahead: 'true',
   });
 
-  // Bias toward current position or Bulgaria center
-  const [biasLng, biasLat] = proximity ?? [MAP_CENTER.longitude, MAP_CENTER.latitude];
-  params.set('lat', String(biasLat));
-  params.set('lon', String(biasLng));
-  params.set('radius', '500000');   // 500 km — covers Bulgaria + neighbors
+  // Bias toward current position if available (no radius limit — worldwide search)
+  if (proximity) {
+    params.set('lat', String(proximity[1]));
+    params.set('lon', String(proximity[0]));
+  }
 
   try {
     const res = await fetch(
@@ -96,7 +96,7 @@ export async function suggestPlacesGoogle(
     const data = await res.json();
 
     return (data.results ?? []).map((r: any) => {
-      const id = `google_${r.lat}_${r.lng}_${Math.random()}`;
+      const id = `google_${r.lat}_${r.lng}_${encodeURIComponent((r.name ?? '').slice(0, 20))}`;
       // Cache for retrievePlace
       _ttCache.set(id, { lat: r.lat, lon: r.lng, name: r.name ?? '', address: r.address ?? '' });
       return {
@@ -115,7 +115,9 @@ export async function suggestPlacesGoogle(
 
 /**
  * Step 2 — retrieve exact coordinates for a suggestion.
- * Resolves from _ttCache (populated in suggestPlaces) — no extra network call.
+ * Primary: resolves from _ttCache (populated in suggestPlaces).
+ * Fallback A: Google IDs encode lat/lng in the id string — parsed directly.
+ * Fallback B: TomTom entity details API call.
  */
 export async function retrievePlace(place_id: string): Promise<GeoPlace | null> {
   const cached = _ttCache.get(place_id);
@@ -128,7 +130,36 @@ export async function retrievePlace(place_id: string): Promise<GeoPlace | null> 
     };
   }
 
-  // No cache hit and TomTom has no retrieve-by-id endpoint — cannot recover.
-  return null;
+  // Fallback A: Google IDs are formatted as "google_{lat}_{lng}_{random}"
+  if (place_id.startsWith('google_')) {
+    const parts = place_id.split('_');
+    const lat = parseFloat(parts[1]);
+    const lon = parseFloat(parts[2]);
+    if (!isNaN(lat) && !isNaN(lon)) {
+      return { id: place_id, text: '', place_name: '', center: [lon, lat] };
+    }
+  }
+
+  // Fallback B: TomTom entity details by ID
+  try {
+    const res = await fetch(
+      `https://api.tomtom.com/search/2/place.json?entityId=${encodeURIComponent(place_id)}&key=${TOMTOM_API_KEY}&language=bg-BG`,
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const r = data.results?.[0];
+    if (!r?.position) return null;
+    const name    = (r.poi?.name ?? r.address?.freeformAddress ?? '').trim();
+    const address = r.address?.freeformAddress ?? '';
+    _ttCache.set(place_id, { lat: r.position.lat, lon: r.position.lon, name, address });
+    return {
+      id:         place_id,
+      text:       name,
+      place_name: address,
+      center:     [r.position.lon, r.position.lat],
+    };
+  } catch {
+    return null;
+  }
 }
 

@@ -1,8 +1,10 @@
 import React, { memo } from 'react';
+import { View, Text } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import type * as GeoJSON from 'geojson';
 import { RouteResult } from '../api/directions';
 import { RouteOption, POICard } from '../../../shared/services/backendApi';
+import { TruckPOI, POI_META } from '../api/poi';
 
 interface MapLayersProps {
   mapIsLoaded: boolean;
@@ -16,6 +18,7 @@ interface MapLayersProps {
   lightMode: boolean;
   route: RouteResult | null;
   routeShape: GeoJSON.FeatureCollection | GeoJSON.Geometry | GeoJSON.Feature | null;
+  congestionGeoJSON: GeoJSON.FeatureCollection | null;
   routeLineColor: string;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
@@ -27,7 +30,6 @@ interface MapLayersProps {
   parkingResults: POICard[];
   fuelResults: POICard[];
   businessResults: any[];
-  businessGeoJSON: GeoJSON.FeatureCollection;
   cameraResults: any[];
   cameraGeoJSON: GeoJSON.FeatureCollection;
   overtakingResults: any[]; 
@@ -45,6 +47,9 @@ interface MapLayersProps {
   currentStep?: number;
   drivingSeconds?: number;
   hosLimitS?: number;
+  poiResults?: TruckPOI[];
+  poiResultsGeoJSON?: GeoJSON.FeatureCollection;
+  handlePOINavigate?: (poi: TruckPOI) => void;
 }
 
 const NEON = '#13BDFF';
@@ -64,6 +69,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   lightMode,
   route,
   routeShape,
+  congestionGeoJSON,
   routeLineColor,
   exitsGeoJSON,
   navTrafficAlerts,
@@ -75,7 +81,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
   parkingResults,
   fuelResults,
   businessResults,
-  businessGeoJSON,
   cameraResults,
   cameraGeoJSON,
   overtakingResults,
@@ -93,6 +98,9 @@ const MapLayers: React.FC<MapLayersProps> = ({
   currentStep = 0,
   drivingSeconds = 0,
   hosLimitS = 16200,
+  poiResults = [],
+  poiResultsGeoJSON,
+  handlePOINavigate,
 }) => {
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
@@ -224,7 +232,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.CircleLayer
             id="restriction-circles"
             slot="top"
-            minZoomLevel={11}
+            minZoomLevel={9}
             style={{
               circleRadius: 18,
               circleColor: '#FFFFFF',
@@ -239,7 +247,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="restriction-signs"
             slot="top"
-            minZoomLevel={11}
+            minZoomLevel={9}
             style={{
               textField: [
                 'concat',
@@ -323,7 +331,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.VectorSource>
       )}
 
-      {/* ── Route ── */}
+      {/* ── Route casing (dark border) ── */}
       {mapIsLoaded && routeShape && (
         <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
           <Mapbox.LineLayer
@@ -337,46 +345,38 @@ const MapLayers: React.FC<MapLayersProps> = ({
               lineJoin: 'round',
             }}
           />
-          <Mapbox.LineLayer
-            id="route-line"
-            slot="middle"
-            style={{
-              lineColor: ['match', ['get', 'congestion'],
-                'low', lightMode ? routeLineColor : '#13BDFF',
-                'moderate', '#FFBC40',
-                'heavy', '#FF9100',
-                'severe', '#FA0000',
-                lightMode ? routeLineColor : '#13BDFF',
-              ],
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
-              lineCap: 'round',
-              lineJoin: 'round',
-            }}
-          />
         </Mapbox.ShapeSource>
       )}
 
-      {/* ── Congestion overlay: 15 km ahead during navigation ── */}
-      {mapIsLoaded && navigating && navCongestionVisible && navCongestionVisible.features.length > 0 && (
-        <Mapbox.ShapeSource id="nav-congestion-src" shape={navCongestionVisible}>
-          <Mapbox.LineLayer
-            id="nav-congestion-line"
-            slot="middle"
-            style={{
-              lineColor: ['match', ['get', 'congestion'],
-                'low', routeLineColor,
-                'moderate', '#FF9500',
-                'heavy', '#FF3B30',
-                'severe', '#8B0000',
-                routeLineColor,
-              ],
-              lineWidth: 5,
-              lineCap: 'round',
-              lineJoin: 'round',
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
+      {/* ── Route congestion line (colored segments from TomTom data) ── */}
+      {mapIsLoaded && (() => {
+        // During navigation: show 15km slice; in preview: show full route
+        const shape = navigating
+          ? (navCongestionVisible && navCongestionVisible.features.length > 0 ? navCongestionVisible : congestionGeoJSON)
+          : congestionGeoJSON;
+        if (!shape) return null;
+        return (
+          <Mapbox.ShapeSource id="route-congestion-source" shape={shape} tolerance={0}>
+            <Mapbox.LineLayer
+              id="route-line"
+              slot="middle"
+              aboveLayerID="route-casing"
+              style={{
+                lineColor: ['match', ['get', 'congestion'],
+                  'low', lightMode ? routeLineColor : '#13BDFF',
+                  'moderate', '#FFBC40',
+                  'heavy', '#FF9100',
+                  'severe', '#FA0000',
+                  lightMode ? routeLineColor : '#13BDFF',
+                ],
+                lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </Mapbox.ShapeSource>
+        );
+      })()}
 
       {/* ── Route Arrows ── */}
       {mapIsLoaded && route && (
@@ -451,136 +451,166 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* POI Pins (Parking, Fuel, Biz, Camera, etc.) */}
-      {mapIsLoaded && parkingResults.length > 0 && (
-        <Mapbox.ShapeSource
-          id="parking-source"
-          shape={parkingGeoJSON_withIdx}
-          onPress={(e) => {
-            const feat = e.features[0];
-            if (!feat) return;
-            const idx = feat.properties?.index;
-            const p = parkingResults[idx];
-            if (p) {
+      {/* POI Pins (Parking) — MarkerView for custom React Native views */}
+      {mapIsLoaded && parkingResults.filter(p => p.lat && p.lng).map((p, i) => (
+        <Mapbox.MarkerView
+          key={`parking-pin-${i}`}
+          id={`parking-pin-${i}`}
+          coordinate={[p.lng, p.lat]}
+          allowOverlap
+        >
+          <View
+            style={{ alignItems: 'center' }}
+            onTouchEnd={() => {
               setSelectedParking(p);
               if (p.voice_desc && !voiceMutedRef.current) ttsSpeak(p.voice_desc);
-            }
+            }}
+          >
+            <View style={{
+              width: 36, height: 36,
+              borderRadius: 18,
+              backgroundColor: '#0a1a2e',
+              borderWidth: 2.5,
+              borderColor: '#13BDFF',
+              alignItems: 'center',
+              justifyContent: 'center',
+              shadowColor: '#13BDFF',
+              shadowOpacity: 0.5,
+              shadowRadius: 6,
+              elevation: 4,
+            }}>
+              <Text style={{ color: '#13BDFF', fontWeight: 'bold', fontSize: 16 }}>P</Text>
+            </View>
+            {p.distance_m != null && (
+              <View style={{
+                marginTop: 2,
+                backgroundColor: 'rgba(0,0,0,0.75)',
+                borderRadius: 6,
+                paddingHorizontal: 4,
+                paddingVertical: 1,
+              }}>
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+                  {p.distance_m >= 1000 ? `${(p.distance_m / 1000).toFixed(1)}km` : `${Math.round(p.distance_m)}m`}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Mapbox.MarkerView>
+      ))}
+
+      {/* Manual POI Search Results (poiResults) — PointAnnotation */}
+      {mapIsLoaded && poiResults.map((p, i) => (
+        <Mapbox.PointAnnotation
+          key={`poi-res-pin-${i}`}
+          id={`poi-res-pin-${i}`}
+          coordinate={p.coordinates}
+          onSelected={() => handlePOINavigate && handlePOINavigate(p)}
+        >
+          <View style={{
+            padding: 4,
+            backgroundColor: 'rgba(15,15,30,0.85)',
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: '#13BDFF',
+          }}>
+            <Text style={{ fontSize: 18 }}>{POI_META[p.category]?.emoji || '📍'}</Text>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
+
+      {/* Fuel station pins — PointAnnotation */}
+      {mapIsLoaded && fuelResults.filter(f => f.lat && f.lng).map((f, i) => (
+        <Mapbox.PointAnnotation
+          key={`fuel-pin-${i}`}
+          id={`fuel-pin-${i}`}
+          coordinate={[f.lng, f.lat]}
+          onSelected={() => {
+            setSelectedFuel(f);
+            if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
           }}
         >
-          <Mapbox.SymbolLayer
-            id="parking-symbols" slot="top" minZoomLevel={8}
-            style={{
-              textField: ['step', ['zoom'], 'P', 14, ['concat', 'P', '\n', ['case',
-                ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
-                ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
-                ''
-              ]]],
-              textSize: ['interpolate', ['linear'], ['zoom'], 6, 8, 10, 10, 12, 14, 18, 18],
-              textColor: '#ffffff',
-              textHaloColor: ['match', ['get', 'tachoStatus'],
-                'safe', SAFE_GREEN,
-                'warning', WARN_YELLOW,
-                'danger', DANGER_RED,
-                '#13BDFF'
-              ],
-              textHaloWidth: 1.8,
-              textHaloBlur: 0.5,
-              textAllowOverlap: true,
-              textIgnorePlacement: true,
-              textAnchor: 'center',
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
+          <View style={{
+            width: 30, height: 30,
+            borderRadius: 15,
+            backgroundColor: '#1a1a2e',
+            borderWidth: 2,
+            borderColor: '#f59e0b',
+            alignItems: 'center',
+            justifyContent: 'center',
+            shadowColor: '#f59e0b',
+            shadowOpacity: 0.6,
+            shadowRadius: 4,
+            elevation: 5,
+          }}>
+            <Text style={{ fontSize: 16 }}>⛽</Text>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
 
-      {/* Fuel station pins */}
-      {mapIsLoaded && fuelResults.length > 0 && (
-        <Mapbox.ShapeSource
-          id="fuel-source"
-          shape={fuelGeoJSON_withIdx}
-          onPress={(e) => {
-            const feat = e.features[0];
-            if (!feat) return;
-            const idx = feat.properties?.index;
-            const f = fuelResults[idx];
-            if (f) {
-              setSelectedFuel(f);
-              if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
-            }
-          }}
+      {/* Business pins — PointAnnotation */}
+      {mapIsLoaded && businessResults.filter(b => b.lat && b.lng).map((b, i) => (
+        <Mapbox.PointAnnotation
+          key={`biz-pin-${i}`}
+          id={`biz-pin-${i}`}
+          coordinate={[b.lng, b.lat]}
         >
-          <Mapbox.SymbolLayer
-            id="fuel-symbols" slot="top" minZoomLevel={7}
-            style={{
-              textField: ['step', ['zoom'], '⛽', 14, ['concat', '⛽', '\n', ['case',
-                ['>', ['coalesce', ['get', 'distance_m'], 0], 0],
-                ['concat', ['to-string', ['round', ['/', ['coalesce', ['get', 'distance_m'], 0], 1000]]], ' km'],
-                ''
-              ]]],
-              textSize: ['interpolate', ['linear'], ['zoom'], 10, 10, 12, 13],
-              textAnchor: 'top',
-              textOffset: [0, 0.5],
-              textHaloColor: '#1a1a2e',
-              textHaloWidth: 2,
-              textColor: '#ffffff',
-              textAllowOverlap: true,
-              iconAllowOverlap: true,
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
+          <View style={{
+            width: 28, height: 28,
+            borderRadius: 14,
+            backgroundColor: 'rgba(0,40,60,0.92)',
+            borderWidth: 2,
+            borderColor: '#00e5ff',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Text style={{ fontSize: 16 }}>🏢</Text>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
 
-      {/* Business pins */}
-      {mapIsLoaded && businessResults.length > 0 && (
-        <Mapbox.ShapeSource id="biz-source" shape={businessGeoJSON}>
-          <Mapbox.SymbolLayer
-            id="biz-symbols" slot="top"
-            style={{
-              textField: '🏢',
-              textSize: 22,
-              textHaloColor: '#f1c40f',
-              textHaloWidth: 1.5,
-              textAllowOverlap: true
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
+      {/* Camera pins — PointAnnotation */}
+      {mapIsLoaded && cameraResults.filter(c => c.lat && c.lng).map((c, i) => (
+        <Mapbox.PointAnnotation
+          key={`camera-pin-${i}`}
+          id={`camera-pin-${i}`}
+          coordinate={[c.lng, c.lat]}
+        >
+          <View style={{
+            backgroundColor: 'rgba(30,0,0,0.9)',
+            borderRadius: 6,
+            padding: 4,
+            borderWidth: 1.5,
+            borderColor: '#ff3b30',
+            alignItems: 'center',
+          }}>
+            <Text style={{ fontSize: 16 }}>📷</Text>
+            {c.maxspeed && (
+              <Text style={{ color: '#ff3b30', fontSize: 8, fontWeight: '800' }}>{c.maxspeed}</Text>
+            )}
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
 
-      {/* Camera pins */}
-      {mapIsLoaded && cameraResults.length > 0 && (
-        <Mapbox.ShapeSource id="camera-source" shape={cameraGeoJSON}>
-          <Mapbox.SymbolLayer
-            id="camera-emoji" slot="top" minZoomLevel={6}
-            style={{
-              textField: '📷',
-              textSize: ['interpolate', ['linear'], ['zoom'], 6, 10, 12, 14, 14, 18, 16, 22],
-              textHaloColor: '#ff3b30',
-              textHaloWidth: 1.5,
-              textAnchor: 'bottom',
-              textOffset: [0, 0.5],
-              textAllowOverlap: true,
-              textIgnorePlacement: true,
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
-
-      {/* Overtaking restrictions */}
-      {mapIsLoaded && overtakingResults.length > 0 && (
-        <Mapbox.ShapeSource id="overtaking-src" shape={overtakingGeoJSON}>
-          <Mapbox.SymbolLayer
-            id="overtaking-sign" slot="top" minZoomLevel={7}
-            style={{
-              textField: '🚫🚛',
-              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 12, 18, 14, 26],
-              textHaloColor: '#ff3b30',
-              textHaloWidth: 1.5,
-              textAnchor: 'bottom',
-              textAllowOverlap: true
-            }}
-          />
-        </Mapbox.ShapeSource>
-      )}
+      {/* Overtaking restrictions — PointAnnotation */}
+      {mapIsLoaded && overtakingResults.filter(r => r.lat && r.lng).map((r, i) => (
+        <Mapbox.PointAnnotation
+          key={`overtaking-pin-${i}`}
+          id={`overtaking-pin-${i}`}
+          coordinate={[r.lng, r.lat]}
+        >
+          <View style={{
+            width: 32, height: 32,
+            borderRadius: 16,
+            backgroundColor: '#fff',
+            borderWidth: 3,
+            borderColor: '#ff3b30',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <Text style={{ fontSize: 14 }}>🚫🚛</Text>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
 
       {/* Route alternatives */}
       {mapIsLoaded && routeOptions.map((opt, i) => {

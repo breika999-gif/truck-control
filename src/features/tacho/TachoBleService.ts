@@ -58,16 +58,22 @@ export class TachoBleService {
   }
 
   // ── 2. Scan for VDO/Stoneridge tachograph devices ─────────────────
+  // All discovered devices during scan (for manual selection)
+  private _foundDevices: Device[] = [];
+
   scanForTacho(
     onDeviceFound: (device: Device) => void,
     onStatus: (status: BleStatus, msg?: string) => void,
     timeoutMs = 15000,
   ): void {
     this.onStatusCallback = onStatus;
-    onStatus('scanning', 'Търся тахограф...');
+    this._foundDevices = [];
+    onStatus('scanning', 'Търся BLE устройства...');
 
+    // Scan ALL devices (null = no UUID filter) — VDO uses proprietary UUIDs
+    // that are not advertised, so filtering by UUID never finds anything.
     this.manager.startDeviceScan(
-      [VDO_BLE_CONFIG.SERVICE_UUID],
+      null,
       { allowDuplicates: false },
       (error, device) => {
         if (error) {
@@ -77,14 +83,25 @@ export class TachoBleService {
         if (!device) return;
 
         const name = device.name ?? device.localName ?? '';
-        const isVdo = TACHO_NAME_PATTERNS.some(p =>
+        if (!name) return; // skip unnamed devices
+
+        // Known VDO/tachograph name patterns — auto-connect if matched
+        const isKnownTacho = TACHO_NAME_PATTERNS.some(p =>
           name.toUpperCase().includes(p.toUpperCase()),
         );
 
-        if (isVdo) {
+        if (isKnownTacho) {
           this.manager.stopDeviceScan();
           if (this.scanTimeout) clearTimeout(this.scanTimeout);
           onDeviceFound(device);
+          return;
+        }
+
+        // Collect all named devices so TachoScreen can show a picker
+        if (!this._foundDevices.find(d => d.id === device.id)) {
+          this._foundDevices.push(device);
+          // Re-emit the first found device to trigger UI update (list mode)
+          onDeviceFound(this._foundDevices[0]);
         }
       },
     );
@@ -92,8 +109,16 @@ export class TachoBleService {
     // Auto-stop after timeout
     this.scanTimeout = setTimeout(() => {
       this.manager.stopDeviceScan();
-      onStatus('idle', 'Не е намерен тахограф. Провери дали е в BLE режим.');
+      onStatus('idle', this._foundDevices.length > 0
+        ? `Намерих ${this._foundDevices.length} устройства. Избери тахографа ръчно.`
+        : 'Не са намерени BLE устройства. Провери дали Bluetooth е включен.',
+      );
     }, timeoutMs);
+  }
+
+  /** Returns all devices found during the last scan (for manual picker). */
+  getFoundDevices(): Device[] {
+    return this._foundDevices;
   }
 
   stopScan(): void {

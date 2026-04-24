@@ -20,7 +20,9 @@ const TachoScreen: React.FC = () => {
     statusMsg,
     liveData,
     isConnected,
+    foundDevices,
     startScan,
+    connectToDevice,
     disconnect,
   } = useTachoBluetooth();
 
@@ -150,17 +152,19 @@ const TachoScreen: React.FC = () => {
         {isConnected && renderProgress()}
 
         {!isConnected ? (
-          <TouchableOpacity 
-            style={[styles.button, styles.connectButton]} 
+          <TouchableOpacity
+            style={[styles.button, styles.connectButton]}
             onPress={startScan}
             disabled={status === 'scanning' || status === 'connecting'}
           >
             <Icon name="bluetooth" size={24} color={colors.text} />
-            <Text style={styles.buttonText}>Свържи тахограф</Text>
+            <Text style={styles.buttonText}>
+              {status === 'scanning' ? 'Търся...' : 'Свържи тахограф'}
+            </Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity 
-            style={[styles.button, styles.disconnectButton]} 
+          <TouchableOpacity
+            style={[styles.button, styles.disconnectButton]}
             onPress={disconnect}
           >
             <Icon name="bluetooth-off" size={24} color={colors.text} />
@@ -168,11 +172,32 @@ const TachoScreen: React.FC = () => {
           </TouchableOpacity>
         )}
 
+        {/* Device picker — shown when scan found devices but none auto-matched */}
+        {!isConnected && foundDevices.length > 0 && (
+          <View style={styles.deviceList}>
+            <Text style={styles.deviceListTitle}>Намерени BLE устройства — избери тахографа:</Text>
+            {foundDevices.map(device => (
+              <TouchableOpacity
+                key={device.id}
+                style={styles.deviceItem}
+                onPress={() => connectToDevice(device)}
+              >
+                <Icon name="bluetooth" size={18} color={colors.accent} />
+                <View style={styles.deviceInfo}>
+                  <Text style={styles.deviceName}>{device.name ?? device.localName ?? '(без име)'}</Text>
+                  <Text style={styles.deviceId}>{device.id}</Text>
+                </View>
+                <Icon name="chevron-right" size={20} color={colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         <View style={styles.infoBox}>
           <Icon name="information-outline" size={20} color={colors.textMuted} />
           <Text style={styles.infoText}>
-            За свързване се уверете, че тахографът е в режим "Pairing" 
-            от менюто Settings {'->'} Bluetooth.
+            VDO DTCO: Settings → Bluetooth → Pairing{'\n'}
+            Stoneridge SE5000: Menu → BT Interface → Activate
           </Text>
         </View>
       </ScrollView>
@@ -331,6 +356,37 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginLeft: spacing.sm,
     flex: 1,
+  },
+  deviceList: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+  },
+  deviceListTitle: {
+    ...typography.label,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  deviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  deviceInfo: {
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+  deviceName: {
+    ...typography.body,
+    color: colors.text,
+  },
+  deviceId: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
 });
 

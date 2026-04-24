@@ -306,13 +306,8 @@ def _tool_suggest_routes(
         raw_geoms   = [_tomtom_route_to_geojson(rt) for rt in preview_rts]
         raw_coords  = [g["coordinates"] for g in raw_geoms]
 
-        if primary_dist_m > 300_000:
-            snapped = raw_coords
-        else:
-            with ThreadPoolExecutor(max_workers=len(raw_coords)) as ex:
-                snapped = list(ex.map(_mapbox_map_match, raw_coords))
         for i, g in enumerate(raw_geoms):
-            g["coordinates"] = snapped[i]
+            g["coordinates"] = raw_coords[i]
 
         colors = ["#00bfff", "#00ff88", "#ffcc00"]
         labels = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]

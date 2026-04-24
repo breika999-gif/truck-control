@@ -1,7 +1,6 @@
 import re
 import json
 from flask import Blueprint, jsonify, request
-from concurrent.futures import ThreadPoolExecutor
 from google import genai as _google_genai
 from config import GEMINI_MODEL, _GEMINI_SYSTEM, ANTHROPIC_API_KEY
 from services.gemini_service import _gemini_client, _gemini_ready, _personal_gemini_clients
@@ -12,6 +11,8 @@ from utils.helpers import (
     _extract_nav_intent, _extract_app_intent, _has_nav_intent, _strip_md_fence
 )
 from database import _db_save_chat
+
+_TACHO_HINTS = ["тахограф", "остава", "стигам", "до колко", "почивка", "пауза", "смяна", "лимит", "седмично", "driving", "remain", "hours", "break"]
 
 gemini_bp = Blueprint('gemini', __name__)
 
@@ -33,17 +34,17 @@ def gemini_chat():
 
     history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        def call_gemini_task():
-            contents = []
-            for h in history[-6:]:
-                role = "user" if h.get("role") == "user" else "model"
-                contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
+    def call_gemini_task():
+        contents = []
+        for h in history[-6:]:
+            role = "user" if h.get("role") == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
 
-            ctx_note = ""
-            if context.get("lat"):
-                ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+        ctx_note = ""
+        if context.get("lat"):
+            ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
 
+        if not context.get("tacho_log") and any(h in user_msg.lower() for h in _TACHO_HINTS):
             tacho = _tacho_summary(user_email)
             min_rem_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
             est_km = round(min_rem_h * 80)
@@ -57,53 +58,51 @@ def gemini_chat():
                 f"ефективно-остава {min_rem_h}ч ≈ {est_km}км при 80км/ч]"
             )
 
-            # Inject frontend overrides if present
-            fe_ctx = ""
-            if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
-            if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
-            if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
+        ble_block = _build_tacho_context_block()
+        if ble_block:
+            ctx_note += ble_block
 
-            if context.get("user_memory"):
-                ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
-            
-            if context.get("driver_habits"):
-                ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+        # Inject frontend overrides if present
+        fe_ctx = ""
+        if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
+        if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
+        if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
-            if _has_nav_intent(user_msg) and context.get("destination") and _gpt4o_ready:
-                rd = _get_gpt_route_insight(str(context["destination"]), context)
-                if rd: ctx_note += f" [gpt_route_data: {json.dumps(rd, ensure_ascii=False)}]"
+        if context.get("user_memory"):
+            ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
+        
+        if context.get("driver_habits"):
+            ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
 
-            contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
-            
-            try:
-                resp = _gemini_client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents=contents,
-                    config={"system_instruction": _GEMINI_SYSTEM + _build_tacho_context_block(), "temperature": 0.65, "max_output_tokens": 300}
-                )
-                return resp.text or ""
-            except Exception as e:
-                if _gpt4o_ready:
-                    res = _run_gpt4o_internal(user_msg, history, context)
-                    return res.get("reply", "") if isinstance(res, dict) else ""
-                return f"Грешка: {str(e)}"
+        if _has_nav_intent(user_msg) and context.get("destination") and _gpt4o_ready:
+            rd = _get_gpt_route_insight(str(context["destination"]), context)
+            if rd: ctx_note += f" [gpt_route_data: {json.dumps(rd, ensure_ascii=False)}]"
 
-        _NAV_HINTS = ["карай до", "навигирай", "маршрут до", "отиди до", "паркинг", "гориво", "бензиностанция", "дизел", "добави спирка", "заобиколи", "тунел", "navigate to", "route to", "go to", "find parking", "find fuel", "avoid"]
-        likely_nav = any(h in user_msg.lower() for h in _NAV_HINTS)
-        def call_gpt_task(): return _run_gpt4o_internal(user_msg, history, context) if _gpt4o_ready and likely_nav else None
+        contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
+        
+        try:
+            resp = _gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents,
+                config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300}
+            )
+            return resp.text or ""
+        except Exception as e:
+            if _gpt4o_ready:
+                res = _run_gpt4o_internal(user_msg, history, context)
+                return res.get("reply", "") if isinstance(res, dict) else ""
+            return f"Грешка: {str(e)}"
 
-        f_gem, f_gpt = executor.submit(call_gemini_task), executor.submit(call_gpt_task)
-        try: gemini_text = f_gem.result()
-        except Exception as e: return jsonify({"ok": False, "error": f"Gemini error: {str(e)[:100]}"}), 500
+    try:
+        gemini_text = call_gemini_task()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Gemini error: {str(e)[:100]}"}), 500
 
     nav_cmd, clean_reply = _extract_nav_intent(gemini_text)
     app_intent, clean_reply = _extract_app_intent(clean_reply)
     
-    try:
-        gpt_res = f_gpt.result()
-    except Exception:
-        gpt_res = None
-    action = gpt_res.get("action") if nav_cmd and _gpt4o_ready and gpt_res else None
+    gpt_res = _run_gpt4o_internal(user_msg, history, context) if nav_cmd and _gpt4o_ready else None
+    action = gpt_res.get("action") if gpt_res else None
     
     rem_tags = re.findall(r'<remember\s+category="(\w+)">(.*?)</remember>', clean_reply, re.DOTALL)
     clean_reply = re.sub(r'<remember[^>]*>.*?</remember>', '', clean_reply, flags=re.DOTALL).strip()

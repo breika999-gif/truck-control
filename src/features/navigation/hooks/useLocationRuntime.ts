@@ -72,6 +72,7 @@ export const useLocationRuntime = ({
   const isDrivingRef = useRef(false);
   const lastRestrictionCoordsRef = useRef<[number, number] | null>(null);
   const lastSpeedLimitCoordsRef = useRef<[number, number] | null>(null);
+  const smoothedHeadingRef = useRef<number | null>(null);
 
   const isSimulatingRef = useRef(false);
   const simIndexRef = useRef(0);
@@ -96,7 +97,7 @@ export const useLocationRuntime = ({
           setUserCoords(coords);
           setGpsReady(true);
         },
-        () => {},
+        (err) => { console.warn('[GPS] getCurrentPosition failed:', err.code, err.message); },
         { enableHighAccuracy: true, timeout: 5000 },
       );
 
@@ -113,7 +114,13 @@ export const useLocationRuntime = ({
           const kmh = spd > 0 ? spd * 3.6 : 0;
           setSpeed(Math.round(kmh));
           const hdg = pos.coords.heading ?? -1;
-          setUserHeading(hdg >= 0 ? hdg : null);
+          if (hdg >= 0) {
+            // Exponential smoothing (α=0.3) — damps GPS heading jitter
+            smoothedHeadingRef.current = smoothedHeadingRef.current === null
+              ? hdg
+              : 0.3 * hdg + 0.7 * smoothedHeadingRef.current;
+            setUserHeading(Math.round(smoothedHeadingRef.current));
+          }
           isDrivingRef.current = kmh > 3;
 
           const tqNow = Date.now();
@@ -130,24 +137,25 @@ export const useLocationRuntime = ({
           const profR = profileRef.current;
           const restrictInterval = kmh < 50 ? 60_000 : kmh < 100 ? 90_000 : 120_000;
           if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
-            if (lastRestrictionCoordsRef.current) {
-              const distMoved = haversineMeters([tqLng, tqLat], lastRestrictionCoordsRef.current);
-              if (distMoved < 300) { /* not moved enough — skip */ return; }
+            const distMoved = lastRestrictionCoordsRef.current
+              ? haversineMeters([tqLng, tqLat], lastRestrictionCoordsRef.current)
+              : 999;
+            if (distMoved >= 300) {
+              lastRestrictionRef.current = tqNow;
+              lastRestrictionCoordsRef.current = [tqLng, tqLat];
+              fetchNearbyRestrictions(tqLng, tqLat, 800).then(r => {
+                if (!isMountedRef.current) return;
+                if (r.hasTunnel) {
+                  const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';
+                  setTunnelWarning(`⚠️ Тунел${dist} — провери клиренс!`);
+                } else if (r.hasBridge) {
+                  const dist = r.bridgeDistance > 0 ? ` ${r.bridgeDistance} м` : '';
+                  setTunnelWarning(`⚠️ Мост${dist} — провери носимост!`);
+                } else {
+                  setTunnelWarning(null);
+                }
+              });
             }
-            lastRestrictionRef.current = tqNow;
-            lastRestrictionCoordsRef.current = [tqLng, tqLat];
-            fetchNearbyRestrictions(tqLng, tqLat, 800).then(r => {
-              if (!isMountedRef.current) return;
-              if (r.hasTunnel) {
-                const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';
-                setTunnelWarning(`⚠️ Тунел${dist} — провери клиренс!`);
-              } else if (r.hasBridge) {
-                const dist = r.bridgeDistance > 0 ? ` ${r.bridgeDistance} м` : '';
-                setTunnelWarning(`⚠️ Мост${dist} — провери носимост!`);
-              } else {
-                setTunnelWarning(null);
-              }
-            });
           }
 
           setSpeedLimit(
@@ -160,7 +168,7 @@ export const useLocationRuntime = ({
           const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
           setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
         },
-        () => {},
+        (err) => { console.warn('[GPS] watchPosition error:', err.code, err.message); },
         {
           enableHighAccuracy: true,
           distanceFilter: 2,

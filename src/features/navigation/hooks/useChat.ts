@@ -174,16 +174,26 @@ export function useChat({
   const sendGeminiText = useCallback(async (text: string) => {
     if (!text || geminiLoading) return;
 
+    const msg = text.toLowerCase();
+    const isTacho  = /тахограф|остава|стигам|до колко|почивка|пауза|смяна|лимит|седмично|driving|remain/.test(msg);
+    const isMemory = /обичам|помни|последно|камион|предпочит|навик/.test(msg);
+    const isNav    = /карай до|маршрут|паркинг|гориво|навигир|route|navigate/.test(msg);
+
+    if (isNav) {
+      await sendGptText(text);
+      return;
+    }
+
     const userMsg: ChatMessage = { role: 'user', text };
     const newHistory = [...geminiHistory, userMsg];
     setGeminiHistory(newHistory);
     setGeminiLoading(true);
 
     const [tachoLog, tachoWeek, userMemory, driverHabits] = await Promise.all([
-      getDaySummary().catch(() => ({})),
-      getWeeklySummary().catch(() => ({})),
-      getMemorySummary().catch(() => [] as string[]),
-      getHabitsSummary().catch(() => null),
+      isTacho  ? getDaySummary().catch(() => ({}))        : Promise.resolve({}),
+      isTacho  ? getWeeklySummary().catch(() => ({}))     : Promise.resolve({}),
+      isMemory ? getMemorySummary().catch(() => [] as string[]) : Promise.resolve([] as string[]),
+      isMemory ? getHabitsSummary().catch(() => null)     : Promise.resolve(null),
     ]);
 
     const context: ChatContext = {
@@ -195,15 +205,17 @@ export function useChat({
       shift_start_iso:          tachoSummary?.shift_start_iso,
       reduced_rests_remaining:  tachoSummary?.reduced_rests_remaining,
       daily_driving_limit_h:    tachoSummary?.daily_limit_h,
-      tacho_log:                tachoLog,
-      tacho_week:               tachoWeek,
-      user_memory:              userMemory,
-      driver_habits:            driverHabits,
+      tacho_log:                Object.keys(tachoLog).length > 0 ? tachoLog : undefined,
+      tacho_week:               Object.keys(tachoWeek).length > 0 ? tachoWeek : undefined,
+      user_memory:              userMemory.length > 0 ? userMemory : undefined,
+      driver_habits:            driverHabits || undefined,
     };
+
+    const historyDepth = isNav ? 0 : isTacho ? 2 : 3;
 
     const response = await sendGeminiMessage(
       text,
-      geminiHistory.slice(-6),
+      historyDepth > 0 ? geminiHistory.slice(-historyDepth) : [],
       context,
       googleUser?.email || undefined
     );
@@ -234,7 +246,7 @@ export function useChat({
     if (response.remember && response.remember.length > 0) {
       for (const item of response.remember) {
         const cat = item.category as 'parking' | 'route' | 'preference' | 'general';
-        addMemory({ text: item.text, category: cat }).catch(() => {/* silent */});
+        await addMemory({ text: item.text, category: cat }).catch(() => {/* silent */});
       }
     }
 

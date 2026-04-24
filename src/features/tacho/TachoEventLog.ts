@@ -93,13 +93,12 @@ export async function getWeeklySummary(): Promise<object> {
   const biweeklyDrivenMin = last14days.reduce((s, [, m]) => s + m, 0);
 
   return {
-    weekly_driven_min: weeklyDrivenMin,
-    weekly_limit_min: 56 * 60,
-    weekly_remaining_min: Math.max(0, 56 * 60 - weeklyDrivenMin),
-    biweekly_driven_min: biweeklyDrivenMin,
-    biweekly_limit_min: 90 * 60,
+    weekly_driven_min:     weeklyDrivenMin,
+    weekly_limit_min:      56 * 60,
+    weekly_remaining_min:  Math.max(0, 56 * 60 - weeklyDrivenMin),
+    biweekly_driven_min:   biweeklyDrivenMin,
+    biweekly_limit_min:    90 * 60,
     biweekly_remaining_min: Math.max(0, 90 * 60 - biweeklyDrivenMin),
-    daily_breakdown: Object.fromEntries(last7days.map(([d, m]) => [d, Math.round(m / 60 * 10) / 10])),
   };
 }
 
@@ -165,26 +164,47 @@ export async function getDaySummary(): Promise<object> {
   const today = new Date().toDateString();
   const events = (await loadLog()).filter(e => new Date(e.ts).toDateString() === today);
 
-  const segments = events.map((e, i) => {
-    const next = events[i + 1];
-    const startMs = new Date(e.ts).getTime();
-    const endMs = next ? new Date(next.ts).getTime() : Date.now();
-    return {
-      activity: ACTIVITY_LABEL[e.activity],
-      start: e.ts.slice(11, 16),
-      end: next ? next.ts.slice(11, 16) : 'now',
-      duration_min: Math.round((endMs - startMs) / 60_000),
-    };
-  });
+  if (events.length === 0) return {};
 
-  const last = events.length ? events[events.length - 1] : null;
+  const lastEvent = events[events.length - 1];
+  // Ако последната активност е DRIVING (3), добави изминалото време от последния запис до сега
+  const lastEventMs = new Date(lastEvent.ts).getTime();
+  const elapsedSinceLastMin = lastEvent.activity === 3
+    ? Math.round((Date.now() - lastEventMs) / 60_000)
+    : 0;
+  const drivenTodayMin = lastEvent.drivenMinToday + elapsedSinceLastMin;
+  const remainingTodayMin = Math.max(0, (lastEvent.leftMin ?? 0) - elapsedSinceLastMin);
+
+  // Непрекъснато каране от последната пауза ≥15мин
+  let continuousMin = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    const next = events[i + 1];
+    const durationMin = next
+      ? Math.round((new Date(next.ts).getTime() - new Date(e.ts).getTime()) / 60_000)
+      : Math.round((Date.now() - new Date(e.ts).getTime()) / 60_000);
+    if (e.activity === 3) { // DRIVING
+      continuousMin += durationMin;
+    } else if (durationMin >= 15) {
+      break; // достатъчна пауза — reset
+    }
+    // пауза < 15мин не ресетва — продължи назад
+  }
+
+  const continuousRemainingMin = Math.max(0, 270 - continuousMin); // 4.5ч = 270мин
+  const nextBreakInMin = continuousRemainingMin;
+
+  // Краен час на смяната (shift_start + 13ч)
+  const firstEvent = events[0];
+  const shiftStartMs = new Date(firstEvent.ts).getTime();
+  const shiftEndMs = shiftStartMs + 13 * 3600_000;
+  const shiftEndAt = new Date(shiftEndMs).toTimeString().slice(0, 5); // "HH:MM"
 
   return {
-    date: new Date().toLocaleDateString('bg-BG'),
-    shift_start: events[0]?.ts.slice(11, 16) ?? null,
-    current_time: new Date().toTimeString().slice(0, 5),
-    total_driven_min: last?.drivenMinToday ?? 0,
-    remaining_drive_min: last?.leftMin ?? null,
-    segments,
+    driven_today_min:          drivenTodayMin,
+    remaining_today_min:       remainingTodayMin,
+    continuous_remaining_min:  continuousRemainingMin,
+    next_break_in_min:         nextBreakInMin,
+    shift_end_at:              shiftEndAt,
   };
 }

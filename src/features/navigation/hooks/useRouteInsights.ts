@@ -11,7 +11,7 @@ export interface RoutePOI {
   lat: number;
 }
 
-interface WeatherPoint {
+export interface WeatherPoint {
   coords: [number, number];
   emoji: string;
   temp: number;

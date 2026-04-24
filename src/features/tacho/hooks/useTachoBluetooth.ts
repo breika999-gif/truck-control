@@ -88,6 +88,12 @@ export function useTachoBluetooth() {
   }, []);
 
   // ── Scan ──────────────────────────────────────────────────────────
+  // VDO DTCO (Continental): "DTCO 4.1-123456", "VDO Link", "SmartLink"
+  // Stoneridge: "SE5000-xxxxxxxx", "OPTAC", "Stoneridge", "SG5"
+  // Actia: "Actia", "MTX"
+  // Siemens VDO older: "1381", "2400"
+  const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
+
   const startScan = useCallback(async () => {
     if (!serviceRef.current) return;
 
@@ -101,9 +107,22 @@ export function useTachoBluetooth() {
 
     serviceRef.current.scanForTacho(
       (device) => {
-        // Auto-connect when VDO device found
-        setState(prev => ({ ...prev, foundDevices: [...prev.foundDevices, device] }));
-        connectToDevice(device);
+        const name = device.name ?? device.localName ?? '';
+        const isKnownTacho = VDO_PATTERNS.some(p =>
+          name.toUpperCase().includes(p.toUpperCase()),
+        );
+
+        if (isKnownTacho) {
+          // Known VDO device — auto-connect
+          setState(prev => ({ ...prev, foundDevices: [...prev.foundDevices, device] }));
+          connectToDevice(device);
+        } else {
+          // Unknown device — add to list for manual selection (no auto-connect)
+          setState(prev => {
+            if (prev.foundDevices.find(d => d.id === device.id)) return prev;
+            return { ...prev, foundDevices: [...prev.foundDevices, device] };
+          });
+        }
       },
       handleStatus,
     );

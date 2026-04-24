@@ -4,10 +4,7 @@ import {
   TouchableOpacity,
   Text,
   ActivityIndicator,
-  PermissionsAndroid,
-  Platform,
   ScrollView,
-  Keyboard,
   Alert,
   Image,
   Animated,
@@ -116,7 +113,7 @@ import {
   APP_URL_MAP, HOS_LIMIT_S, POI_CATEGORIES,
   DEPART_LABELS, type DepartLabel, departIso,
   ttsSpeak, parseBubbleText, voiceText,
-  fmtHOS, haversineMeters, weatherEmoji, detectCountryCode, openInBrowser,
+  fmtHOS, haversineMeters, weatherEmoji, detectCountryCode, openInBrowser, getTransParkingUrl,
   laneDirectionEmoji, StableCamera,
 } from '../utils/mapUtils';
 
@@ -127,6 +124,8 @@ import { useRouteOrchestrator } from '../hooks/useRouteOrchestrator';
 import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
 import { useLocationRuntime } from '../hooks/useLocationRuntime';
 import { useWakeWord } from '../hooks/useWakeWord';
+import { useChatPanelsState, type AITachoResult } from '../hooks/useChatPanelsState';
+import { useMapGeoJSON } from '../hooks/useMapGeoJSON';
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -324,19 +323,25 @@ const MapScreen: React.FC = () => {
   const handleEndOfDay = useCallback(async () => {
     try {
       const [daySummary, weeklySummary] = await Promise.all([getDaySummary(), getWeeklySummary()]);
-      const prompt =
-        `Направи кратко гласово обобщение на работния ден за шофьора. Използвай тези данни: ${JSON.stringify(daySummary)} и седмични: ${JSON.stringify(weeklySummary)}. ` +
-        'Формат: "Днес изкара X км, Y часа каране. Следващата ти почивка трябва да е поне Z часа. Можеш да тръгнеш утре след HH:MM." ' +
-        'Отговори само с текста за четене, без форматиране.';
-      const response = await sendGeminiMessage(prompt, [], {}, 'system');
+      const ds = daySummary as any;
+      const ws = weeklySummary as any;
+      const summaryPrompt =
+        `Направи кратко гласово обобщение на работния ден. ` +
+        `Изкарано днес: ${ds.driven_today_min ?? 0} мин, оставащо: ${ds.remaining_today_min ?? 0} мин, ` +
+        `смяната свършва в ${ds.shift_end_at ?? 'н/д'}. ` +
+        `Седмично изкарано: ${Math.round((ws.weekly_driven_min ?? 0) / 60 * 10) / 10}ч от 56ч, ` +
+        `оставащо: ${Math.round((ws.weekly_remaining_min ?? 0) / 60 * 10) / 10}ч. ` +
+        `Говори на български, обърни се 'Колега', бъди кратък (2-3 изречения).`;
+
+      const response = await sendGeminiMessage(summaryPrompt, [], {}, 'system');
       if (response.ok) {
         const text = (response.reply ?? '').trim();
-        if (text) { ttsSpeak(text); }
+        if (text) { speak(text); }
       }
     } catch {
       // silent — end-of-day summary is non-critical
     }
-  }, []);
+  }, [speak]);
 
   const {
     drivingSeconds, tachoSummary, setTachoSummary, resetSession, saveSession, hosViolations
@@ -359,23 +364,24 @@ const MapScreen: React.FC = () => {
   } = usePOI(userCoordsRef, routeRef, MAP_CENTER);
 
   // 4. AI Chat (GPT-4o + Gemini)
-  const [gptHistory, setGptHistory]           = useState<ChatMessage[]>([]);
-  const [geminiHistory, setGeminiHistory]     = useState<ChatMessage[]>([]);
-  const [gptChatOpen, setGptChatOpen]         = useState(false);
-  const [geminiChatOpen, setGeminiChatOpen]   = useState(false);
-  const [chatInput, setChatInput]             = useState('');
-
-  // Results from AI actions (parkingResults/fuelResults/cameraResults declared above useRouteOrchestrator)
-  const [selectedParking, setSelectedParking] = useState<POICard | null>(null);
-  const [selectedFuel, setSelectedFuel]       = useState<POICard | null>(null);
-  const [businessResults, setBusinessResults] = useState<POICard[]>([]);
-  interface AITachoResult {
-    drivenHours: number;
-    remainingHours: number;
-    breakNeeded: boolean;
-    suggestedStop?: { lat: number; lng: number; name: string };
-  }
-  const [tachographResult, setTachographResult] = useState<AITachoResult | null>(null);
+  const {
+    gptHistory, setGptHistory,
+    geminiHistory, setGeminiHistory,
+    gptChatOpen, setGptChatOpen,
+    geminiChatOpen, setGeminiChatOpen,
+    chatInput, setChatInput,
+    selectedParking, setSelectedParking,
+    selectedFuel, setSelectedFuel,
+    businessResults, setBusinessResults,
+    tachographResult, setTachographResult,
+    isRecording, setIsRecording,
+    micLoading, setMicLoading,
+    kbHeight, setKbHeight,
+    gptScrollRef, geminiScrollRef,
+    handleChat: handleChatState,
+    handleMicStart: handleMicStartState,
+    handleMicStop: handleMicStopState,
+  } = useChatPanelsState();
 
   const {
     gptLoading, geminiLoading, sendGptText, sendGeminiText
@@ -393,6 +399,10 @@ const MapScreen: React.FC = () => {
     handleAppIntent: (intent) => handleAppIntent(intent)
   });
 
+  const handleChat = useCallback(() => handleChatState(sendGptText, sendGeminiText, gptChatOpen), [handleChatState, sendGptText, sendGeminiText, gptChatOpen]);
+  const handleMicStart = useCallback(() => handleMicStartState(AudioRecorderPlayer), [handleMicStartState]);
+  const handleMicStop = useCallback(() => handleMicStopState(AudioRecorderPlayer, handleChat), [handleMicStopState, handleChat]);
+
   const chatLoading = gptChatOpen ? gptLoading : geminiLoading;
 
   // ── Hands-free wake word: "Колега, <команда>" ─────────────────────────────
@@ -408,74 +418,6 @@ const MapScreen: React.FC = () => {
   }, [sendGeminiText]);
 
   useWakeWord({ active: navigating, onCommand: handleWakeCommand });
-
-  const handleChat = useCallback(async () => {
-    const text = chatInput.trim();
-    if (!text) return;
-    setChatInput('');
-    Keyboard.dismiss();
-    if (gptChatOpen) {
-      await sendGptText(text);
-    } else {
-      await sendGeminiText(text);
-    }
-  }, [chatInput, gptChatOpen, sendGptText, sendGeminiText]);
-
-  // ── Voice / Microphone Handling ──
-  const [isRecording, setIsRecording] = useState(false);
-  const [micLoading, setMicLoading]   = useState(false);
-  const audioRecorderPlayer = AudioRecorderPlayer; // singleton — not constructable
-
-  const handleMicStart = useCallback(async () => {
-    try {
-      if (Platform.OS === 'android') {
-        const grants = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-          PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        ]);
-        if (grants['android.permission.RECORD_AUDIO'] !== PermissionsAndroid.RESULTS.GRANTED) return;
-      }
-      setIsRecording(true);
-      await audioRecorderPlayer.startRecorder();
-      audioRecorderPlayer.addRecordBackListener(() => {});
-    } catch (err) {
-      setIsRecording(false);
-      console.warn('[Mic] startRecorder failed:', err);
-    }
-  }, [audioRecorderPlayer]);
-
-  const handleMicStop = useCallback(async () => {
-    if (!isRecording) return;
-    setIsRecording(false);
-    setMicLoading(true);
-    try {
-      const uri = await audioRecorderPlayer.stopRecorder();
-      audioRecorderPlayer.removeRecordBackListener();
-
-      const { transcribeAudio } = await import('../../../shared/services/backendApi');
-      const text = await transcribeAudio(uri);
-
-      if (text) {
-        setChatInput(text);
-        setTimeout(() => handleChat(), 200);
-      }
-    } catch (err) {
-      console.warn('[Mic] stopRecorder failed:', err);
-    } finally {
-      setMicLoading(false);
-    }
-  }, [isRecording, audioRecorderPlayer, handleChat]);
-
-  // ── Keyboard height ──
-  const [kbHeight, setKbHeight] = useState(0);
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', e => setKbHeight(e.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
-    return () => { show.remove(); hide.remove(); };
-  }, []);
-  const gptScrollRef    = useRef<ScrollView>(null);
-  const geminiScrollRef = useRef<ScrollView>(null);
 
   // Border crossings
   const [borderCrossings, setBorderCrossings] = useState<Array<{
@@ -532,32 +474,33 @@ const MapScreen: React.FC = () => {
     const coords = routeObj.geometry.coordinates;
     if (!coords || coords.length < 2) return Infinity;
 
-    // Find nearest point first, then check ±30 segments around it
+    // Step 1: find nearest vertex index
     let nearestIdx = 0;
     let nearestD = Infinity;
     for (let i = 0; i < coords.length; i++) {
       const d = haversineMeters(pos, [coords[i][0], coords[i][1]]);
       if (d < nearestD) { nearestD = d; nearestIdx = i; }
     }
+
+    // Step 2: check ±30 segments with true perpendicular projection
     const fromIdx = Math.max(0, nearestIdx - 1);
-    const maxIdx = Math.min(coords.length - 1, nearestIdx + 30);
+    const toIdx   = Math.min(coords.length - 2, nearestIdx + 30);
     let minD = Infinity;
 
-    for (let i = fromIdx; i < maxIdx; i++) {
-      const p1 = coords[i];
-      const p2 = coords[i + 1];
-      
-      // Perpendicular distance to segment
-      // Haversine distance from point to line segment is complex, 
-      // so we use a simpler approach: check distance to start/end/mid points of segment.
-      // For 80m threshold, this is usually accurate enough on highway/city streets.
-      const d1 = haversineMeters(pos, [p1[0], p1[1]]);
-      const d2 = haversineMeters(pos, [p2[0], p2[1]]);
-      const mid: [number, number] = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
-      const dMid = haversineMeters(pos, mid);
-      
-      const dSegment = Math.min(d1, d2, dMid);
-      if (dSegment < minD) minD = dSegment;
+    for (let i = fromIdx; i <= toIdx; i++) {
+      const ax = coords[i][0],   ay = coords[i][1];
+      const bx = coords[i+1][0], by = coords[i+1][1];
+      const px = pos[0],          py = pos[1];
+
+      const dx = bx - ax, dy = by - ay;
+      const lenSq = dx * dx + dy * dy;
+
+      // Project P onto segment AB, clamp t to [0,1]
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+      const closest: [number, number] = [ax + t * dx, ay + t * dy];
+
+      const d = haversineMeters(pos, closest);
+      if (d < minD) minD = d;
     }
     return minD;
   }, []);
@@ -880,126 +823,6 @@ const MapScreen: React.FC = () => {
     return Math.min(...parkingResults.map(p => p.distance_m));
   }, [parkingResults]);
 
-  // ── GeoJSON for POI SymbolLayers (replaces PointAnnotation — much lighter) ──
-  const parkingGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: parkingResults.map((p, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
-      properties: { index: i, name: p.name },
-    })),
-  }), [parkingResults]);
-
-  const fuelGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: fuelResults.filter(f => f.lat && f.lng).map((f, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [f.lng, f.lat] },
-      properties: {},
-    })),
-  }), [fuelResults]);
-
-  const businessGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: businessResults.map((b, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [b.lng, b.lat] },
-      properties: {},
-    })),
-  }), [businessResults]);
-
-  const cameraGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: cameraResults.filter(c => c.lat && c.lng).map((c, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [c.lng, c.lat] },
-      properties: { maxspeed: c.maxspeed ? String(c.maxspeed) : '' },
-    })),
-  }), [cameraResults]);
-
-  // ── GeoJSON for SymbolLayers replacing PointAnnotation (GEMINI.md rule) ──
-  const waypointsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: waypoints.map((coords, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: coords },
-      properties: { label: String(i + 1) },
-    })),
-  }), [waypoints]);
-
-  const poiResultsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: poiResults.map((poi, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: poi.coordinates },
-      properties: { emoji: POI_META[poi.category].emoji, poiId: poi.id },
-    })),
-  }), [poiResults]);
-
-  const weatherGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: weatherPoints.map((wp, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: wp.coords },
-      properties: { label: `${wp.emoji}\n${wp.temp}°` },
-    })),
-  }), [weatherPoints]);
-
-  // ── Highway exit markers — placed on map at off-ramp positions (Google Maps style) ──
-  const exitsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
-    if (!route) return { type: 'FeatureCollection', features: [] };
-    const features: GeoJSON.Feature[] = [];
-    route.steps.forEach((step, i) => {
-      const type = step.maneuver.type;
-      if (type !== 'off ramp' && type !== 'exit motorway') return;
-      const loc = step.intersections?.[0]?.location;
-      if (!loc) return;
-      const banner = step.bannerInstructions?.[0];
-      // Extract exit number from banner components
-      const exitNum = banner?.primary?.components?.find(c => c.type === 'exit-number')?.text ?? null;
-      // Primary destination name
-      const destName = banner?.primary?.components?.find(c => c.type === 'text')?.text
-        ?? step.name
-        ?? '';
-      features.push({
-        type: 'Feature' as const,
-        id: i,
-        geometry: { type: 'Point' as const, coordinates: loc },
-        properties: {
-          exitNum: exitNum ?? '',
-          label: exitNum ? `⬡${exitNum}` : '⬡',
-          dest: destName,
-        },
-      });
-    });
-    return { type: 'FeatureCollection', features };
-  }, [route]);
-
-  // ── Derived / computed values ─────────────────────────────────────────────
-
-  const routeShape = route
-    ? ({ type: 'Feature', properties: {}, geometry: route.geometry } as const)
-    : null;
-
-  // ── Congestion overlay: only show 15 km ahead during navigation ─────────────
-  const navCongestionVisible = useMemo<GeoJSON.FeatureCollection | null>(() => {
-    if (!navigating || !userCoords || !navCongestionGeoJSON) return null;
-    const MAX_M = 15_000;
-    const features = navCongestionGeoJSON.features.filter(f => {
-      const coords = (f.geometry as GeoJSON.LineString).coordinates;
-      if (!coords?.length) return false;
-      const [lng, lat] = coords[0] as [number, number];
-      return haversineMeters(userCoords, [lng, lat]) <= MAX_M;
-    });
-    return { type: 'FeatureCollection', features };
-  }, [navigating, userCoords, navCongestionGeoJSON]);
 
   const dominantCongestion = useMemo(() => {
     const c = route?.congestion;
@@ -1106,25 +929,38 @@ const MapScreen: React.FC = () => {
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
 
-  const overtakingGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: overtakingResults.map((r, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] },
-      properties: { ...r },
-    })),
-  }), [overtakingResults]);
+  // ── GeoJSON for all map layers ────────────────────────────────────────────
+  const {
+    parkingGeoJSON,
+    fuelGeoJSON,
+    businessGeoJSON,
+    cameraGeoJSON,
+    waypointsGeoJSON,
+    poiResultsGeoJSON,
+    weatherGeoJSON,
+    exitsGeoJSON,
+    navCongestionVisible,
+    overtakingGeoJSON,
+    starGeoJSON,
+  } = useMapGeoJSON({
+    parkingResults,
+    fuelResults,
+    businessResults,
+    cameraResults,
+    waypoints,
+    poiResults,
+    weatherPoints,
+    route,
+    navigating,
+    userCoords,
+    navCongestionGeoJSON,
+    overtakingResults,
+    starredPOIs,
+  });
 
-  const starGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: starredPOIs.map((p, i) => ({
-      type: 'Feature' as const,
-      id: i,
-      geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
-      properties: { name: p.name },
-    })),
-  }), [starredPOIs]);
+  const routeShape = route
+    ? ({ type: 'Feature', properties: {}, geometry: route.geometry } as const)
+    : null;
 
   const setWaypoint = (name: string, coords: [number, number]) => addWaypoint(coords, name);
 
@@ -1238,6 +1074,7 @@ const MapScreen: React.FC = () => {
           lightMode={lightMode}
           route={route}
           routeShape={routeShape}
+          congestionGeoJSON={route?.congestionGeoJSON ?? null}
           routeLineColor={routeLineColor}
           exitsGeoJSON={exitsGeoJSON}
           navTrafficAlerts={navTrafficAlerts}
@@ -1249,7 +1086,6 @@ const MapScreen: React.FC = () => {
           parkingResults={parkingResults}
           fuelResults={fuelResults}
           businessResults={businessResults}
-          businessGeoJSON={businessGeoJSON}
           cameraResults={cameraResults}
           cameraGeoJSON={cameraGeoJSON}
           overtakingResults={overtakingResults}
@@ -1265,6 +1101,11 @@ const MapScreen: React.FC = () => {
           voiceMutedRef={voiceMutedRef}
           restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
           currentStep={currentStep}
+          drivingSeconds={drivingSeconds}
+          hosLimitS={HOS_LIMIT_S}
+          poiResults={poiResults}
+          poiResultsGeoJSON={poiResultsGeoJSON}
+          handlePOINavigate={handlePOINavigate}
         />
 
       </Mapbox.MapView>
@@ -1608,22 +1449,23 @@ const MapScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.parkingWebBtn}
+                    style={[styles.parkingWebBtn, p.transparking_id && { borderColor: '#00ff88', backgroundColor: 'rgba(0,255,136,0.1)' }]}
                     activeOpacity={0.8}
-                    onPress={() => {
-                      if (p.website) {
+                    onPress={async () => {
+                      if (p.transparking_id) {
+                        const url = await getTransParkingUrl(p.transparking_id);
+                        navigation.navigate('TruckParking', { url });
+                      } else if (p.website) {
                         openInBrowser(p.website);
                       } else {
-                        const cc = detectCountryCode(p.lat, p.lng);
-                        const base = cc === 'eu'
-                          ? 'https://truckerapps.eu/transparking/'
-                          : `https://truckerapps.eu/transparking/${cc}/map/`;
-                        openInBrowser(base);
+                        navigation.navigate('TruckParking', {});
                       }
                     }}
                   >
-                    <Icon name="open-in-new" size={12} color={NEON} />
-                    <Text style={styles.parkingWebBtnTxt}>Инфо</Text>
+                    <Icon name={p.transparking_id ? 'comment-text-multiple' : 'open-in-new'} size={12} color={p.transparking_id ? '#00ff88' : NEON} />
+                    <Text style={[styles.parkingWebBtnTxt, p.transparking_id && { color: '#00ff88' }]}>
+                      {p.transparking_id ? 'TransParking' : 'Инфо'}
+                    </Text>
                   </TouchableOpacity>
 
                   {p.voice_desc && (
@@ -1821,8 +1663,35 @@ const MapScreen: React.FC = () => {
         />
       )}
 
+      {/* ── Parking bubble ── */}
+      {selectedParking && (
+        <ParkingBubble
+          parking={selectedParking}
+          onClose={() => setSelectedParking(null)}
+          onNavigate={navigateTo}
+          onAddWaypoint={(coord, name) => addWaypoint(coord, name)}
+          onClearResults={() => setParkingResults([])}
+          drivingSeconds={drivingSeconds}
+          hosLimitS={HOS_LIMIT_S}
+          topOffset={searchTop}
+        />
+      )}
+
+      {/* ── Fuel panel ── */}
+      {selectedFuel && (
+        <FuelPanel
+          fuel={selectedFuel}
+          onClose={() => setSelectedFuel(null)}
+          onAddWaypoint={(coord, name) => addWaypoint(coord, name)}
+          topOffset={searchTop}
+        />
+      )}
+
       {/* ── Road restriction sign popup ── */}
-      <RestrictionSign restriction={activeRestriction} />
+      <RestrictionSign
+        restriction={activeRestriction}
+        vehicleProfile={profile ? { height_m: profile.height_m, weight_t: profile.weight_t, width_m: profile.width_m } : null}
+      />
 
 
       {/* ── Wake word indicator: green mic dot when navigating (hands-free active) ── */}

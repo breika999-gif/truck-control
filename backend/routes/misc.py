@@ -66,15 +66,18 @@ def orchestrate():
     if not user_msg: return jsonify({"ok": False, "error": "Empty message"}), 400
     try:
         orch_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_ORCHESTRATOR_SYSTEM, messages=[{"role": "user", "content": user_msg}])
+        if not orch_resp.content: return jsonify({"ok": False, "error": "Empty orchestrator response"}), 500
         tasks = json.loads(_strip_md_fence(orch_resp.content[0].text.strip()))[:3]
     except Exception as e: return jsonify({"ok": False, "error": f"Orch error: {str(e)}"}), 500
+    if not tasks: return jsonify({"ok": False, "error": "No tasks returned by orchestrator"}), 500
     worker_results = [""] * len(tasks)
-    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as pool:
         futures = {pool.submit(_run_gemini_worker, t.get("task", ""), t.get("context", "")): i for i, t in enumerate(tasks)}
         for future in as_completed(futures): worker_results[futures[future]] = future.result()
     synthesis_prompt = f"Оригинална заявка: {user_msg}\n\n" + "\n\n".join(f"Подзадача {i+1} ({tasks[i].get('task', '')}):\n{res}" for i, res in enumerate(worker_results))
     try:
         synth_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_SYNTHESIZER_SYSTEM, messages=[{"role": "user", "content": synthesis_prompt}])
+        if not synth_resp.content: return jsonify({"ok": False, "error": "Empty synthesizer response"}), 500
         return jsonify({"ok": True, "answer": synth_resp.content[0].text.strip(), "tasks": [{"task": t.get("task", ""), "result": worker_results[i]} for i, t in enumerate(tasks)]})
     except Exception as e: return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -207,7 +210,7 @@ def calculate_route():
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
-    o_lat, o_lng, d_lat, d_lng = round(origin[1], 3), round(origin[0], 3), round(destination[1], 3), round(destination[0], 3)
+    o_lat, o_lng, d_lat, d_lng = round(origin[1], 4), round(origin[0], 4), round(destination[1], 4), round(destination[0], 4)
     truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
     cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}"
     if cache_key in _route_cache:
@@ -237,8 +240,6 @@ def calculate_route():
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
         alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
-        mm_pts = 200 if total_m > 1000000 else 400 if total_m > 500000 else 800 if total_m > 200000 else 1600
-        geom["coordinates"] = _mapbox_map_match(geom["coordinates"], max_points=mm_pts)
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": _tomtom_congestion_geojson(rt, geom), "traffic_alerts": _tomtom_traffic_alerts(rt, geom), "restrictions": _extract_route_restrictions(geom), "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)

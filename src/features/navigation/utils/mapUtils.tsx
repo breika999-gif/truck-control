@@ -194,9 +194,14 @@ export function parseBubbleText(raw: string): string {
       default:
         // If it's a message action but text was missing
         if (action === 'message' && !explicit) return 'Как мога да помогна?';
-        return s;
+        // Unknown action — hide raw JSON, show generic confirmation
+        return explicit || 'Готово.';
     }
   }
+
+  // If the raw string looks like JSON, hide it entirely
+  const trimmed = s.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return '';
 
   return s;
 }
@@ -299,6 +304,26 @@ export function detectCountryCode(lat: number, lng: number): string {
   if (lat > 44.0 && lat < 46.9 && lng > 19.3 && lng < 23.0) return 'rs';
   if (lat > 49.0 && lat < 54.0 && lng > 22.0 && lng < 32.7) return 'ua';
   return 'eu';
+}
+
+/** Fetch the TransParking detail page URL for a given pointid. */
+export async function getTransParkingUrl(id: string): Promise<string> {
+  try {
+    const res = await fetch('https://truckerapps.eu/transparking/get_infowindow_content.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://truckerapps.eu/transparking/en/map/',
+      },
+      body: `pointid=${id}&lang=lang.en.php`,
+    });
+    const html = await res.text();
+    const match = html.match(/href="(https:\/\/truckerapps\.eu\/transparking\/[^"]+\.html)"/);
+    return match ? match[1] : 'https://truckerapps.eu/transparking/en/map/';
+  } catch {
+    return 'https://truckerapps.eu/transparking/en/map/';
+  }
 }
 
 /** Open a URL in the external browser, forcing Chrome on Android if available. */
