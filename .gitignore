@@ -115,3 +115,27 @@ src/shared/assets/tomtom_research/
 src/shared/assets/tomtom_icons/
 src/shared/assets/nav_glow.png
 AGENTS.md
+
+# Aider AI editor artifacts
+.aider*
+
+# Python scripts / analysis (temp)
+analyze_json.py
+check_db.py
+test_route.py
+all_packages.txt
+sofia_barcelona.json
+tomtom_default.json
+temp_*
+
+# Test media artifacts
+test/
+temp_poi.html
+
+# APK files
+*.apk
+*.apks
+
+# Python cache (routes/services subfolders)
+**/__pycache__/
+**/*.pyc

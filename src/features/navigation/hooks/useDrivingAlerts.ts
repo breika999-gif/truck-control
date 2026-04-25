@@ -10,6 +10,7 @@ interface UseDrivingAlertsArgs {
   speedLimit: number | null;
   navigating: boolean;
   userCoords: [number, number] | null;
+  userHeading: number | null;
   cameraResults: POICard[];
   voiceMutedRef: MutableRefObject<boolean>;
   lanePulseOn: boolean;
@@ -20,6 +21,7 @@ export function useDrivingAlerts({
   speedLimit,
   navigating,
   userCoords,
+  userHeading,
   cameraResults,
   voiceMutedRef,
   lanePulseOn,
@@ -60,8 +62,21 @@ export function useDrivingAlerts({
     }
     const nearest = cameraResults
       .filter(c => c.lat && c.lng)
-      .map(c => ({ ...c, dist: haversineMeters(userCoords, [c.lng as number, c.lat as number]) }))
+      .map(c => {
+        const dist = haversineMeters(userCoords, [c.lng as number, c.lat as number]);
+        let angleDiff = 0;
+        if (userHeading !== null) {
+          const bearing = Math.atan2((c.lng as number) - userCoords[0], (c.lat as number) - userCoords[1]) * 180 / Math.PI;
+          // Normalize bearing to 0-360
+          const normBearing = (bearing + 360) % 360;
+          angleDiff = Math.abs(userHeading - normBearing);
+          if (angleDiff > 180) angleDiff = 360 - angleDiff;
+        }
+        return { ...c, dist, angleDiff };
+      })
+      .filter(c => userHeading === null || c.angleDiff < 45)
       .sort((a, b) => a.dist - b.dist)[0];
+
     if (!nearest || nearest.dist >= 600) { setCameraAlert(null); return; }
     setCameraAlert({ dist: Math.round(nearest.dist), name: nearest.name });
     const now = Date.now();

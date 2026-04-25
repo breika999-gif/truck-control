@@ -738,7 +738,7 @@ export const styles = StyleSheet.create({
     shadowRadius: 6,
   },
   startBtnActive:   { backgroundColor: 'rgba(239,68,68,0.15)', borderColor: colors.error, shadowColor: colors.error },
-  startBtnDisabled: { backgroundColor: 'rgba(22,33,62,0.5)', borderColor: colors.border, opacity: 0.6 },
+  startBtnDisabled: { opacity: 0.4 },
   startBtnText: { ...typography.h3, color: colors.text },
 
   // Congestion chip

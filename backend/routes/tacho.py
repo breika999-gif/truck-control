@@ -11,7 +11,8 @@ def tacho_live_update():
     try:
         data = _get_body()
         ctx = data.get('tacho_live_context', {})
-        tacho_live_context.update({
+        user_email = (data.get('user_email') or '').strip()
+        tacho_live_context[user_email].update({
             'current_activity':      ctx.get('current_activity', 'unknown'),
             'activity_code':         ctx.get('activity_code', -1),
             'driving_time_left_min': ctx.get('driving_time_left_min', 0),

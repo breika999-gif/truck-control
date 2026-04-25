@@ -32,11 +32,14 @@ def _transparking_along_route(coords: list, max_results: int = 6) -> list:
                     continue
                 seen.add(r["pointid"])
                 dist_m = int(math.sqrt((r["lat"] - lat)**2 + (r["lng"] - lng)**2) * 111000)
+                # Estimate travel time based on distance (assuming average 80km/h = 22.2 m/s)
+                travel_s = int(dist_m / 22.2)
                 results.append({
                     "name": r["name"],
                     "lat": r["lat"],
                     "lng": r["lng"],
                     "distance_m": dist_m,
+                    "travel_time": travel_s,
                     "transparking_id": r["pointid"],
                     "transparking_url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}",
                     "paid": True,
@@ -51,12 +54,14 @@ poi_bp = Blueprint('poi', __name__)
 
 @poi_bp.get("/api/pois")
 def list_pois():
-    cat, email = request.args.get("category"), request.args.get("user_email", "")
+    email = (request.args.get("user_email") or "").strip()
+    if not email: return jsonify({"error": "user_email required"}), 400
+    cat = request.args.get("category")
     with get_db() as conn:
-        if cat and email: rows = conn.execute("SELECT * FROM pois WHERE category=? AND user_email=? ORDER BY created_at DESC", (cat, email)).fetchall()
-        elif cat: rows = conn.execute("SELECT * FROM pois WHERE category=? ORDER BY created_at DESC", (cat,)).fetchall()
-        elif email: rows = conn.execute("SELECT * FROM pois WHERE user_email=? ORDER BY created_at DESC", (email,)).fetchall()
-        else: rows = conn.execute("SELECT * FROM pois ORDER BY created_at DESC").fetchall()
+        if cat:
+            rows = conn.execute("SELECT * FROM pois WHERE category=? AND user_email=? ORDER BY created_at DESC", (cat, email)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM pois WHERE user_email=? ORDER BY created_at DESC", (email,)).fetchall()
     return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
 
 @poi_bp.post("/api/pois")
@@ -72,7 +77,11 @@ def save_poi():
 
 @poi_bp.delete("/api/pois/<int:poi_id>")
 def delete_poi(poi_id: int):
-    with get_db() as conn: deleted = conn.execute("DELETE FROM pois WHERE id=?", (poi_id,)).rowcount
+    email = (request.args.get("user_email") or _get_body().get("user_email") or "").strip()
+    if not email: return jsonify({"ok": False, "error": "email required"}), 400
+    with get_db() as conn: 
+        deleted = conn.execute("DELETE FROM pois WHERE id=? AND user_email=?", (poi_id, email)).rowcount
+        conn.commit()
     return jsonify({"ok": deleted > 0})
 
 @poi_bp.get("/api/parking/bbox")

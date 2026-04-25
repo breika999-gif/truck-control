@@ -22,7 +22,7 @@ _MAPBOX_TOKEN = MAPBOX_TOKEN  # alias used in tomtom_service
 
 # ── Flask Configuration ─────────────────────────────────────────────────────
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))
-FLASK_DEBUG = os.getenv("FLASK_DEBUG", "true").lower() == "true"
+FLASK_DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
 
 # ── Truck Routing Constants ─────────────────────────────────────────────────
 # EU/Balkans truck speed limits (km/h) by ISO-3166-1 alpha-3 country code

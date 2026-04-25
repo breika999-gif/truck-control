@@ -190,7 +190,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             sourceLayerID="traffic"
             slot="top"
             filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
-            style={{ lineColor: '#FA0000', lineWidth: 9, lineOpacity: 1.0, lineCap: 'butt', lineJoin: 'miter' }}
+            style={{ lineColor: '#FA0000', lineWidth: 9, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
             id="traffic-closed-stripe"
@@ -201,8 +201,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
               lineColor: '#ffffff',
               lineWidth: 9,
               lineOpacity: 1.0,
-              lineCap: 'butt',
-              lineJoin: 'miter',
+              lineCap: 'round',
+              lineJoin: 'round',
               lineDasharray: [1.5, 1.5],
             }}
           />
@@ -354,8 +354,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         const shape = navigating
           ? (navCongestionVisible && navCongestionVisible.features.length > 0 ? navCongestionVisible : congestionGeoJSON)
           : congestionGeoJSON;
-        if (!shape) return null;
-        return (
+        return shape && (
           <Mapbox.ShapeSource id="route-congestion-source" shape={shape} tolerance={0}>
             <Mapbox.LineLayer
               id="route-line"
@@ -363,11 +362,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
               aboveLayerID="route-casing"
               style={{
                 lineColor: ['match', ['get', 'congestion'],
-                  'low', lightMode ? routeLineColor : '#13BDFF',
+                  'low', routeLineColor,
                   'moderate', '#FFBC40',
                   'heavy', '#FF9100',
                   'severe', '#FA0000',
-                  lightMode ? routeLineColor : '#13BDFF',
+                  routeLineColor,
                 ],
                 lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
                 lineCap: 'round',
@@ -425,10 +424,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
       )}
 
       {/* Origin/Dest Pins */}
-      {(route || navigating) && (
+      {(route || navigating) && (customOriginRef.current || userCoords) && (
         <Mapbox.ShapeSource
           id="origin-pin-src"
-          shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: customOriginRef.current ?? userCoords ?? [0, 0] }, properties: {} }}
+          shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: customOriginRef.current ?? userCoords ?? null }, properties: {} }}
         >
           <Mapbox.SymbolLayer id="origin-pin-layer" slot="top" style={{ textField: '🟢', textSize: 16, textAnchor: 'center', textAllowOverlap: true }} />
         </Mapbox.ShapeSource>
@@ -625,7 +624,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
               <Mapbox.LineLayer
                 id={`route-opt-line-${i}`} slot={isSelected ? 'middle' : 'bottom'}
                 style={{ 
-                  lineColor: opt.congestion_geojson ? ['match', ['get', 'congestion'], 'low', NEON, 'moderate', '#ffcc00', 'heavy', '#ff4444', 'severe', '#8b0000', NEON] : opt.color,
+                  lineColor: opt.congestion_geojson ? ['match', ['get', 'congestion'], 'low', '#0A84FF', 'moderate', '#ffcc00', 'heavy', '#ff4444', 'severe', '#8b0000', '#0A84FF'] : opt.color,
                   lineWidth: isSelected ? 6 : 4, lineOpacity: isSelected ? 0.92 : 0.45, lineCap: 'round', lineJoin: 'round' 
                 }}
               />

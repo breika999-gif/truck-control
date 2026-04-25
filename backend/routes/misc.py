@@ -26,12 +26,35 @@ except:
     _anthropic_client = None
     _anthropic_ready = False
 
-_route_cache: dict = {}
+from collections import OrderedDict
+
+class LRUCache(OrderedDict):
+    def __init__(self, maxsize=200):
+        self.maxsize = maxsize
+        super().__init__()
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+    def __setitem__(self, key, value):
+        if key in self: self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > self.maxsize: self.popitem(last=False)
+
+_route_cache = LRUCache(maxsize=200)
 _ROUTE_CACHE_TTL = 300
 
 @misc_bp.get("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "modular-v1.1", "python": sys.version, "gpt4o_ready": _gpt4o_ready, "gemini_ready": _gemini_ready, "tomtom_ready": bool(TOMTOM_API_KEY), "db": DB_PATH, "timestamp": now_iso()})
+    return jsonify({
+        "status": "ok", 
+        "version": "modular-v1.1", 
+        "python": sys.version, 
+        "gpt4o_ready": _gpt4o_ready, 
+        "gemini_ready": _gemini_ready, 
+        "tomtom_ready": bool(TOMTOM_API_KEY), 
+        "timestamp": now_iso()
+    })
 
 @misc_bp.post("/api/routes/match-window")
 def match_window():
@@ -60,15 +83,16 @@ def google_sync():
 @misc_bp.route("/api/orchestrate", methods=["POST"])
 def orchestrate():
     if not _anthropic_ready or not _gemini_ready: return jsonify({"ok": False, "error": "APIs not ready"}), 503
-    ip = request.remote_addr or "unknown"
-    if _is_rate_limited(ip, 10): return jsonify({"ok": False, "error": "Rate limited"}), 429
+    if _is_rate_limited(limit=10, window_s=60): return jsonify({"ok": False, "error": "Rate limited"}), 429
     user_msg = (_get_body().get("message") or "").strip()
     if not user_msg: return jsonify({"ok": False, "error": "Empty message"}), 400
     try:
-        orch_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_ORCHESTRATOR_SYSTEM, messages=[{"role": "user", "content": user_msg}])
+        orch_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_ORCHESTRATOR_SYSTEM, messages=[{"role": "user", "content": user_msg}], timeout=30)
         if not orch_resp.content: return jsonify({"ok": False, "error": "Empty orchestrator response"}), 500
         tasks = json.loads(_strip_md_fence(orch_resp.content[0].text.strip()))[:3]
-    except Exception as e: return jsonify({"ok": False, "error": f"Orch error: {str(e)}"}), 500
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
     if not tasks: return jsonify({"ok": False, "error": "No tasks returned by orchestrator"}), 500
     worker_results = [""] * len(tasks)
     with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as pool:
@@ -79,17 +103,22 @@ def orchestrate():
         synth_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_SYNTHESIZER_SYSTEM, messages=[{"role": "user", "content": synthesis_prompt}])
         if not synth_resp.content: return jsonify({"ok": False, "error": "Empty synthesizer response"}), 500
         return jsonify({"ok": True, "answer": synth_resp.content[0].text.strip(), "tasks": [{"task": t.get("task", ""), "result": worker_results[i]} for i, t in enumerate(tasks)]})
-    except Exception as e: return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 @misc_bp.route("/api/truck-bans/cache", methods=["DELETE", "POST"])
 def clear_truck_bans_cache():
+    admin_key = request.headers.get("X-Admin-Key", "")
+    if admin_key != os.environ.get("ADMIN_KEY", ""): return jsonify({"error": "Unauthorized"}), 401
     try:
         with get_db() as conn:
             conn.execute("DELETE FROM truck_bans_cache")
             conn.commit()
         return jsonify({"ok": True, "message": "Cache cleared"})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        print(f"[ERROR] {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 @misc_bp.route("/api/truck-bans", methods=["GET"])
 def get_truck_bans():
@@ -206,6 +235,7 @@ def _extract_route_restrictions(geometry: dict) -> list:
 
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
 def calculate_route():
+    if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
     data = request.json or {}
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
@@ -232,14 +262,20 @@ def calculate_route():
         routes = r.json().get("routes", [])
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
-        geom = _tomtom_route_to_geojson(rt)
+        raw_geom = _tomtom_route_to_geojson(rt)
+        snapped_coords = _mapbox_map_match(raw_geom["coordinates"])
+        geom = {"type": "LineString", "coordinates": snapped_coords}
         instructions = rt.get("guidance", {}).get("instructions", [])
         total_m, steps = summary.get("lengthInMeters", 0), []
         for i, instr in enumerate(instructions):
             nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
-        alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
+        def _snapped_alt(ar):
+            raw = _tomtom_route_to_geojson(ar)
+            snapped = {"type": "LineString", "coordinates": _mapbox_map_match(raw["coordinates"])}
+            return {"label": ["Алтернатива 1", "Алтернатива 2"][alt_routes.index(ar)], "color": ["#B922FF", "#08F384"][alt_routes.index(ar)], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": snapped, "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, snapped)}
+        alternatives = [_snapped_alt(ar) for ar in alt_routes]
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": _tomtom_congestion_geojson(rt, geom), "traffic_alerts": _tomtom_traffic_alerts(rt, geom), "restrictions": _extract_route_restrictions(geom), "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)
@@ -247,10 +283,13 @@ def calculate_route():
 
 @misc_bp.post("/api/transcribe")
 def whisper_transcribe():
+    if _is_rate_limited(limit=5, window_s=60): return jsonify({"error": "Rate limited"}), 429
     audio_file = request.files.get("audio")
     if not audio_file: return jsonify({"ok": False, "error": "No audio file"}), 400
     try:
         audio_file.stream.seek(0)
         resp = client.audio.transcriptions.create(model="whisper-1", file=(audio_file.filename or "recording.m4a", audio_file.stream, audio_file.mimetype or "audio/m4a"), language="bg")
         return jsonify({"ok": bool(resp.text), "text": resp.text.strip()})
-    except Exception as e: return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return jsonify({"ok": False, "error": "Internal server error"}), 500

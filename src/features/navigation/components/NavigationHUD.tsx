@@ -478,10 +478,11 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               style={[
                 styles.startBtn,
                 { flex: navigating ? 0 : 2 },
-                navigating && styles.startBtnActive,
+                navigating ? styles.startBtnActive : !userCoords ? styles.startBtnDisabled : null,
               ]}
               onPress={navigating ? onStop : onStart}
               activeOpacity={0.85}
+              disabled={!navigating && !userCoords}
             >
               <Text style={styles.startBtnText}>
                 {navigating

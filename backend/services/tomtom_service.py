@@ -27,8 +27,23 @@ _TT_MANEUVER_DIR = {
     "DEPART":           "straight",
 }
 
+from collections import OrderedDict
+
 # Module-level in-memory cache for map-match results
-_mm_mem_cache: dict = {}
+class LRUCache(OrderedDict):
+    def __init__(self, maxsize=200):
+        self.maxsize = maxsize
+        super().__init__()
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+    def __setitem__(self, key, value):
+        if key in self: self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > self.maxsize: self.popitem(last=False)
+
+_mm_mem_cache = LRUCache(maxsize=200)
 _MM_MEM_TTL_SEC = 300
 
 def _adr_to_tunnel_code(hazmat_class: str) -> str | None:
@@ -45,7 +60,7 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
             coords.append([pt["longitude"], pt["latitude"]])
     return {"type": "LineString", "coordinates": coords}
 
-def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
+def _mapbox_map_match(coords: list) -> list:
     from database import get_db, datetime, timezone
     if not MAPBOX_TOKEN or len(coords) < 2:
         return coords
@@ -68,16 +83,15 @@ def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
                     hit = json.loads(row["coords_json"])
                     _mm_mem_cache[route_hash] = (hit, time.time())
                     return hit
-    except Exception: pass
+    except Exception as e: print(f"[WARN] {e}")
 
-    to_match = coords[:max_points]
-    tail     = coords[max_points:]
-    CHUNK = 100
-    chunks = [to_match[i:i + CHUNK] for i in range(0, len(to_match), CHUNK)]
+    CHUNK   = 100
+    OVERLAP = 5
+    all_chunks = [coords[i:i + CHUNK] for i in range(0, len(coords), CHUNK)]
 
     def _match_one(chunk: list) -> list:
         coord_str = ";".join(f"{lng},{lat}" for lng, lat in chunk)
-        radiuses  = ";".join(["25"] * len(chunk))
+        radiuses  = ";".join(["50"] * len(chunk))
         try:
             r = requests.get(
                 f"https://api.mapbox.com/matching/v5/mapbox/driving/{coord_str}",
@@ -89,15 +103,25 @@ def _mapbox_map_match(coords: list, max_points: int = 1600) -> list:
                 for m in r.json().get("matchings", []):
                     pts.extend(m.get("geometry", {}).get("coordinates", []))
                 if pts: return pts
-        except Exception: pass
+        except Exception as e: print(f"[WARN] {e}")
         return chunk
 
-    with ThreadPoolExecutor(max_workers=min(len(chunks), 8)) as ex:
-        results = list(ex.map(_match_one, chunks))
+    # Add overlap: each chunk includes last OVERLAP points of previous chunk,
+    # then trim those overlap points from the result before concatenating.
+    overlapped: list[list] = []
+    for i, chunk in enumerate(all_chunks):
+        if i == 0:
+            overlapped.append(chunk)
+        else:
+            overlapped.append(all_chunks[i - 1][-OVERLAP:] + chunk)
+
+    with ThreadPoolExecutor(max_workers=min(len(overlapped), 8)) as ex:
+        results = list(ex.map(_match_one, overlapped))
 
     snapped: list = []
-    for pts in results: snapped.extend(pts)
-    final_coords = snapped + tail if snapped else coords
+    for i, pts in enumerate(results):
+        snapped.extend(pts if i == 0 else pts[OVERLAP:])
+    final_coords = snapped if snapped else coords
 
     _mm_mem_cache[route_hash] = (final_coords, time.time())
     try:
@@ -237,7 +261,9 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
             brand = (poi_data.get("brands") or [{}])[0].get("name")
             truck_lane = any("truck" in cat.lower() for cat in poi_data.get("categories", []))
             name = poi_data.get("name") or item.get("address", {}).get("freeformAddress", "Обект")
-            results.append({"name": name, "lat": lat, "lng": lng, "distance_m": poi_distance_m, "brand": brand, "truck_lane": truck_lane, "info": item.get("address", {}).get("freeformAddress"), "voice_desc": f"Намерих {name} на {(poi_distance_m/1000):.1f} километра по маршрута."})
+            # Estimate travel time based on distance along route (80km/h = 22.2 m/s)
+            travel_s = int(poi_distance_m / 22.2)
+            results.append({"name": name, "lat": lat, "lng": lng, "distance_m": poi_distance_m, "travel_time": travel_s, "brand": brand, "truck_lane": truck_lane, "info": item.get("address", {}).get("freeformAddress"), "voice_desc": f"Намерих {name} на {(poi_distance_m/1000):.1f} километра по маршрута."})
         return results
     except Exception: return []
 
@@ -261,7 +287,8 @@ def _tool_navigate_to(destination: str) -> dict:
         name = (res.get("poi") or {}).get("name") or res.get("address", {}).get("freeformAddress", destination)
         return {"destination": name, "coords": [lng, lat]}
     except Exception as exc:
-        return {"error": str(exc)}
+        print(f"[ERROR] {exc}")
+        return {"error": "Internal server error"}
 
 
 def _tool_suggest_routes(
@@ -299,15 +326,16 @@ def _tool_suggest_routes(
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         routes_data = r.json().get("routes", [])
+        if not routes_data:
+            return {"error": "Няма маршрут", "steps": [], "geometry": None}
         primary_duration = routes_data[0].get("summary", {}).get("travelTimeInSeconds", 0)
         primary_dist_m   = routes_data[0].get("summary", {}).get("lengthInMeters", 0)
 
         preview_rts = routes_data[:3]
         raw_geoms   = [_tomtom_route_to_geojson(rt) for rt in preview_rts]
-        raw_coords  = [g["coordinates"] for g in raw_geoms]
 
-        for i, g in enumerate(raw_geoms):
-            g["coordinates"] = raw_coords[i]
+        for g in raw_geoms:
+            g["coordinates"] = _mapbox_map_match(g["coordinates"])
 
         colors = ["#00bfff", "#00ff88", "#ffcc00"]
         labels = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]
@@ -338,7 +366,8 @@ def _tool_suggest_routes(
             })
         return {"destination": nav["destination"], "dest_coords": [dest_lng, dest_lat], "options": options}
     except Exception as exc:
-        return {"error": str(exc)}
+        print(f"[ERROR] {exc}")
+        return {"error": "Internal server error"}
 
 
 def _tool_check_traffic(origin_lng: float, origin_lat: float, dest_lng: float, dest_lat: float) -> dict:
@@ -357,4 +386,6 @@ def _tool_check_traffic(origin_lng: float, origin_lat: float, dest_lng: float, d
         duration, typical = summary.get("travelTimeInSeconds", 0), summary.get("historicTrafficTravelTimeInSeconds", summary.get("travelTimeInSeconds", 0))
         delay = max(0, duration - typical)
         return {"has_delay": delay > 1200, "delay_min": round(delay / 60), "duration_min": round(duration / 60), "distance_km": round(summary.get("lengthInMeters", 0) / 1000, 1), "alternative_available": False}
-    except Exception as exc: return {"error": str(exc)}
+    except Exception as exc:
+        print(f"[ERROR] {exc}")
+        return {"error": "Internal server error"}

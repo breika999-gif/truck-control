@@ -144,6 +144,7 @@ export function useRouteOrchestrator({
     setCurrentStep(0);
     setSpeedLimit(null);
     setDistToTurn(null);
+    poisFetchedRef.current = false;
 
     // NAVIGATING → REROUTING; otherwise → SEARCHING
     setNavPhase(navigatingRef.current ? 'REROUTING' : 'SEARCHING');

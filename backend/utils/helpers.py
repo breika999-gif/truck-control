@@ -8,12 +8,13 @@ from flask import request
 
 # ── Global State ────────────────────────────────────────────────────────────
 _rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
-tacho_live_context = {}   # Live data from BLE tachograph
+tacho_live_context = defaultdict(dict)   # user_email → live data from BLE tachograph
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _is_rate_limited(ip: str, limit: int, window_s: int = 60) -> bool:
-    """Returns True if IP has exceeded `limit` requests in the last `window_s` seconds."""
+def _is_rate_limited(limit: int, window_s: int = 60) -> bool:
+    """Returns True if current request IP has exceeded `limit` requests."""
+    ip = request.remote_addr or "unknown"
     now = time.monotonic()
     timestamps = _rate_data[ip]
     _rate_data[ip] = [t for t in timestamps if now - t < window_s]
@@ -49,23 +50,24 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     )
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-def _build_tacho_context_block() -> str:
+def _build_tacho_context_block(user_email: str = "") -> str:
     """Format tacho_live_context for Gemini system prompt."""
-    if not tacho_live_context:
+    ctx = tacho_live_context.get(user_email) if user_email else {}
+    if not ctx:
         return ''
 
-    rem_h  = tacho_live_context.get('driving_time_left_min', 0) // 60
-    rem_m  = tacho_live_context.get('driving_time_left_min', 0) % 60
-    drv_h  = tacho_live_context.get('daily_driven_min', 0) // 60
-    drv_m  = tacho_live_context.get('daily_driven_min', 0) % 60
+    rem_h  = ctx.get('driving_time_left_min', 0) // 60
+    rem_m  = ctx.get('driving_time_left_min', 0) % 60
+    drv_h  = ctx.get('daily_driven_min', 0) // 60
+    drv_m  = ctx.get('daily_driven_min', 0) % 60
 
     return f"""
 ТАХОГРАФ (live BLE данни):
-- Текуща активност: {tacho_live_context.get('current_activity', 'unknown')}
+- Текуща активност: {ctx.get('current_activity', 'unknown')}
 - Изкарано днес: {drv_h}ч {drv_m}мин
 - Оставащо каране: {rem_h}ч {rem_m}мин
-- Скорост от сензор: {tacho_live_context.get('speed_kmh', 0)} км/ч
-- Последно обновяване: {tacho_live_context.get('timestamp', '')}
+- Скорост от сензор: {ctx.get('speed_kmh', 0)} км/ч
+- Последно обновяване: {ctx.get('timestamp', '')}
 
 Ако шофьорът пита за оставащо време или почивка — използвай горните данни.
 Ако остават < 30 мин — предупреди проактивно и предложи да потърсиш паркинг.

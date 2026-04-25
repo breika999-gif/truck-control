@@ -5,5 +5,6 @@ openai
 anthropic
 requests
 python-dotenv
+gunicorn
 
 # 2026-03-29-v4

@@ -14,17 +14,16 @@ from database import _db_save_chat
 
 _TACHO_HINTS = ["тахограф", "остава", "стигам", "до колко", "почивка", "пауза", "смяна", "лимит", "седмично", "driving", "remain", "hours", "break"]
 
-gemini_bp = Blueprint('gemini', __name__)
 
 @gemini_bp.post("/api/gemini/chat")
 def gemini_chat():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    if _is_rate_limited(ip, limit=30, window_s=60):
+    if _is_rate_limited(limit=30, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     if not _gemini_ready:
         if _gpt4o_ready:
             body = _get_body()
-            result = _run_gpt4o_internal((body.get("message") or "").strip(), body.get("history") or [], body.get("context") or {})
+            user_email = (body.get("user_email") or "").strip()
+            result = _run_gpt4o_internal((body.get("message") or "").strip(), body.get("history") or [], body.get("context") or {}, user_email=user_email)
             return jsonify({"ok": True, "reply": result.get("reply", "Разбрах, колега."), "action": result.get("action")})
         return jsonify({"ok": False, "error": "Gemini не е конфигуриран."}), 503
 
@@ -84,7 +83,8 @@ def gemini_chat():
             resp = _gemini_client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=contents,
-                config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300}
+                config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300},
+                request_options={"timeout": 30}
             )
             return resp.text or ""
         except Exception as e:
@@ -101,7 +101,7 @@ def gemini_chat():
     nav_cmd, clean_reply = _extract_nav_intent(gemini_text)
     app_intent, clean_reply = _extract_app_intent(clean_reply)
     
-    gpt_res = _run_gpt4o_internal(user_msg, history, context) if nav_cmd and _gpt4o_ready else None
+    gpt_res = _run_gpt4o_internal(user_msg, history, context, user_email=user_email) if nav_cmd and _gpt4o_ready else None
     action = gpt_res.get("action") if gpt_res else None
     
     rem_tags = re.findall(r'<remember\s+category="(\w+)">(.*?)</remember>', clean_reply, re.DOTALL)
@@ -112,7 +112,7 @@ def gemini_chat():
         try: p = json.loads(_cr); clean_reply = p.get("text") or p.get("message") or p.get("reply") or clean_reply
         except: pass
 
-    _db_save_chat(user_msg, clean_reply)
+    _db_save_chat(user_msg, clean_reply, user_email=user_email)
     return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent, "remember": [{'category': c, 'text': t.strip()} for c, t in rem_tags]})
 
 @gemini_bp.post("/api/gemini/validate")

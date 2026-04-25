@@ -631,6 +631,8 @@ const MapScreen: React.FC = () => {
     // to avoid heavy satellite/hybrid tiles on mobile data.
     if (mapMode !== 'vector') setMapMode('vector');
 
+    // Re-enable camera tracking in case user had panned the map before starting.
+    setIsTracking(true);
     // Set navigating LAST — StableCamera's followUserLocation will activate and
     // smoothly move the camera to the user. Do NOT call flyTo() here: it conflicts
     // with followUserLocation and crashes the native Camera animation node.
@@ -646,6 +648,7 @@ const MapScreen: React.FC = () => {
   // Keeps the route so the user can press "Тръгваме!" again without re-searching.
   const handleStopNav = useCallback(() => {
     Tts.stop();
+    setIsTracking(true);
     setNavPhase('ROUTE_PREVIEW');
     setNavCongestionGeoJSON(null);
     setNavTrafficAlerts(null);
@@ -659,6 +662,7 @@ const MapScreen: React.FC = () => {
   // ── Clear route & stop navigation entirely (✕ close button) ───────────────
   const handleClear = useCallback(() => {
     Tts.stop();
+    setIsTracking(true);
     lastSpokenStepRef.current = -1;
     setDestination(null);
     setDestinationName('');
@@ -924,7 +928,7 @@ const MapScreen: React.FC = () => {
     playCameraAlert,
   } = useDrivingAlerts({
     speed, speedLimit, navigating,
-    userCoords, cameraResults,
+    userCoords, userHeading, cameraResults,
     voiceMutedRef, lanePulseOn,
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });

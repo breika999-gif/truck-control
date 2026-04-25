@@ -53,7 +53,7 @@ def _get_gpt_route_insight(destination: str, context: dict) -> dict | None:
         return json.loads(_strip_md_fence(resp.choices[0].message.content or ""))
     except Exception: return None
 
-def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
+def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email: str = "") -> dict:
     if not _gpt4o_ready: return {"ok": False, "error": "GPT-4o не е конфигуриран."}
     _cache_key = user_msg.strip().lower() if not history and not context.get("lat") else None
     if _cache_key:
@@ -75,7 +75,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
     action, accumulated_content = None, []
     try:
         for turn in range(4):
-            resp = client.chat.completions.create(model="gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini", messages=messages, tools=_TOOLS, parallel_tool_calls=False, temperature=0.4)
+            resp = client.chat.completions.create(model="gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini", messages=messages, tools=_TOOLS, parallel_tool_calls=False, temperature=0.4, timeout=30)
             curr_msg = resp.choices[0].message
             if curr_msg.content: accumulated_content.append(curr_msg.content)
             if not curr_msg.tool_calls: break
@@ -226,7 +226,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict) -> dict:
         except: pass
     else: display_text = clean_dt
 
-    _db_save_chat(user_msg, display_text)
+    _db_save_chat(user_msg, display_text, user_email=user_email)
     final_action = {**action, "message": display_text} if action else {"action": "message", "text": display_text or "Не мога да обработя заявката."}
     result = {"ok": True, "action": final_action, "reply": display_text}
     if _cache_key and action is None: _gpt_cache_set(_cache_key, result)

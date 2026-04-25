@@ -5,11 +5,18 @@ import requests
 from datetime import datetime, timezone
 from config import FLASK_DEBUG
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "truckai.db")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "truckai.db"))
+
+# Ensure DB directory exists (critical for Railway volumes)
+_db_dir = os.path.dirname(DB_PATH)
+if _db_dir and not os.path.exists(_db_dir):
+    os.makedirs(_db_dir, exist_ok=True)
 
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=3000")
     return conn
 
 def init_db() -> None:
@@ -32,6 +39,7 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS chat_history (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email TEXT NOT NULL DEFAULT '',
                 role       TEXT NOT NULL,
                 message    TEXT NOT NULL,
                 created_at TEXT NOT NULL
@@ -103,6 +111,12 @@ def init_db() -> None:
             db.commit()
     except Exception:
         pass
+    try:
+        with get_db() as db:
+            db.execute("ALTER TABLE chat_history ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
+            db.commit()
+    except Exception:
+        pass
 
 def row_to_poi(row: sqlite3.Row) -> dict:
     return {
@@ -117,16 +131,16 @@ def row_to_poi(row: sqlite3.Row) -> dict:
         "created_at": row["created_at"],
     }
 
-def _db_save_chat(user_msg: str, reply: str) -> None:
+def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
     from utils.helpers import now_iso
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO chat_history (role, message, created_at) VALUES (?, ?, ?)",
-            ("user", user_msg, now_iso()),
+            "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
+            (user_email, "user", user_msg, now_iso()),
         )
         conn.execute(
-            "INSERT INTO chat_history (role, message, created_at) VALUES (?, ?, ?)",
-            ("model", reply, now_iso()),
+            "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
+            (user_email, "model", reply, now_iso()),
         )
         conn.commit()
 
