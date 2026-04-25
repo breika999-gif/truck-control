@@ -98,17 +98,39 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
           {restrictionWarnings.map((w, i) => (
             <Text key={i} style={styles.routeRestrictionWarn}>{w}</Text>
           ))}
-          <TouchableOpacity
-            style={styles.routeStartBtn}
-            activeOpacity={0.85}
-            onPress={() => {
-              const selIdx = selectedRouteIdx ?? 0;
-              const selOpt = routeOptions[selIdx];
-              onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts);
-            }}
-          >
-            <Text style={styles.routeStartBtnTxt}>🚀 Старт</Text>
-          </TouchableOpacity>
+          
+          {/* Traffic delay calculation for the badge */}
+          {(() => {
+            const selOpt = routeOptions[selectedRouteIdx];
+            const totalDelay = selOpt?.traffic_alerts?.reduce((acc, a) => acc + (a.delay_min || 0), 0) || 0;
+            
+            return (
+              <View style={{ alignItems: 'center', gap: 4 }}>
+                <TouchableOpacity
+                  style={styles.routeStartBtn}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts);
+                  }}
+                >
+                  <Text style={styles.routeStartBtnTxt}>🚀 Старт</Text>
+                </TouchableOpacity>
+                
+                {totalDelay > 0 && (
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: totalDelay >= 15 ? '#FF3B30' : '#FF9500',
+                    textShadowColor: 'rgba(0,0,0,0.5)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 2,
+                  }}>
+                    ⚠️ Трафик +{totalDelay} мин
+                  </Text>
+                )}
+              </View>
+            );
+          })()}
         </View>
       )}
     </View>

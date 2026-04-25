@@ -26,7 +26,7 @@ export const baseNeonBtn = {
 
 export const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
-  map: { flex: 1 },
+  map: { ...StyleSheet.absoluteFillObject },
 
   noInternetBanner: {
     position: 'absolute',

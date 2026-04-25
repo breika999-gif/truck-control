@@ -1,12 +1,11 @@
 import re
 import requests
-import hashlib
 import json
 import time
 import math
 from concurrent.futures import ThreadPoolExecutor
 from config import (
-    TOMTOM_API_KEY, MAPBOX_TOKEN, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
+    TOMTOM_API_KEY, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
     _BELGRADE_WP, _ZAGREB_WP, _SOFIA_BYPASS
 )
 from utils.helpers import _haversine_m, now_iso
@@ -27,25 +26,6 @@ _TT_MANEUVER_DIR = {
     "DEPART":           "straight",
 }
 
-from collections import OrderedDict
-
-# Module-level in-memory cache for map-match results
-class LRUCache(OrderedDict):
-    def __init__(self, maxsize=200):
-        self.maxsize = maxsize
-        super().__init__()
-    def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
-    def __setitem__(self, key, value):
-        if key in self: self.move_to_end(key)
-        super().__setitem__(key, value)
-        if len(self) > self.maxsize: self.popitem(last=False)
-
-_mm_mem_cache = LRUCache(maxsize=200)
-_MM_MEM_TTL_SEC = 300
-
 def _adr_to_tunnel_code(hazmat_class: str) -> str | None:
     mapping = {
         "1": "B", "2": "C", "3": "D", "4": "D", "5": "D",
@@ -59,78 +39,6 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
         for pt in leg.get("points", []):
             coords.append([pt["longitude"], pt["latitude"]])
     return {"type": "LineString", "coordinates": coords}
-
-def _mapbox_map_match(coords: list) -> list:
-    from database import get_db, datetime, timezone
-    if not MAPBOX_TOKEN or len(coords) < 2:
-        return coords
-
-    route_sig = coords[:5] + coords[-5:] + [len(coords)]
-    route_hash = hashlib.sha256(json.dumps(route_sig).encode()).hexdigest()
-
-    _now = time.time()
-    if route_hash in _mm_mem_cache:
-        cached_coords, cached_ts = _mm_mem_cache[route_hash]
-        if _now - cached_ts < _MM_MEM_TTL_SEC:
-            return cached_coords
-
-    try:
-        with get_db() as db:
-            row = db.execute("SELECT coords_json, created_at FROM map_match_cache WHERE route_hash=?", (route_hash,)).fetchone()
-            if row:
-                created = datetime.fromisoformat(row["created_at"])
-                if (datetime.now(timezone.utc) - created.replace(tzinfo=timezone.utc)).days < 7:
-                    hit = json.loads(row["coords_json"])
-                    _mm_mem_cache[route_hash] = (hit, time.time())
-                    return hit
-    except Exception as e: print(f"[WARN] {e}")
-
-    CHUNK   = 100
-    OVERLAP = 5
-    all_chunks = [coords[i:i + CHUNK] for i in range(0, len(coords), CHUNK)]
-
-    def _match_one(chunk: list) -> list:
-        coord_str = ";".join(f"{lng},{lat}" for lng, lat in chunk)
-        radiuses  = ";".join(["50"] * len(chunk))
-        try:
-            r = requests.get(
-                f"https://api.mapbox.com/matching/v5/mapbox/driving/{coord_str}",
-                params={"access_token": MAPBOX_TOKEN, "geometries": "geojson", "overview": "full", "radiuses": radiuses, "tidy": "true"},
-                timeout=10,
-            )
-            if r.status_code == 200:
-                pts: list = []
-                for m in r.json().get("matchings", []):
-                    pts.extend(m.get("geometry", {}).get("coordinates", []))
-                if pts: return pts
-        except Exception as e: print(f"[WARN] {e}")
-        return chunk
-
-    # Add overlap: each chunk includes last OVERLAP points of previous chunk,
-    # then trim those overlap points from the result before concatenating.
-    overlapped: list[list] = []
-    for i, chunk in enumerate(all_chunks):
-        if i == 0:
-            overlapped.append(chunk)
-        else:
-            overlapped.append(all_chunks[i - 1][-OVERLAP:] + chunk)
-
-    with ThreadPoolExecutor(max_workers=min(len(overlapped), 8)) as ex:
-        results = list(ex.map(_match_one, overlapped))
-
-    snapped: list = []
-    for i, pts in enumerate(results):
-        snapped.extend(pts if i == 0 else pts[OVERLAP:])
-    final_coords = snapped if snapped else coords
-
-    _mm_mem_cache[route_hash] = (final_coords, time.time())
-    try:
-        with get_db() as db:
-            db.execute("INSERT OR REPLACE INTO map_match_cache (route_hash, coords_json, created_at) VALUES (?, ?, ?)", (route_hash, json.dumps(final_coords), now_iso()))
-            db.execute("DELETE FROM map_match_cache WHERE datetime(created_at) < datetime('now', '-7 days')")
-            db.commit()
-    except Exception: pass
-    return final_coords
 
 def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
     if not _tomtom_ready: return []
@@ -246,7 +154,7 @@ def _tomtom_along_route(coords: list, query: str, max_detour_s: int = 600, limit
             route_dists[i] = curr_total
         url = f"https://api.tomtom.com/search/2/alongRouteSearch/{requests.utils.quote(query)}.json"
         body = {"route": {"points": [{"lat": c[1], "lon": c[0]} for c in sampled]}}
-        r = requests.post(url, params={"key": TOMTOM_API_KEY, "maxDetourTime": max_detour_s, "limit": limit, "vehicleType": "Truck", "language": "bg-BG", "spreadingMode": "auto"}, json=body, timeout=12)
+        r = requests.post(url, params={"key": TOMTOM_API_KEY, "maxDetourTime": max_detour_s, "limit": limit, "language": "bg-BG", "spreadingMode": "auto"}, json=body, timeout=12)
         r.raise_for_status()
         results = []
         for item in r.json().get("results", []):
@@ -333,9 +241,6 @@ def _tool_suggest_routes(
 
         preview_rts = routes_data[:3]
         raw_geoms   = [_tomtom_route_to_geojson(rt) for rt in preview_rts]
-
-        for g in raw_geoms:
-            g["coordinates"] = _mapbox_map_match(g["coordinates"])
 
         colors = ["#00bfff", "#00ff88", "#ffcc00"]
         labels = ["Основен маршрут", "Алтернатива 1", "Алтернатива 2"]

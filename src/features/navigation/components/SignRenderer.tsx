@@ -10,7 +10,7 @@
  *   Has lanes → split: sign (left, 60 %) + lane diagram (right, 40 %)
  *               — Garmin dēzl style —
  */
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import type { RouteStep, BannerInstruction, BannerComponent } from '../api/directions';
 
@@ -75,7 +75,6 @@ function fmtDist(m: number): string {
 
 /**
  * Extract exit number from banner primary components.
- * Mapbox returns components like: [{type:'exit',text:'Exit'}, {type:'exit-number',text:'42'}, ...]
  */
 function extractExitNumber(banner?: BannerInstruction): string | null {
   const comps = banner?.primary?.components ?? [];
@@ -101,6 +100,11 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner
   // ── Pulsing glow for active lane boxes ─────────────────────────────────────
   const laneGlowAnim = useRef(new Animated.Value(0)).current;
   const laneGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  const isTruckRestriction = useMemo(() => {
+    const text = ((step.maneuver?.instruction || '') + ' ' + (step.name || '')).toLowerCase();
+    return text.includes('truck') || text.includes('hgv');
+  }, [step]);
 
   const hasActiveLane = lanes.some(l => l.active);
   useEffect(() => {
@@ -195,28 +199,42 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner
 
           {/* Lane boxes — active ones pulse with neon glow + scale pop */}
           <View style={styles.laneRow}>
-            {lanes.map((lane, i) =>
-              lane.active ? (
-                <Animated.View
-                  key={i}
-                  style={[
-                    styles.laneBox,
-                    styles.laneBoxActive,
-                    { backgroundColor: laneGlowBg, shadowOpacity: laneGlowShadow },
-                  ]}
-                >
-                  <Text style={[styles.laneArrowTxt, styles.laneArrowActive]}>
-                    {laneArrow(lane.directions?.[0])}
-                  </Text>
-                </Animated.View>
-              ) : (
+            {lanes.map((lane, i) => {
+              const isForbiddenTruck = !lane.active && (lane.directions || []).includes('straight') && isTruckRestriction;
+
+              if (lane.active) {
+                return (
+                  <Animated.View
+                    key={i}
+                    style={[
+                      styles.laneBox,
+                      styles.laneBoxActive,
+                      { backgroundColor: laneGlowBg, shadowOpacity: laneGlowShadow },
+                    ]}
+                  >
+                    <Text style={[styles.laneArrowTxt, styles.laneArrowActive]}>
+                      {laneArrow(lane.directions?.[0])}
+                    </Text>
+                  </Animated.View>
+                );
+              }
+
+              return (
                 <View key={i} style={styles.laneBox}>
-                  <Text style={styles.laneArrowTxt}>
-                    {laneArrow(lane.directions?.[0])}
-                  </Text>
+                  {isForbiddenTruck ? (
+                    <View style={styles.forbiddenTruckWrap}>
+                      <Text style={{ fontSize: 18 }}>🚛</Text>
+                      <View style={[styles.redX, { transform: [{ rotate: '45deg' }] }]} />
+                      <View style={[styles.redX, { transform: [{ rotate: '-45deg' }] }]} />
+                    </View>
+                  ) : (
+                    <Text style={styles.laneArrowTxt}>
+                      {laneArrow(lane.directions?.[0])}
+                    </Text>
+                  )}
                 </View>
-              ),
-            )}
+              );
+            })}
           </View>
 
           {/* Active lane underline bar */}
@@ -377,5 +395,18 @@ const styles = StyleSheet.create({
   },
   laneBarActive: {
     backgroundColor: '#00bfff',
+  },
+  forbiddenTruckWrap: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  redX: {
+    position: 'absolute',
+    width: 24,
+    height: 3,
+    backgroundColor: '#ff3b30',
+    borderRadius: 2,
   },
 });

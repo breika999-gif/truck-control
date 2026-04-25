@@ -76,6 +76,8 @@ export interface RouteResult {
   congestionGeoJSON: GeoJSON.FeatureCollection;
   /** Road restriction signs along the route (maxheight / maxweight / maxwidth) */
   restrictions: RestrictionPoint[];
+  /** Real-time traffic delay bubbles (lat, lng, label, severity) */
+  traffic_alerts?: any[];
   /** Alternative routes (simplified, no steps) returned alongside primary */
   alternatives?: import('../../../shared/services/backendApi').RouteOption[];
   /** Reordered waypoint indices from TomTom computeBestOrder (null if not optimized) */
@@ -208,6 +210,7 @@ export async function fetchRoute(
       congestionGeoJSON:      data.congestionGeoJSON ?? buildCongestionGeoJSON(routeCoords, []),
       steps,
       restrictions:           data.restrictions ?? [],
+      traffic_alerts:         data.traffic_alerts ?? [],
       alternatives:           data.alternatives ?? [],
       optimizedWaypointOrder: data.optimizedWaypointOrder ?? null,
     };

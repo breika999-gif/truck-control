@@ -1,4 +1,4 @@
-import { 
+﻿import { 
   buildCongestionGeoJSON, 
   adrToExclude, 
   getCurrentStepIndex, 
@@ -60,27 +60,27 @@ describe('directions utility functions', () => {
 
   describe('fmtDistance', () => {
     it('should format meters correctly', () => {
-      expect(fmtDistance(500)).toBe('500 м');
-      expect(fmtDistance(999)).toBe('999 м');
+      expect(fmtDistance(500)).toBe('500 Рј');
+      expect(fmtDistance(999)).toBe('999 Рј');
     });
 
     it('should format kilometers correctly', () => {
-      expect(fmtDistance(1000)).toBe('1.0 км');
-      expect(fmtDistance(1500)).toBe('1.5 км');
-      expect(fmtDistance(12345)).toBe('12.3 км');
+      expect(fmtDistance(1000)).toBe('1.0 РєРј');
+      expect(fmtDistance(1500)).toBe('1.5 РєРј');
+      expect(fmtDistance(12345)).toBe('12.3 РєРј');
     });
   });
 
   describe('fmtDuration', () => {
     it('should format minutes correctly', () => {
-      expect(fmtDuration(60)).toBe('1 мин');
-      expect(fmtDuration(3540)).toBe('59 мин');
+      expect(fmtDuration(60)).toBe('1 РјРёРЅ');
+      expect(fmtDuration(3540)).toBe('59 РјРёРЅ');
     });
 
     it('should format hours and minutes correctly', () => {
-      expect(fmtDuration(3600)).toBe('1 ч 0 мин');
-      expect(fmtDuration(3660)).toBe('1 ч 1 мин');
-      expect(fmtDuration(7320)).toBe('2 ч 2 мин');
+      expect(fmtDuration(3600)).toBe('1 С‡ 0 РјРёРЅ');
+      expect(fmtDuration(3660)).toBe('1 С‡ 1 РјРёРЅ');
+      expect(fmtDuration(7320)).toBe('2 С‡ 2 РјРёРЅ');
     });
   });
 });

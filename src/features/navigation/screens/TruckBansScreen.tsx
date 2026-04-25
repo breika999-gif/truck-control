@@ -34,7 +34,7 @@ const COUNTRY_BG: Record<string, string> = {
   Liechtenstein: 'Лихтенщайн', Luxembourg: 'Люксембург', Netherlands: 'Холандия',
   Norway: 'Норвегия', Poland: 'Полша', Portugal: 'Португалия',
   Romania: 'Румъния', Serbia: 'Сърбия', Sweden: 'Швеция',
-  Slovenia: 'Словения', Slovakia: 'Словакия', Turkey: 'Турция', Ukraine: 'Украйна',
+  Slovenia: 'Словения', Slovakia: 'Словения', Turkey: 'Турция', Ukraine: 'Украйна',
 };
 
 const DAYS_BG = ['Нед', 'Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб'];

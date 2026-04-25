@@ -4,12 +4,12 @@ from flask import Blueprint, jsonify, request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import (
     OPENAI_API_KEY, TOMTOM_API_KEY, _ORCHESTRATOR_SYSTEM, _SYNTHESIZER_SYSTEM,
-    MAPBOX_TOKEN, ANTHROPIC_API_KEY
+    ANTHROPIC_API_KEY
 )
 from database import get_db, row_to_poi, DB_PATH
 from utils.helpers import _is_rate_limited, _get_body, now_iso, _strip_md_fence
 from services.tomtom_service import (
-    _mapbox_map_match, _tomtom_route_to_geojson, _tomtom_lane_banner,
+    _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
     _adr_to_tunnel_code
 )
@@ -55,14 +55,6 @@ def health():
         "tomtom_ready": bool(TOMTOM_API_KEY), 
         "timestamp": now_iso()
     })
-
-@misc_bp.post("/api/routes/match-window")
-def match_window():
-    data = _get_body()
-    coords, from_idx = data.get("coords", []), data.get("from_index", 0)
-    if not coords or from_idx >= len(coords): return jsonify({"coords": []})
-    window = coords[from_idx : from_idx + 800]
-    return jsonify({"coords": _mapbox_map_match(window, max_points=800)})
 
 @misc_bp.route("/api/google-sync", methods=["GET", "POST"])
 def google_sync():
@@ -233,6 +225,72 @@ def _extract_route_restrictions(geometry: dict) -> list:
         return results
     except: return []
 
+def _decode_google_polyline(encoded: str) -> list:
+    """Decode Google encoded polyline to [[lng, lat], ...] list."""
+    coords, index, lat, lng = [], 0, 0, 0
+    while index < len(encoded):
+        shift, result = 0, 0
+        while True:
+            b = ord(encoded[index]) - 63; index += 1
+            result |= (b & 0x1f) << shift; shift += 5
+            if b < 0x20: break
+        lat += (~(result >> 1) if (result & 1) else (result >> 1))
+        shift, result = 0, 0
+        while True:
+            b = ord(encoded[index]) - 63; index += 1
+            result |= (b & 0x1f) << shift; shift += 5
+            if b < 0x20: break
+        lng += (~(result >> 1) if (result & 1) else (result >> 1))
+        coords.append([lng / 1e5, lat / 1e5])
+    return coords
+
+def _sample_tomtom_waypoints(instructions: list, max_wps: int = 23) -> list:
+    """Extract key turn waypoints from TomTom instructions, max 23 (leaving 2 for origin/dest).
+    Adds a midpoint for straight segments > 50 km to prevent Google from shortcutting."""
+    TURNS = {'TURN_RIGHT','TURN_LEFT','BEAR_RIGHT','BEAR_LEFT','SHARP_RIGHT','SHARP_LEFT',
+             'ROUNDABOUT_RIGHT','ROUNDABOUT_LEFT','KEEP_RIGHT','KEEP_LEFT',
+             'FORK_RIGHT','FORK_LEFT','U_TURN_RIGHT','U_TURN_LEFT',
+             'MOTORWAY_EXIT_RIGHT','MOTORWAY_EXIT_LEFT','ROUNDABOUT'}
+    selected, prev_offset, prev_coord = [], 0, None
+    for instr in instructions:
+        point = instr.get('point')
+        if not point: continue
+        coord = [point['longitude'], point['latitude']]
+        offset = instr.get('routeOffsetInMeters', 0)
+        # Insert midpoint for long straight segments > 50 km
+        if prev_coord and (offset - prev_offset) > 50_000:
+            selected.append([(prev_coord[0]+coord[0])/2, (prev_coord[1]+coord[1])/2])
+        if instr.get('maneuver', '').upper() in TURNS:
+            selected.append(coord)
+        prev_offset, prev_coord = offset, coord
+    # Subsample if still over limit
+    if len(selected) > max_wps:
+        step = len(selected) / max_wps
+        selected = [selected[int(i * step)] for i in range(max_wps)]
+    return selected
+
+def _google_directions_polyline(origin: list, destination: list, waypoints: list) -> list:
+    """Re-route via Google Directions API using TomTom waypoints → returns [lng,lat] coords."""
+    api_key = os.environ.get('GOOGLE_MAPS_API_KEY') or os.environ.get('GOOGLE_PLACES_KEY', '')
+    if not api_key: return []
+    params = {
+        "origin": f"{origin[1]},{origin[0]}",
+        "destination": f"{destination[1]},{destination[0]}",
+        "mode": "driving",
+        "key": api_key,
+    }
+    if waypoints:
+        params["waypoints"] = "via:" + "|via:".join(f"{c[1]},{c[0]}" for c in waypoints)
+    try:
+        r = requests.get("https://maps.googleapis.com/maps/api/directions/json", params=params, timeout=12)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") != "OK": return []
+        encoded = data["routes"][0]["overview_polyline"]["points"]
+        return _decode_google_polyline(encoded)
+    except Exception:
+        return []
+
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
 def calculate_route():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
@@ -240,7 +298,7 @@ def calculate_route():
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
-    o_lat, o_lng, d_lat, d_lng = round(origin[1], 4), round(origin[0], 4), round(destination[1], 4), round(destination[0], 4)
+    o_lat, o_lng, d_lat, d_lng = round(origin[1], 6), round(origin[0], 6), round(destination[1], 6), round(destination[0], 6)
     truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
     cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}"
     if cache_key in _route_cache:
@@ -248,7 +306,9 @@ def calculate_route():
         if _cache_time.time() < exp: return jsonify(res)
     all_points = [origin] + waypoints + [destination]
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1}
+    # Base avoid list — low emission zones + unpaved
+    avoid_list = ["lowEmissionZones", "unpavedRoads"] if truck.get("avoidUnpaved") else ["lowEmissionZones"]
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline"}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]
@@ -262,21 +322,30 @@ def calculate_route():
         routes = r.json().get("routes", [])
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
-        raw_geom = _tomtom_route_to_geojson(rt)
-        snapped_coords = _mapbox_map_match(raw_geom["coordinates"])
-        geom = {"type": "LineString", "coordinates": snapped_coords}
+        geom = _tomtom_route_to_geojson(rt)
+
         instructions = rt.get("guidance", {}).get("instructions", [])
         total_m, steps = summary.get("lengthInMeters", 0), []
         for i, instr in enumerate(instructions):
             nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
-        def _snapped_alt(ar):
-            raw = _tomtom_route_to_geojson(ar)
-            snapped = {"type": "LineString", "coordinates": _mapbox_map_match(raw["coordinates"])}
-            return {"label": ["Алтернатива 1", "Алтернатива 2"][alt_routes.index(ar)], "color": ["#B922FF", "#08F384"][alt_routes.index(ar)], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": snapped, "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, snapped)}
-        alternatives = [_snapped_alt(ar) for ar in alt_routes]
-        final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": _tomtom_congestion_geojson(rt, geom), "traffic_alerts": _tomtom_traffic_alerts(rt, geom), "restrictions": _extract_route_restrictions(geom), "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
+        alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
+
+        # Calculate congestion/traffic (uses TomTom point indices — must be before re-routing)
+        congestion_geojson = _tomtom_congestion_geojson(rt, geom)
+        traffic_alerts = _tomtom_traffic_alerts(rt, geom)
+        restrictions = _extract_route_restrictions(geom)
+
+        # Re-route through Google Directions only for short/urban routes (<150 km)
+        # Long routes (highway/international) stay on TomTom coords — Google loses accuracy with sparse waypoints
+        if total_m < 150_000:
+            wps = _sample_tomtom_waypoints(instructions)
+            google_coords = _google_directions_polyline(origin, destination, wps)
+            if google_coords:
+                geom['coordinates'] = google_coords
+
+        final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)
     except Exception as e: return jsonify({"error": str(e)}), 500

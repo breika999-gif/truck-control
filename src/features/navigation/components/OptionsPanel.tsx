@@ -9,18 +9,20 @@ import {
   SafeAreaView,
   StyleSheet,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
+import { getDaySummary } from '../../tacho/TachoEventLog';
 import { POI_META, type POICategory } from '../api/poi';
 import { POI_CATEGORIES, openInBrowser } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode } from '../hooks/useMapUIState';
-import { styles as mapStyles } from '../screens/MapScreen.styles';
+import { styles as mapStyles, NEON } from '../screens/MapScreen.styles';
 
 interface OptionsPanelProps {
   optionsOpen: boolean;
@@ -153,7 +155,25 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   backendOnline,
 }) => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  
+  const [summaryOpen, setSummaryOpen] = React.useState(false);
+  const [summaryData, setSummaryData] = React.useState<any>(null);
+
   const close = () => setOptionsOpen(false);
+
+  const formatMin = (min: number | null) => {
+    if (min === null) return '--:--';
+    const h = Math.floor(min / 60);
+    const m = Math.round(min % 60);
+    return `${h}:${m < 10 ? '0' : ''}${m}`;
+  };
+
+  const openSummary = async () => {
+    const data = await getDaySummary();
+    setSummaryData(data);
+    setSummaryOpen(true);
+  };
+
   const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
   const mapModeIcon = mapMode === 'vector' ? 'earth' : 'layers';
 
@@ -193,6 +213,13 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             >
               {/* ПРОФИЛ */}
               <SectionHeader title="КАМИОН" />
+              <Row
+                icon="clipboard-text-outline"
+                label="Данни шофиране 📋"
+                onPress={() => { openSummary(); }}
+                iconBg="rgba(255,255,255,0.1)"
+                iconColor="#FFFFFF"
+              />
               <Row
                 icon="truck"
                 label="Профил на камиона"
@@ -488,6 +515,75 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
           </View>
         </View>
       </Modal>
+
+      {/* Driving Report Modal */}
+      <Modal
+        visible={summaryOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSummaryOpen(false)}
+      >
+        <View style={s.backdrop}>
+          <SafeAreaView style={s.summaryDrawer}>
+            <View style={s.header}>
+              <Text style={s.headerTitle}>📋 Отчет за деня</Text>
+              <TouchableOpacity onPress={() => setSummaryOpen(false)}>
+                <Icon name="close" size={26} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={s.summaryBody}>
+              {summaryData ? (
+                <>
+                  <View style={s.summaryHero}>
+                    <View style={s.summaryHeroItem}>
+                      <Text style={s.summaryHeroLabel}>ПОЧЕТАК</Text>
+                      <Text style={s.summaryHeroVal}>{summaryData.shift_start || '--:--'}</Text>
+                    </View>
+                    <View style={s.summaryHeroItem}>
+                      <Text style={s.summaryHeroLabel}>ТЕКУЩО</Text>
+                      <Text style={s.summaryHeroVal}>{summaryData.current_time}</Text>
+                    </View>
+                  </View>
+
+                  <View style={s.summaryStats}>
+                    <View style={s.summaryStatBox}>
+                      <Text style={s.summaryStatLabel}>ШОФИРАНЕ</Text>
+                      <Text style={[s.summaryStatVal, { color: '#4CAF50' }]}>{formatMin(summaryData.total_driven_min)}</Text>
+                    </View>
+                    <View style={s.summaryStatBox}>
+                      <Text style={s.summaryStatLabel}>ОСТАВАЩО</Text>
+                      <Text style={[s.summaryStatVal, { color: NEON }]}>{formatMin(summaryData.remaining_drive_min)}</Text>
+                    </View>
+                  </View>
+
+                  <Text style={s.tableHeader}>СЕГМЕНТИ</Text>
+                  <ScrollView style={s.tableScroll}>
+                    <View style={s.tableRowHead}>
+                      <Text style={[s.tableCell, { flex: 2 }]}>АКТИВНОСТ</Text>
+                      <Text style={s.tableCell}>ОТ</Text>
+                      <Text style={s.tableCell}>ДО</Text>
+                      <Text style={[s.tableCell, { textAlign: 'right' }]}>МИН</Text>
+                    </View>
+                    {summaryData.segments.map((seg: any, i: number) => (
+                      <View key={i} style={s.tableRow}>
+                        <Text style={[s.tableCell, { flex: 2, fontWeight: '700', color: seg.activity === 'DRIVING' ? '#4CAF50' : '#fff' }]}>
+                          {seg.activity}
+                        </Text>
+                        <Text style={s.tableCell}>{seg.start}</Text>
+                        <Text style={s.tableCell}>{seg.end}</Text>
+                        <Text style={[s.tableCell, { textAlign: 'right', fontWeight: 'bold' }]}>{seg.duration_min}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </>
+              ) : (
+                <ActivityIndicator size="large" color={NEON} style={{ marginTop: 40 }} />
+              )}
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </>
   );
 });
@@ -599,6 +695,29 @@ const s = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.5,
   },
+  summaryDrawer: {
+    backgroundColor: '#0A0E1A',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '75%',
+    width: '100%',
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  summaryBody: { padding: 20, flex: 1 },
+  summaryHero: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
+  summaryHeroItem: { alignItems: 'center', flex: 1 },
+  summaryHeroLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '800', marginBottom: 4 },
+  summaryHeroVal: { color: '#fff', fontSize: 28, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  summaryStats: { flexDirection: 'row', gap: 12, marginBottom: 24 },
+  summaryStatBox: { flex: 1, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 16, padding: 16, alignItems: 'center' },
+  summaryStatLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '800', marginBottom: 4 },
+  summaryStatVal: { fontSize: 22, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  tableHeader: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '800', marginBottom: 12 },
+  tableScroll: { flex: 1 },
+  tableRowHead: { flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  tableRow: { flexDirection: 'row', paddingVertical: 12, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  tableCell: { color: 'rgba(255,255,255,0.7)', fontSize: 13, flex: 1 },
 });
 
 export default OptionsPanel;

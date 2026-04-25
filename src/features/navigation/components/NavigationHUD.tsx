@@ -62,6 +62,7 @@ interface NavigationHUDProps {
   proximityAlerts?: { overtaking: any[] };
   roadGrade?: number | null;
   nearestParkingM?: number | null;
+  hillWarnings?: import('../hooks/useRouteInsights').RouteInsight[];
   onFetchElevation?: () => void;
   onFetchWeather?: () => void;
   onOptimize?: () => void;
@@ -102,6 +103,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   proximityAlerts,
   roadGrade,
   nearestParkingM,
+  hillWarnings = [],
   onFetchElevation,
   onFetchWeather,
   onOptimize,
@@ -357,6 +359,17 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                     : '🟢 Свободно'}
                 </Text>
               </View>
+            </View>
+          )}
+
+          {/* Hill Warnings (Steep slopes ahead) */}
+          {hillWarnings.length > 0 && (
+            <View style={styles.congestionRow}>
+              {hillWarnings.map((w, i) => (
+                <View key={i} style={[styles.congestionChip, { backgroundColor: 'rgba(255,68,68,0.15)', borderColor: '#FF9500' }]}>
+                  <Text style={[styles.congestionText, { color: '#FF9500' }]}>{w.text}</Text>
+                </View>
+              ))}
             </View>
           )}
 

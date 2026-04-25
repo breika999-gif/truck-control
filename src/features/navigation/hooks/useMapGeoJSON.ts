@@ -140,6 +140,7 @@ export const useMapGeoJSON = ({
 
   const navCongestionVisible = useMemo<GeoJSON.FeatureCollection | null>(() => {
     if (!navigating || !userCoords || !navCongestionGeoJSON) return null;
+    // Performance optimization: Only show congestion features within 15km of user
     const MAX_M = 15_000;
     const features = navCongestionGeoJSON.features.filter(f => {
       const coords = (f.geometry as GeoJSON.LineString).coordinates;

@@ -105,7 +105,7 @@ def poi_along_route_v2():
     if category == "truck_stop":
         results = _transparking_along_route(coords)
     else:
-        results = _tomtom_along_route(coords, "petrol station", max_detour_s=900, limit=10)
+        results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=10)
         for r in results:
             r["category"] = category
     return jsonify({"pois": results})
@@ -140,6 +140,16 @@ def proximity_alerts():
     cams = _tool_find_speed_cameras(lat, lng, rad)
     ovt = _tool_find_overtaking_restrictions(lat, lng, rad)
     return jsonify({"ok": True, "cameras": cams.get("cameras", []), "overtaking": ovt.get("restrictions", []), "nearest_camera_m": cams.get("nearest_m", -1)})
+
+@poi_bp.post("/api/cameras/report")
+def report_camera():
+    body = _get_body()
+    lat, lng, email = body.get("lat"), body.get("lng"), body.get("user_email", "")
+    if lat is None or lng is None: return jsonify({"ok": False, "error": "lat, lng required"}), 400
+    with get_db() as conn:
+        conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", ("📷 Докладвана камера", "Добавена от потребител", "speed_camera", float(lat), float(lng), "User reported", email, now_iso()))
+        conn.commit()
+    return jsonify({"ok": True})
 
 @poi_bp.get("/api/places/search")
 def places_search():
