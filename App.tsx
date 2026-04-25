@@ -3,8 +3,13 @@ import { StatusBar } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Mapbox from '@rnmapbox/maps';
+import { MAPBOX_PUBLIC_TOKEN } from './src/shared/constants/config';
 import { colors } from './src/shared/constants/theme';
 import type { RootStackParamList } from './src/shared/types/navigation';
+
+Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
+if (Mapbox.setTelemetryEnabled) Mapbox.setTelemetryEnabled(false);
 import MapScreen from './src/features/navigation/screens/MapScreen';
 import VehicleProfileScreen from './src/features/vehicle/screens/VehicleProfileScreen';
 import POIListScreen from './src/features/navigation/screens/POIListScreen';

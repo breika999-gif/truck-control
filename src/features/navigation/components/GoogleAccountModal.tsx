@@ -15,12 +15,14 @@ import {
   StyleSheet,
   ActivityIndicator,
   Pressable,
+  Image,
 } from 'react-native';
 import { pickGoogleAccount, clearAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
 const NEON = '#00bfff';
+const LOGO = require('../../../shared/assets/TruckExpoAi.png');
 
 // ── types ──────────────────────────────────────────────────────────────────────
 
@@ -86,8 +88,11 @@ export default function GoogleAccountModal({
         <Pressable style={styles.card} onPress={() => {}}>
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.googleIcon}>G</Text>
-            <Text style={styles.title}>Google Акаунт</Text>
+            <Image source={LOGO} style={styles.logo} resizeMode="contain" />
+            <View>
+              <Text style={styles.title}>TruckExpo AI</Text>
+              <Text style={styles.subtitleHeader}>Google Акаунт</Text>
+            </View>
           </View>
 
           {currentAccount ? (
@@ -175,25 +180,26 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 12,
+    gap: 14,
+    marginBottom: 20,
   },
-  googleIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#4285F4',
-    textAlign: 'center',
-    lineHeight: 32,
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#fff',
+  logo: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '800',
+    fontSize: 22,
+    fontWeight: '900',
     color: '#fff',
-    letterSpacing: 0.3,
+    letterSpacing: 0.5,
+  },
+  subtitleHeader: {
+    fontSize: 12,
+    color: NEON,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    marginTop: -2,
   },
   subtitle: {
     fontSize: 13,

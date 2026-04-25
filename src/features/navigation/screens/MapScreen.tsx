@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import Mapbox, { locationManager, LocationPuck } from '@rnmapbox/maps';
 
 import { useVoice } from '../hooks/useVoice';
 import { useTacho } from '../hooks/useTacho';
@@ -970,34 +970,43 @@ const MapScreen: React.FC = () => {
       )}
 
       {/* ── Map ── */}
-      <MapView
-        ref={cameraRef}
+      <Mapbox.MapView
         style={styles.map}
-        initialRegion={{
-          latitude: MAP_CENTER.latitude,
-          longitude: MAP_CENTER.longitude,
-          latitudeDelta: 5.0,
-          longitudeDelta: 5.0,
-        }}
-        provider={PROVIDER_GOOGLE}
-        mapType={mapMode === 'hybrid' ? 'hybrid' : 'standard'}
-        showsBuildings={true}
-        showsUserLocation={false}
-        showsMyLocationButton={false}
-        showsCompass={false}
-        showsTraffic={showTraffic}
-        onMapReady={() => setMapIsLoaded(true)}
+        styleURL={mapStyleURL}
+        pitchEnabled
+        scaleBarEnabled={false}
+        attributionPosition={{ bottom: 8, left: 8 }}
+        onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
+        onRegionWillChange={(feature: any) => {
+          if (navigating && isTracking && feature?.properties?.isUserInteraction) {
+            setIsTracking(false);
+          }
+        }}
         onPress={() => {
           if (gptChatOpen) setGptChatOpen(false);
           if (geminiChatOpen) setGeminiChatOpen(false);
           if (longPressCoord) setLongPressCoord(null);
           if (selectedParking) setSelectedParking(null);
         }}
-        onPanDrag={() => {
-          if (navigating && isTracking) setIsTracking(false);
-        }}
       >
+        <Mapbox.Images
+          images={{
+            'nav-arrow':     NAV_ARROW,
+            'sign-closed':   SIGN_CLOSED,
+            'sign-danger-0': SIGN_DANGER0,
+            'star-icon':     STAR_ICON,
+            'parking-icon':  ICON_PARKING,
+            'fuel-icon':     ICON_FUEL,
+            'camera-icon':   ICON_CAMERA,
+            'biz-icon':      ICON_BIZ,
+            'no-overtaking': ICON_NO_OVERTAKING,
+            'dest-flag':     ICON_DESTINATION,
+          }}
+          onImageMissing={(imageKey) => {
+            console.warn('[Mapbox] missing image in atlas:', imageKey);
+          }}
+        />
         <StableCamera
           cameraRef={cameraRef}
           navigating={navigating}
@@ -1065,272 +1074,7 @@ const MapScreen: React.FC = () => {
           handlePOINavigate={handlePOINavigate}
         />
 
-        {/* User / Truck Marker */}
-        {displayedUserCoords && (
-          <Marker
-            coordinate={{ latitude: displayedUserCoords[1], longitude: displayedUserCoords[0] }}
-            rotation={userHeading ?? 0}
-            flat={navigating}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-          >
-            {navigating ? (
-              <Image source={NAV_ARROW} style={{ width: 44, height: 44, resizeMode: 'contain' }} />
-            ) : (
-              <View style={{
-                width: 18, height: 16,
-                borderRadius: 9,
-                backgroundColor: '#13BDFF',
-                borderWidth: 2,
-                borderColor: '#ffffff',
-                shadowColor: '#000',
-                shadowOpacity: 0.5,
-                shadowRadius: 3,
-                elevation: 5,
-              }} />
-            )}
-          </Marker>
-        )}
-
-        {/* Route polyline — segmented for traffic coloring (double: halo + main) */}
-        {navCongestionVisible && navCongestionVisible.features.map((f: any, idx: number) => {
-          const cong = f.properties?.congestion;
-          const color =
-            cong === 'heavy' || cong === 'severe' ? '#FF3B30' :
-            cong === 'moderate' ? '#FF9500' :
-            '#13BDFF';
-          const haloColor =
-            cong === 'heavy' || cong === 'severe' ? 'rgba(255,59,48,0.22)' :
-            cong === 'moderate' ? 'rgba(255,149,0,0.22)' :
-            'rgba(19,189,255,0.22)';
-          const coords = f.geometry.coordinates.map((c: [number, number]) => ({ latitude: c[1], longitude: c[0] }));
-
-          return [
-            // Halo (glow shadow)
-            <Polyline
-              key={`route-halo-${idx}`}
-              coordinates={coords}
-              strokeColor={haloColor}
-              strokeWidth={dynamicWidth + 8}
-              lineCap="round"
-              lineJoin="round"
-              geodesic={true}
-            />,
-            // Main line
-            <Polyline
-              key={`route-seg-${idx}`}
-              coordinates={coords}
-              strokeColor={color}
-              strokeWidth={dynamicWidth}
-              lineCap="round"
-              lineJoin="round"
-              geodesic={true}
-            />,
-          ];
-        })}
-
-        {/* Fallback polyline if congestion data is missing */}
-        {!navCongestionVisible && route && [
-          <Polyline
-            key="route-fallback-halo"
-            coordinates={route.geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))}
-            strokeColor="rgba(19,189,255,0.22)"
-            strokeWidth={dynamicWidth + 8}
-            lineCap="round"
-            lineJoin="round"
-            geodesic={true}
-          />,
-          <Polyline
-            key="route-fallback-main"
-            coordinates={route.geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))}
-            strokeColor="#13BDFF"
-            strokeWidth={dynamicWidth}
-            lineCap="round"
-            lineJoin="round"
-            geodesic={true}
-          />,
-        ]}
-
-        {/* Alternative routes */}
-        {routeOptions.map((opt, idx) => idx !== selectedRouteIdx && (
-          <Polyline
-            key={`alt-${idx}`}
-            coordinates={opt.geometry.coordinates.map(([lng, lat]: [number, number]) => ({ latitude: lat, longitude: lng }))}
-            strokeColor="#8B5CF6"
-            strokeWidth={4}
-            tappable
-            onPress={() => handleSelectRouteOption(idx)}
-          />
-        ))}
-
-        {/* Destination marker */}
-        {destination && (
-          <Marker
-            coordinate={{ latitude: destination[1], longitude: destination[0] }}
-            title={destinationName ?? 'Дестинация'}
-            pinColor="red"
-          />
-        )}
-
-        {/* Waypoint markers */}
-        {waypoints.map((wp, idx) => (
-          <Marker
-            key={`wp-${idx}`}
-            coordinate={{ latitude: wp[1], longitude: wp[0] }}
-            title={waypointNames[idx] ?? `Спирка ${idx + 1}`}
-            pinColor="orange"
-          />
-        ))}
-
-        {/* Parking markers */}
-        {parkingResults.map((p, idx) => (
-          <Marker
-            key={`park-${idx}`}
-            coordinate={{ latitude: p.lat, longitude: p.lng }}
-            title={p.name}
-            onPress={() => setSelectedParking(p)}
-            tracksViewChanges={false}
-          >
-            <View style={{
-              width: 44, height: 44,
-              backgroundColor: 'rgba(10,12,30,0.95)',
-              borderRadius: 22,
-              borderWidth: 2,
-              borderColor: NEON,
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: NEON,
-              shadowOpacity: 0.8,
-              shadowRadius: 6,
-              elevation: 8,
-            }}>
-              <Text style={{ fontSize: 22, color: '#fff', fontWeight: 'bold' }}>P</Text>
-            </View>
-          </Marker>
-        ))}
-
-        {/* Fuel markers */}
-        {fuelResults.map((f, idx) => (
-          <Marker
-            key={`fuel-${idx}`}
-            coordinate={{ latitude: f.lat, longitude: f.lng }}
-            title={f.name}
-            onPress={() => setSelectedFuel(f)}
-            tracksViewChanges={false}
-          >
-            <View style={{
-              width: 44, height: 44,
-              backgroundColor: 'rgba(10,12,30,0.95)',
-              borderRadius: 22,
-              borderWidth: 2,
-              borderColor: '#f59e0b',
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: '#f59e0b',
-              shadowOpacity: 0.8,
-              shadowRadius: 6,
-              elevation: 8,
-            }}>
-              <Text style={{ fontSize: 22 }}>⛽</Text>
-            </View>
-          </Marker>
-        ))}
-
-        {/* Camera markers */}
-        {cameraResults.map((c, idx) => (
-          <Marker
-            key={`cam-${idx}`}
-            coordinate={{ latitude: c.lat, longitude: c.lng }}
-            title="Камера"
-            tracksViewChanges={false}
-          >
-            <View style={{
-              width: 36, height: 36,
-              backgroundColor: 'rgba(30,0,0,0.95)',
-              borderRadius: 18,
-              borderWidth: 2,
-              borderColor: '#ff3b30',
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: '#ff3b30',
-              shadowOpacity: 0.8,
-              shadowRadius: 6,
-              elevation: 8,
-            }}>
-              <Text style={{ fontSize: 18 }}>📸</Text>
-            </View>
-          </Marker>
-        ))}
-
-        {/* POI search results */}
-        {poiResults.map((poi, idx) => (
-          <Marker
-            key={`poi-${idx}`}
-            coordinate={{ latitude: poi.coordinates[1], longitude: poi.coordinates[0] }}
-            title={poi.name}
-            onPress={() => handlePOINavigate(poi)}
-            tracksViewChanges={false}
-          >
-            <View style={{
-              width: 44, height: 44,
-              backgroundColor: 'rgba(10,12,30,0.85)',
-              borderRadius: 22,
-              borderWidth: 2,
-              borderColor: NEON,
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: NEON,
-              shadowOpacity: 0.8,
-              shadowRadius: 6,
-              elevation: 8,
-            }}>
-              <Text style={{ fontSize: 24 }}>{POI_META[poi.category]?.emoji || '📍'}</Text>
-            </View>
-          </Marker>
-        ))}
-
-        {/* Starred POIs */}
-        {starredPOIs.map((poi, idx) => (
-          <Marker
-            key={`star-${idx}`}
-            coordinate={{ latitude: poi.lat, longitude: poi.lng }}
-            title={poi.name}
-          >
-            <Image source={STAR_ICON} style={{ width: 24, height: 24 }} />
-          </Marker>
-        ))}
-
-        {/* Traffic Alerts (Delay bubbles) */}
-        {route && route.traffic_alerts && route.traffic_alerts.map((a: any, idx: number) => (
-          <Marker
-            key={`traffic-alert-${idx}`}
-            coordinate={{ latitude: a.lat, longitude: a.lng }}
-            anchor={{ x: 0.5, y: 0.5 }}
-            tracksViewChanges={false}
-            onPress={() => {
-              setGeminiChatOpen(true);
-              setGptChatOpen(false);
-              sendGeminiText(`Трафик инцидент: ${a.label}. Дължина: ${a.length_km} км. Кажи ми повече за тази ситуация и как да реагирам като шофьор на камион.`);
-            }}
-          >
-            <View style={{
-              backgroundColor: a.severity === 'moderate' ? '#FF9500' : '#FF3B30',
-              borderRadius: 10,
-              paddingHorizontal: 7,
-              paddingVertical: 4,
-              borderWidth: 1.5,
-              borderColor: '#fff',
-              shadowColor: '#000',
-              shadowOpacity: 0.4,
-              shadowRadius: 3,
-              elevation: 4,
-            }}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{a.label}</Text>
-            </View>
-          </Marker>
-        ))}
-
-      </MapView>
+      </Mapbox.MapView>
 
       {/* ── Search bar (hidden during navigation) ── */}
       {!navigating && (

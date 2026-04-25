@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Linking,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -23,6 +24,8 @@ import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode } from '../hooks/useMapUIState';
 import { styles as mapStyles, NEON } from '../screens/MapScreen.styles';
+
+const LOGO = require('../../../shared/assets/TruckExpoAi.png');
 
 interface OptionsPanelProps {
   optionsOpen: boolean;
@@ -200,7 +203,10 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
           <View style={s.drawer}>
             {/* Header */}
             <View style={s.header}>
-              <Text style={s.headerTitle}>Меню</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Image source={LOGO} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="contain" />
+                <Text style={s.headerTitle}>Меню</Text>
+              </View>
               <TouchableOpacity onPress={close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                 <Icon name="close" size={26} color="#FFFFFF" />
               </TouchableOpacity>
