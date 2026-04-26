@@ -148,7 +148,8 @@ export function useChat({
       last_message:   text,
     };
 
-    const response = await sendChatMessage(text, gptHistory.slice(-6), context);
+    const isGptNav = /карай до|маршрут|паркинг|гориво|навигир|route|navigate|до |в |около /.test(text.toLowerCase());
+    const response = await sendChatMessage(text, isGptNav ? [] : gptHistory.slice(-3), context);
     if (!isMountedRef.current) return;
 
     if (!response.ok) {

@@ -3,7 +3,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAI
 from config import (
-    OPENAI_API_KEY, _SYSTEM_PROMPT, _TOOLS, _TRUCK_SPEED_LIMITS
+    OPENAI_API_KEY, _SYSTEM_PROMPT, _TOOLS
 )
 from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc
@@ -65,8 +65,6 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
         driven_h = context.get("driven_seconds", 0) / 3600
         prof = context.get("profile", {})
         system_txt += f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h. Truck Profile: {prof.get('height_m', 4.0)}m height, {prof.get('weight_t', 18)}t weight, {prof.get('width_m', 2.55)}m width, {prof.get('length_m', 12)}m length, {prof.get('axle_count', 3)} axles, hazmat={prof.get('hazmat_class', 'none')}."
-        _sl_lines = "\n".join(f"  {cc}: urban {u}km/h, rural {r}km/h, motorway {m}km/h" for cc, (u, r, m) in _TRUCK_SPEED_LIMITS.items())
-        system_txt += f"\n\nTruck speed limits by country:\n{_sl_lines}"
 
     messages = [{"role": "system", "content": system_txt}]
     for h in history: messages.append({"role": "assistant" if h.get("role") == "model" else "user", "content": h.get("text", "")})
