@@ -139,3 +139,6 @@ temp_poi.html
 # Python cache (routes/services subfolders)
 **/__pycache__/
 **/*.pyc
+
+# Separate project — not part of this repo
+TruckExpoAI/

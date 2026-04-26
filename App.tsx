@@ -44,7 +44,7 @@ export default function App() {
           options={{
             presentation: 'modal',
             headerShown: true,
-            title: 'РџСЂРѕС„РёР» РЅР° РєР°РјРёРѕРЅ',
+            title: 'Профил на камиона',
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },
@@ -63,7 +63,7 @@ export default function App() {
           component={TachoScreen}
           options={{
             headerShown: true,
-            title: 'РўР°С…РѕРіСЂР°С„',
+            title: 'Тахограф',
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
           }}

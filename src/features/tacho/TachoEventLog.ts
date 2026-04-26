@@ -15,6 +15,14 @@ export interface TachoEvent {
   leftMin: number;
 }
 
+export interface TachoSummarySegment {
+  activity: string;
+  activity_code: ActivityCode;
+  start: string;
+  end: string;
+  duration_min: number;
+}
+
 // ── Load / save helpers ───────────────────────────────────────────────────────
 
 async function loadLog(): Promise<TachoEvent[]> {
@@ -199,12 +207,36 @@ export async function getDaySummary(): Promise<object> {
   const shiftStartMs = new Date(firstEvent.ts).getTime();
   const shiftEndMs = shiftStartMs + 13 * 3600_000;
   const shiftEndAt = new Date(shiftEndMs).toTimeString().slice(0, 5); // "HH:MM"
+  const currentTime = new Date().toTimeString().slice(0, 5);
+
+  const segments: TachoSummarySegment[] = events.map((event, index) => {
+    const nextEvent = events[index + 1];
+    const startMs = new Date(event.ts).getTime();
+    const endMs = nextEvent
+      ? new Date(nextEvent.ts).getTime()
+      : Date.now();
+    return {
+      activity: ACTIVITY_LABEL[event.activity],
+      activity_code: event.activity,
+      start: new Date(startMs).toTimeString().slice(0, 5),
+      end: new Date(endMs).toTimeString().slice(0, 5),
+      duration_min: Math.max(0, Math.round((endMs - startMs) / 60_000)),
+    };
+  });
 
   return {
+    shift_start:               new Date(shiftStartMs).toTimeString().slice(0, 5),
+    shift_start_iso:           new Date(shiftStartMs).toISOString(),
+    current_time:              currentTime,
+    current_activity:          ACTIVITY_LABEL[lastEvent.activity],
+    total_driven_min:          drivenTodayMin,
+    remaining_drive_min:       remainingTodayMin,
     driven_today_min:          drivenTodayMin,
     remaining_today_min:       remainingTodayMin,
+    continuous_driving_min:    continuousMin,
     continuous_remaining_min:  continuousRemainingMin,
     next_break_in_min:         nextBreakInMin,
     shift_end_at:              shiftEndAt,
+    segments,
   };
 }

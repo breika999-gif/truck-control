@@ -154,6 +154,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
     };
   }, [parkingResults, drivingSeconds, hosLimitS]);
 
+  const originCoords = customOriginRef.current ?? userCoords;
+
   return (
     <>
       {/* ... keep traffic, restriction, incident, truck layers unchanged ... */}
@@ -424,10 +426,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
       )}
 
       {/* Origin/Dest Pins */}
-      {(route || navigating) && (customOriginRef.current || userCoords) && (
+      {(route || navigating) && originCoords && (
         <Mapbox.ShapeSource
           id="origin-pin-src"
-          shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: customOriginRef.current ?? userCoords ?? null }, properties: {} }}
+          shape={{ type: 'Feature', geometry: { type: 'Point', coordinates: originCoords }, properties: {} }}
         >
           <Mapbox.SymbolLayer id="origin-pin-layer" slot="top" style={{ textField: '🟢', textSize: 16, textAnchor: 'center', textAllowOverlap: true }} />
         </Mapbox.ShapeSource>

@@ -39,6 +39,10 @@ export const useChatPanelsState = () => {
     };
   }, []);
 
+  useEffect(() => {
+    chatInputRef.current = chatInput;
+  }, [chatInput]);
+
   const handleChat = useCallback(async (
     sendGptText: (text: string) => Promise<void>,
     sendGeminiText: (text: string) => Promise<void>,

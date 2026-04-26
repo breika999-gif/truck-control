@@ -5,7 +5,7 @@ import time
 import math
 from concurrent.futures import ThreadPoolExecutor
 from config import (
-    TOMTOM_API_KEY, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
+    TOMTOM_API_KEY, MAPBOX_PUBLIC_TOKEN, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
     _BELGRADE_WP, _ZAGREB_WP, _SOFIA_BYPASS
 )
 from utils.helpers import _haversine_m, now_iso
@@ -39,6 +39,118 @@ def _tomtom_route_to_geojson(route: dict) -> dict:
         for pt in leg.get("points", []):
             coords.append([pt["longitude"], pt["latitude"]])
     return {"type": "LineString", "coordinates": coords}
+
+def _sample_coords_for_snap(coords: list, max_points: int = 1200) -> list:
+    if len(coords) <= max_points:
+        return coords
+    step = (len(coords) - 1) / float(max_points - 1)
+    sampled = [coords[round(i * step)] for i in range(max_points)]
+    sampled[0] = coords[0]
+    sampled[-1] = coords[-1]
+    deduped = []
+    for coord in sampled:
+        if not deduped or coord != deduped[-1]:
+            deduped.append(coord)
+    return deduped
+
+def _flat_route_coords(route_features: list) -> list:
+    merged = []
+    for feat in route_features:
+        seg = (feat or {}).get("geometry", {}).get("coordinates", [])
+        for coord in seg:
+            if not merged or coord != merged[-1]:
+                merged.append(coord)
+    return merged
+
+def _tomtom_snap_to_roads(geometry: dict, vehicle_type: str = "Truck") -> tuple[dict, bool]:
+    coords = geometry.get("coordinates", [])
+    if not _tomtom_ready or len(coords) < 2:
+        return geometry, False
+    sampled = _sample_coords_for_snap(coords)
+    body = {
+        "points": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": coord},
+                "properties": {},
+            }
+            for coord in sampled
+        ]
+    }
+    params = {
+        "key": TOMTOM_API_KEY,
+        "fields": "{route{type,geometry{type,coordinates}}}",
+        "vehicleType": vehicle_type,
+        "measurementSystem": "metric",
+        "offroadMargin": 20,
+    }
+    try:
+        r = requests.post("https://api.tomtom.com/snapToRoads/1", params=params, json=body, timeout=12)
+        r.raise_for_status()
+        snapped = _flat_route_coords(r.json().get("route", []))
+        if len(snapped) >= 2:
+            return {"type": "LineString", "coordinates": snapped}, True
+    except Exception:
+        pass
+    return geometry, False
+
+def _mapbox_match_geometry(geometry: dict) -> tuple[dict, bool]:
+    """Snap TomTom geometry to Mapbox road network using Map Matching API.
+    Returns (snapped_geometry, success). Falls back to original on any error.
+    """
+    coords = geometry.get("coordinates", [])
+    if not MAPBOX_PUBLIC_TOKEN or len(coords) < 2:
+        return geometry, False
+
+    CHUNK = 99  # Mapbox limit is 100, use 99 with 1-point overlap
+    all_snapped: list = []
+
+    try:
+        i = 0
+        while i < len(coords):
+            chunk = coords[i:i + CHUNK]
+            if len(chunk) < 2:
+                break
+
+            coords_str = ";".join(f"{c[0]},{c[1]}" for c in chunk)
+            radiuses = ";".join(["25"] * len(chunk))  # 25m tolerance — keeps us on truck route
+
+            r = requests.get(
+                f"https://api.mapbox.com/matching/v5/mapbox/driving/{coords_str}",
+                params={
+                    "access_token": MAPBOX_PUBLIC_TOKEN,
+                    "geometries": "geojson",
+                    "radiuses": radiuses,
+                    "overview": "full",
+                    "tidy": "false",
+                },
+                timeout=10,
+            )
+            r.raise_for_status()
+            data = r.json()
+
+            if data.get("code") == "Ok" and data.get("matchings"):
+                chunk_coords = data["matchings"][0]["geometry"]["coordinates"]
+                if all_snapped:
+                    all_snapped.extend(chunk_coords[1:])  # skip first to avoid duplicate
+                else:
+                    all_snapped.extend(chunk_coords)
+            else:
+                # Matching failed for this chunk — use original coords
+                if all_snapped:
+                    all_snapped.extend(chunk[1:])
+                else:
+                    all_snapped.extend(chunk)
+
+            i += CHUNK - 1  # 1-point overlap between chunks
+
+        if len(all_snapped) >= 2:
+            return {"type": "LineString", "coordinates": all_snapped}, True
+    except Exception:
+        pass
+
+    return geometry, False
+
 
 def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
     if not _tomtom_ready: return []
@@ -217,6 +329,7 @@ def _tool_suggest_routes(
             "key": TOMTOM_API_KEY, "travelMode": "truck", "traffic": "true",
             "computeTravelTimeFor": "all", "routeType": "fastest",
             "maxAlternatives": 2, "sectionType": "traffic",
+            "routeRepresentation": "polyline",
         }
         if truck_profile:
             if truck_profile.get("height_m"):  params["vehicleHeight"] = truck_profile["height_m"]

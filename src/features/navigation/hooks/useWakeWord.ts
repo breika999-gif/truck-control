@@ -29,6 +29,10 @@ export type UseWakeWordArgs = {
   onCommand: (text: string) => void;
 };
 
+type TtsSubscription = {
+  remove: () => void;
+};
+
 export function useWakeWord({ active, onCommand }: UseWakeWordArgs): void {
   const activeRef      = useRef(active);
   const ttsBusyRef     = useRef(false);
@@ -115,15 +119,14 @@ export function useWakeWord({ active, onCommand }: UseWakeWordArgs): void {
       }
     };
 
-    // react-native-tts uses addEventListener / removeEventListener
-    Tts.addEventListener('tts-start',  onStart  as () => void);
-    Tts.addEventListener('tts-finish', onFinish as () => void);
-    Tts.addEventListener('tts-cancel', onFinish as () => void);
+    const startSub = Tts.addEventListener('tts-start', onStart as () => void) as unknown as TtsSubscription;
+    const finishSub = Tts.addEventListener('tts-finish', onFinish as () => void) as unknown as TtsSubscription;
+    const cancelSub = Tts.addEventListener('tts-cancel', onFinish as () => void) as unknown as TtsSubscription;
 
     return () => {
-      Tts.removeEventListener('tts-start',  onStart  as () => void);
-      Tts.removeEventListener('tts-finish', onFinish as () => void);
-      Tts.removeEventListener('tts-cancel', onFinish as () => void);
+      startSub.remove();
+      finishSub.remove();
+      cancelSub.remove();
     };
   }, [clearTimer, startListening]);
 

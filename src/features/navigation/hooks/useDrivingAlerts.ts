@@ -4,6 +4,7 @@ import type { MutableRefObject } from 'react';
 import { haversineMeters, ttsSpeak } from '../utils/mapUtils';
 import type { POICard, ProximityAlerts } from '../../../shared/services/backendApi';
 import { useSoundAlerts } from './useSoundAlerts';
+import type { RouteResult } from '../api/directions';
 
 interface UseDrivingAlertsArgs {
   speed: number;
@@ -11,9 +12,58 @@ interface UseDrivingAlertsArgs {
   navigating: boolean;
   userCoords: [number, number] | null;
   userHeading: number | null;
+  route: RouteResult | null;
   cameraResults: POICard[];
   voiceMutedRef: MutableRefObject<boolean>;
   lanePulseOn: boolean;
+}
+
+function pointToSegmentDistanceMeters(
+  point: [number, number],
+  start: [number, number],
+  end: [number, number],
+): number {
+  const [px, py] = point;
+  const [ax, ay] = start;
+  const [bx, by] = end;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return haversineMeters(point, [ax + t * dx, ay + t * dy]);
+}
+
+function nearestRouteMatch(point: [number, number], coords: [number, number][]) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  for (let i = 0; i < coords.length; i += 1) {
+    const vertexDistance = haversineMeters(point, coords[i]);
+    if (vertexDistance < bestDistance) {
+      bestDistance = vertexDistance;
+      bestIndex = i;
+    }
+  }
+
+  const fromIdx = Math.max(0, bestIndex - 1);
+  const toIdx = Math.min(coords.length - 2, bestIndex + 6);
+  for (let i = fromIdx; i <= toIdx; i += 1) {
+    const segmentDistance = pointToSegmentDistanceMeters(point, coords[i], coords[i + 1]);
+    if (segmentDistance < bestDistance) {
+      bestDistance = segmentDistance;
+      bestIndex = i + 1;
+    }
+  }
+
+  return { bestIndex, bestDistance };
+}
+
+function cumulativeRouteDistances(coords: [number, number][]) {
+  const cumulative = new Array<number>(coords.length).fill(0);
+  for (let i = 1; i < coords.length; i += 1) {
+    cumulative[i] = cumulative[i - 1] + haversineMeters(coords[i - 1], coords[i]);
+  }
+  return cumulative;
 }
 
 export function useDrivingAlerts({
@@ -22,6 +72,7 @@ export function useDrivingAlerts({
   navigating,
   userCoords,
   userHeading,
+  route,
   cameraResults,
   voiceMutedRef,
   lanePulseOn,
@@ -56,34 +107,46 @@ export function useDrivingAlerts({
 
     // ── Speed camera proximity alert — TTS + flash every 10 s when < 600 m ──
     useEffect(() => {
-    if (!navigating || !userCoords || cameraResults.length === 0) {
+    const routeCoords = route?.geometry?.coordinates as [number, number][] | undefined;
+    if (!navigating || !userCoords || cameraResults.length === 0 || !routeCoords || routeCoords.length < 2) {
       setCameraAlert(null);
       return;
     }
+
+    const userMatch = nearestRouteMatch(userCoords, routeCoords);
+    const routeMeters = cumulativeRouteDistances(routeCoords);
     const nearest = cameraResults
       .filter(c => c.lat && c.lng)
       .map(c => {
-        const dist = haversineMeters(userCoords, [c.lng as number, c.lat as number]);
+        const cameraCoords: [number, number] = [c.lng as number, c.lat as number];
+        const routeMatch = nearestRouteMatch(cameraCoords, routeCoords);
+        const alongRouteM = routeMeters[routeMatch.bestIndex] - routeMeters[userMatch.bestIndex];
+        const dist = haversineMeters(userCoords, cameraCoords);
         let angleDiff = 0;
         if (userHeading !== null) {
-          const bearing = Math.atan2((c.lng as number) - userCoords[0], (c.lat as number) - userCoords[1]) * 180 / Math.PI;
+          const bearing = Math.atan2(cameraCoords[0] - userCoords[0], cameraCoords[1] - userCoords[1]) * 180 / Math.PI;
           // Normalize bearing to 0-360
           const normBearing = (bearing + 360) % 360;
           angleDiff = Math.abs(userHeading - normBearing);
           if (angleDiff > 180) angleDiff = 360 - angleDiff;
         }
-        return { ...c, dist, angleDiff };
+        return { ...c, dist, angleDiff, alongRouteM, lateralRouteM: routeMatch.bestDistance };
       })
-      .filter(c => userHeading === null || c.angleDiff < 45)
-      .sort((a, b) => a.dist - b.dist)[0];
+      .filter(c =>
+        c.lateralRouteM <= 80 &&
+        c.alongRouteM >= -40 &&
+        c.alongRouteM <= 1500 &&
+        (userHeading === null || c.angleDiff < 60)
+      )
+      .sort((a, b) => a.alongRouteM - b.alongRouteM || a.lateralRouteM - b.lateralRouteM)[0];
 
-    if (!nearest || nearest.dist >= 600) { setCameraAlert(null); return; }
-    setCameraAlert({ dist: Math.round(nearest.dist), name: nearest.name });
+    if (!nearest || nearest.alongRouteM >= 900) { setCameraAlert(null); return; }
+    setCameraAlert({ dist: Math.max(0, Math.round(nearest.alongRouteM)), name: nearest.name });
     const now = Date.now();
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
       playCameraAlert();
-      if (!voiceMutedRef.current) ttsSpeak(`Наближавате радар за скорост. ${Math.round(nearest.dist)} метра.`);
+      if (!voiceMutedRef.current) ttsSpeak(`Наближавате радар за скорост. ${Math.max(0, Math.round(nearest.alongRouteM))} метра.`);
       Animated.sequence([
         Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
         Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
@@ -92,7 +155,7 @@ export function useDrivingAlerts({
       ]).start();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userCoords, navigating, cameraResults, playCameraAlert, voiceMutedRef]);
+  }, [userCoords, navigating, route, cameraResults, playCameraAlert, voiceMutedRef, userHeading]);
 
   // в”Ђв”Ђ Lane glow pulse вЂ” starts/stops based on lanePulseOn в”Ђв”Ђ
   useEffect(() => {

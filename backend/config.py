@@ -3,14 +3,15 @@ import re
 import json
 from dotenv import load_dotenv
 
-# Load .env relative to this file
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=False)
+# Load .env relative to this file and let repo-local secrets win over stale process env vars.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
 
 # ── API Keys & Model Setup ──────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_KEY")
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
+MAPBOX_PUBLIC_TOKEN = os.getenv("MAPBOX_PUBLIC_TOKEN", "pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ.hprmbhb8EVFSfF7cqc4lkw")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-preview-04-17")
 

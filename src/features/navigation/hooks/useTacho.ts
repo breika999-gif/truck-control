@@ -1,12 +1,38 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleAccount } from '../../../shared/services/accountManager';
-import { saveTachoSession, fetchTachoSummary, TachoSummary } from '../../../shared/services/backendApi';
+import {
+  saveTachoSession,
+  fetchTachoSummary,
+  TachoSummary,
+  TachoSessionPayload,
+} from '../../../shared/services/backendApi';
 import { checkHosViolations, HosViolation, getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
 import { recordDailyStats } from '../utils/driverHabits';
 
 const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
 const DAILY_LIMIT_9H = 32400; // 9h
 const DAILY_LIMIT_10H = 36000; // 10h
+const PENDING_TACHO_SESSIONS_KEY = '@truckai/pending_tacho_sessions_v1';
+
+async function loadPendingTachoSessions(): Promise<TachoSessionPayload[]> {
+  try {
+    const raw = await AsyncStorage.getItem(PENDING_TACHO_SESSIONS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as TachoSessionPayload[] : [];
+  } catch {
+    return [];
+  }
+}
+
+async function savePendingTachoSessions(queue: TachoSessionPayload[]): Promise<void> {
+  if (queue.length === 0) {
+    await AsyncStorage.removeItem(PENDING_TACHO_SESSIONS_KEY);
+    return;
+  }
+  await AsyncStorage.setItem(PENDING_TACHO_SESSIONS_KEY, JSON.stringify(queue));
+}
 
 export function useTacho(
   navigating: boolean,
@@ -61,6 +87,32 @@ export function useTacho(
       }
     });
   }, [googleUserRef]);
+
+  const flushPendingSessions = useCallback(async () => {
+    const pending = await loadPendingTachoSessions();
+    if (pending.length === 0) return;
+
+    const failed: TachoSessionPayload[] = [];
+    let latestSummary: TachoSummary | null = null;
+
+    for (const payload of pending) {
+      const summary = await saveTachoSession(payload);
+      if (summary?.ok) {
+        latestSummary = summary;
+      } else {
+        failed.push(payload);
+      }
+    }
+
+    await savePendingTachoSessions(failed);
+    if (latestSummary && isMountedRef.current) {
+      setTachoSummary(latestSummary);
+    }
+  }, []);
+
+  useEffect(() => {
+    void flushPendingSessions();
+  }, [flushPendingSessions]);
 
   // ── HOS timer ──
   useEffect(() => {
@@ -224,12 +276,20 @@ export function useTacho(
         start_time:     sessionStartRef.current,
         end_time:       new Date().toISOString(),
       };
-      saveTachoSession(payload).then(s => {
-        if (s && isMountedRef.current) setTachoSummary(s);
+      void saveTachoSession(payload).then(async s => {
+        if (s?.ok) {
+          if (isMountedRef.current) setTachoSummary(s);
+          await flushPendingSessions();
+          return;
+        }
+
+        const pending = await loadPendingTachoSessions();
+        pending.push(payload);
+        await savePendingTachoSessions(pending);
       });
       sessionStartRef.current = null;
     }
-  }, [googleUserRef]);
+  }, [flushPendingSessions, googleUserRef]);
 
   // ── Attach shift_start_iso (raw fact) to tachoSummary ──
   const shiftStartIso = shiftStartRef.current

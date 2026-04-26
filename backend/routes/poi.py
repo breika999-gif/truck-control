@@ -6,6 +6,24 @@ from utils.helpers import _is_rate_limited, _get_body, now_iso
 from services.tomtom_service import _tomtom_along_route
 from services.poi_service import _tool_find_truck_parking, _tool_find_speed_cameras, _tool_find_overtaking_restrictions
 
+def _point_to_segment_distance_m(point: list, start: list, end: list) -> float:
+    px, py = point[0], point[1]
+    ax, ay = start[0], start[1]
+    bx, by = end[0], end[1]
+    dx, dy = bx - ax, by - ay
+    len_sq = dx * dx + dy * dy
+    t = 0.0 if len_sq == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+    cx, cy = ax + t * dx, ay + t * dy
+    return math.sqrt((cx - px) ** 2 + (cy - py) ** 2) * 111000
+
+def _distance_to_polyline_m(point: list, coords: list) -> float:
+    if not coords:
+        return float("inf")
+    best = min(math.sqrt((point[0] - c[0]) ** 2 + (point[1] - c[1]) ** 2) * 111000 for c in coords)
+    for idx in range(len(coords) - 1):
+        best = min(best, _point_to_segment_distance_m(point, coords[idx], coords[idx + 1]))
+    return best
+
 def _transparking_along_route(coords: list, max_results: int = 6) -> list:
     """Find TransParking truck stops along a route using our local DB."""
     if not coords or len(coords) < 2:
@@ -126,9 +144,19 @@ def cameras_along_route_v2():
             for el in resp.json().get("elements", []):
                 if el["id"] in seen_ids: continue
                 seen_ids.add(el["id"])
+                dist_to_route = _distance_to_polyline_m([el["lon"], el["lat"]], work_seg)
+                if dist_to_route > 80:
+                    continue
                 tags = el.get("tags", {})
                 speed = tags.get("maxspeed", "")
-                cameras.append({"lat": el["lat"], "lng": el["lon"], "name": f"📷 Радар {speed} км/ч" if speed else "📷 Радар", "maxspeed": speed, "distance_m": 0, "category": "speed_camera"})
+                cameras.append({
+                    "lat": el["lat"],
+                    "lng": el["lon"],
+                    "name": f"📷 Радар {speed} км/ч" if speed else "📷 Радар",
+                    "maxspeed": speed,
+                    "distance_m": int(dist_to_route),
+                    "category": "speed_camera",
+                })
         except: continue
     return jsonify({"cameras": cameras})
 

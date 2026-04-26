@@ -38,6 +38,7 @@ import NavigationHUD from '../components/NavigationHUD';
 import RouteOptionsPanel from '../components/RouteOptionsPanel';
 import RestrictionSign from '../components/RestrictionSign';
 import FuelPanel from '../components/FuelPanel';
+import MapLayers from '../components/MapLayers';
 import type { RestrictionPoint } from '../api/directions';
 import OptionsPanel from '../components/OptionsPanel';
 import RouteTimeline from '../components/RouteTimeline';
@@ -95,11 +96,6 @@ import {
   reportCamera,
 } from '../../../shared/services/backendApi';
 import { getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
-
-type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
-
-const EMPTY_RESTRICTIONS: never[] = [];
-
 import ParkingBubble from '../components/ParkingBubble';
 import MapLongPressMenu from '../components/MapLongPressMenu';
 import TachoResultCard from '../components/TachoResultCard';
@@ -116,7 +112,6 @@ import {
   fmtHOS, haversineMeters, weatherEmoji, detectCountryCode, openInBrowser, getTransParkingUrl,
   laneDirectionEmoji, StableCamera,
 } from '../utils/mapUtils';
-
 import { useMapUIState, type MapMode } from '../hooks/useMapUIState';
 import { useNavigationState, type RouteOptDest } from '../hooks/useNavigationState';
 import { useRouteInsights } from '../hooks/useRouteInsights';
@@ -126,6 +121,10 @@ import { useLocationRuntime } from '../hooks/useLocationRuntime';
 import { useWakeWord } from '../hooks/useWakeWord';
 import { useChatPanelsState, type AITachoResult } from '../hooks/useChatPanelsState';
 import { useMapGeoJSON } from '../hooks/useMapGeoJSON';
+
+type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
+
+const EMPTY_RESTRICTIONS: never[] = [];
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -601,9 +600,16 @@ const MapScreen: React.FC = () => {
   }, [navigating, route]);
 
   const handleMapLongPress = useCallback((event: any) => {
-    // Adapter for MapView onLongPress
-    const { longitude, latitude } = event.nativeEvent.coordinate;
-    setLongPressCoord([longitude, latitude]);
+    const coords =
+      event?.geometry?.coordinates ??
+      event?.nativeEvent?.geometry?.coordinates ??
+      event?.nativeEvent?.coordinates ??
+      (event?.nativeEvent?.coordinate
+        ? [event.nativeEvent.coordinate.longitude, event.nativeEvent.coordinate.latitude]
+        : null);
+
+    if (!Array.isArray(coords) || coords.length < 2) return;
+    setLongPressCoord([coords[0], coords[1]]);
   }, []);
 
   const handleDestinationSelect = useCallback(
@@ -680,7 +686,10 @@ const MapScreen: React.FC = () => {
       latitudeDelta: 0.0922,
       longitudeDelta: 0.0421,
     }, 800);
-    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
     isSimulatingRef.current = false;
     setSimulating(false);
     simIndexRef.current = 0;
@@ -715,14 +724,23 @@ const MapScreen: React.FC = () => {
   const startSim = useCallback(() => {
     const coords = routeRef.current?.geometry.coordinates;
     if (!coords || coords.length < 2) return;
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
     simIndexRef.current = 0;
     isSimulatingRef.current = true;
     setSimulating(true);
     simIntervalRef.current = setInterval(() => {
-      if (!isMountedRef.current) { clearInterval(simIntervalRef.current!); return; }
+      if (!isMountedRef.current) {
+        clearInterval(simIntervalRef.current!);
+        simIntervalRef.current = null;
+        return;
+      }
       const idx = simIndexRef.current;
       if (idx >= coords.length) {
         clearInterval(simIntervalRef.current!);
+        simIntervalRef.current = null;
         isSimulatingRef.current = false;
         setSimulating(false);
         return;
@@ -738,10 +756,23 @@ const MapScreen: React.FC = () => {
   }, []);
 
   const stopSim = useCallback(() => {
-    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    if (simIntervalRef.current) {
+      clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
     isSimulatingRef.current = false;
     setSimulating(false);
     simIndexRef.current = 0;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
+      isSimulatingRef.current = false;
+    };
   }, []);
 
   const handleAppIntent = useCallback((intent: AppIntent) => {
@@ -766,6 +797,7 @@ const MapScreen: React.FC = () => {
   }, [navigating, distToTurn]);
 
   useEffect(() => {
+    if (navigating) return;
     const results = parkingResults.length > 0 ? parkingResults : businessResults;
     if (results.length === 0 || !cameraRef.current) return;
     let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
@@ -785,7 +817,7 @@ const MapScreen: React.FC = () => {
         longitudeDelta: Math.abs(maxLng - minLng) * 1.5,
       }, 1000);
     }
-  }, [parkingResults, businessResults]);
+  }, [parkingResults, businessResults, navigating]);
 
   const terrainExaggeration = speed > 90 ? 2.0 : speed > 60 ? 1.6 : speed > 30 ? 1.3 : 1.0;
 
@@ -840,6 +872,20 @@ const MapScreen: React.FC = () => {
     : dominantCongestion === 'moderate' ? '#FF9500'
     : '#13BDFF';
 
+  const mapStyleURL: string =
+    mapMode === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' :
+    JSON.stringify({
+      version: 8,
+      imports: [{ id: 'basemap', url: 'mapbox://styles/mapbox/standard', config: {
+        lightPreset: lightMode ? 'day' : 'night',
+        showPointOfInterestLabels: true,
+        showTransitLabels: true,
+        showPlaceLabels: true,
+        showRoadLabels: true,
+        showTrafficIncidents: showIncidents,
+      }}],
+    });
+
   // Dynamic width: wider in city (slow speed), thinner on highway
   const dynamicWidth = speed < 45 ? 10 : speed < 80 ? 7 : 5;
 
@@ -861,9 +907,10 @@ const MapScreen: React.FC = () => {
   const handleSearchAlongRoute = () => { if (poiCategory) handleSARSearch(poiCategory); };
 
   const currentLanes = useMemo(() => {
-    return stepToShow?.bannerInstructions?.[0]?.sub?.components.filter(
-      c => c.type === 'lane',
-    ) ?? [];
+    const components = stepToShow?.bannerInstructions?.[0]?.sub?.components;
+    return Array.isArray(components)
+      ? components.filter(c => c.type === 'lane')
+      : [];
   }, [stepToShow]);
 
   const MOCK_LANES = useMemo(() => ([
@@ -873,7 +920,7 @@ const MapScreen: React.FC = () => {
     { type: 'lane' as const, text: '', active: false, directions: ['right'] },
   ]), []);
 
-  const displayLanes = testLanesMode ? MOCK_LANES : currentLanes;
+  const displayLanes = __DEV__ && testLanesMode ? MOCK_LANES : currentLanes;
 
   const lanePulseOn = testLanesMode ||
     (navigating && distToTurn != null && distToTurn < 350 && displayLanes.some(l => l.active));
@@ -889,7 +936,7 @@ const MapScreen: React.FC = () => {
     playCameraAlert,
   } = useDrivingAlerts({
     speed, speedLimit, navigating,
-    userCoords, userHeading, cameraResults,
+    userCoords, userHeading, route, cameraResults,
     voiceMutedRef, lanePulseOn,
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
@@ -978,7 +1025,7 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
-        onRegionWillChange={(feature: any) => {
+        onRegionIsChanging={(feature: any) => {
           if (navigating && isTracking && feature?.properties?.isUserInteraction) {
             setIsTracking(false);
           }
@@ -1013,6 +1060,8 @@ const MapScreen: React.FC = () => {
           mapLoaded={mapIsLoaded}
           speed={speed}
           isTracking={isTracking}
+          userCoords={userCoords}
+          userHeading={userHeading}
         />
 
         <Mapbox.UserLocation visible={false} />

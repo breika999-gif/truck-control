@@ -1,18 +1,17 @@
 /**
- * useTachoBluetooth — React hook за BLE тахограф
+ * useTachoBluetooth — shared BLE tachograph runtime.
  *
- * Управлява целия lifecycle: scan → connect → live data → Gemini context
- * Използва TachoBleService под капака.
- *
- * Requires: npm install react-native-ble-plx
+ * Keeps the BLE connection alive across screen unmounts so the rest of the app
+ * and Gemini can keep using the latest tachograph state.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
-import { BACKEND_URL } from '../../../shared/constants/config';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
+import { BACKEND_URL } from '../../../shared/constants/config';
+import { loadSavedAccount } from '../../../shared/services/accountManager';
 
 async function requestBlePermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
@@ -22,7 +21,7 @@ async function requestBlePermissions(): Promise<boolean> {
     PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
   ]);
   return (
-    granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN]    === PermissionsAndroid.RESULTS.GRANTED &&
+    granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED &&
     granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED
   );
 }
@@ -35,67 +34,112 @@ export interface TachoBleState {
   isConnected: boolean;
 }
 
-const REST_THROTTLE_MS = 30_000; // 30 seconds between updates during REST
+const REST_THROTTLE_MS = 30_000;
+const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
+const INITIAL_STATE: TachoBleState = {
+  status: 'idle',
+  statusMsg: 'Не е свързан',
+  liveData: null,
+  foundDevices: [],
+  isConnected: false,
+};
+
+let sharedState: TachoBleState = INITIAL_STATE;
+let sharedService: TachoBleService | null = null;
+let lastActiveUpdateAt = 0;
+let didCleanupOldEntries = false;
+let cachedUserEmail: string | null | undefined;
+const listeners = new Set<(state: TachoBleState) => void>();
+
+function emitState(next: TachoBleState) {
+  sharedState = next;
+  listeners.forEach(listener => listener(sharedState));
+}
+
+function patchState(patch: Partial<TachoBleState>) {
+  emitState({ ...sharedState, ...patch });
+}
+
+function addFoundDevice(device: Device) {
+  if (sharedState.foundDevices.some(found => found.id === device.id)) {
+    return;
+  }
+  patchState({ foundDevices: [...sharedState.foundDevices, device] });
+}
+
+function ensureService() {
+  if (!sharedService) {
+    sharedService = new TachoBleService();
+  }
+  if (!didCleanupOldEntries) {
+    didCleanupOldEntries = true;
+    cleanup().catch(() => {/* silent */});
+  }
+  return sharedService;
+}
+
+function handleStatus(status: BleStatus, msg?: string) {
+  patchState({
+    status,
+    statusMsg: msg ?? sharedState.statusMsg,
+    isConnected: status === 'connected',
+  });
+}
+
+function handleData(data: TachoLiveData) {
+  const isResting = data.activityCode === 0;
+  if (isResting) {
+    const now = Date.now();
+    if (now - lastActiveUpdateAt < REST_THROTTLE_MS) {
+      return;
+    }
+  }
+  lastActiveUpdateAt = Date.now();
+
+  patchState({ liveData: data });
+
+  logEvent(data.activityCode as ActivityCode, data.drivingTimeLeftMin, data.dailyDrivenMin)
+    .catch(() => {/* silent */});
+
+  sendToBackend(data).catch(() => {/* silent */});
+}
+
+function connectToKnownOrSelectedDevice(device: Device) {
+  ensureService().connectToTacho(device, handleData, handleStatus);
+}
+
+function handleDeviceFound(device: Device) {
+  addFoundDevice(device);
+  const name = device.name ?? device.localName ?? '';
+  const isKnownTacho = VDO_PATTERNS.some(pattern => name.toUpperCase().includes(pattern.toUpperCase()));
+  if (isKnownTacho) {
+    connectToKnownOrSelectedDevice(device);
+  }
+}
+
+async function resolveUserEmail(): Promise<string> {
+  if (cachedUserEmail !== undefined) {
+    return cachedUserEmail ?? '';
+  }
+  const account = await loadSavedAccount().catch(() => null);
+  cachedUserEmail = account?.email ?? '';
+  return cachedUserEmail;
+}
 
 export function useTachoBluetooth() {
-  const serviceRef = useRef<TachoBleService | null>(null);
-  const lastActiveUpdateRef = useRef<number>(0);
+  const [state, setState] = useState<TachoBleState>(sharedState);
 
-  const [state, setState] = useState<TachoBleState>({
-    status: 'idle',
-    statusMsg: 'Не е свързан',
-    liveData: null,
-    foundDevices: [],
-    isConnected: false,
-  });
-
-  // ── Init BLE service once + clean old log entries ─────────────────
   useEffect(() => {
-    serviceRef.current = new TachoBleService();
-    cleanup();
+    ensureService();
+    listeners.add(setState);
+    setState(sharedState);
     return () => {
-      serviceRef.current?.destroy();
+      listeners.delete(setState);
     };
   }, []);
 
-  // ── Status callback ────────────────────────────────────────────────
-  const handleStatus = useCallback((status: BleStatus, msg?: string) => {
-    setState(prev => ({
-      ...prev,
-      status,
-      statusMsg: msg ?? '',
-      isConnected: status === 'connected',
-    }));
-  }, []);
-
-  // ── Live data callback — update state + log event + send to backend
-  const handleData = useCallback((data: TachoLiveData) => {
-    const isResting = data.activityCode === 0; // 0 = REST
-    if (isResting) {
-      const now = Date.now();
-      if (now - lastActiveUpdateRef.current < REST_THROTTLE_MS) return; // skip — battery saving
-    }
-    lastActiveUpdateRef.current = Date.now();
-
-    setState(prev => ({ ...prev, liveData: data }));
-
-    // Persist activity change to local event log (only on change)
-    logEvent(data.activityCode as ActivityCode, data.drivingTimeLeftMin, data.dailyDrivenMin)
-      .catch(() => {/* silent */});
-
-    // Push live context to backend → Gemini system prompt gets updated
-    _sendToBackend(data).catch(() => {/* silent — не блокираме UI */});
-  }, []);
-
-  // ── Scan ──────────────────────────────────────────────────────────
-  // VDO DTCO (Continental): "DTCO 4.1-123456", "VDO Link", "SmartLink"
-  // Stoneridge: "SE5000-xxxxxxxx", "OPTAC", "Stoneridge", "SG5"
-  // Actia: "Actia", "MTX"
-  // Siemens VDO older: "1381", "2400"
-  const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
-
-  const startScan = useCallback(async () => {
-    if (!serviceRef.current) return;
+  const startScan = async () => {
+    ensureService();
 
     const ok = await requestBlePermissions();
     if (!ok) {
@@ -103,41 +147,23 @@ export function useTachoBluetooth() {
       return;
     }
 
-    setState(prev => ({ ...prev, foundDevices: [] }));
+    patchState({ foundDevices: [] });
+    sharedService?.scanForTacho(handleDeviceFound, handleStatus);
+  };
 
-    serviceRef.current.scanForTacho(
-      (device) => {
-        const name = device.name ?? device.localName ?? '';
-        const isKnownTacho = VDO_PATTERNS.some(p =>
-          name.toUpperCase().includes(p.toUpperCase()),
-        );
+  const connectToDevice = (device: Device) => {
+    connectToKnownOrSelectedDevice(device);
+  };
 
-        if (isKnownTacho) {
-          // Known VDO device — auto-connect
-          setState(prev => ({ ...prev, foundDevices: [...prev.foundDevices, device] }));
-          connectToDevice(device);
-        } else {
-          // Unknown device — add to list for manual selection (no auto-connect)
-          setState(prev => {
-            if (prev.foundDevices.find(d => d.id === device.id)) return prev;
-            return { ...prev, foundDevices: [...prev.foundDevices, device] };
-          });
-        }
-      },
-      handleStatus,
-    );
-  }, [handleStatus]);
-
-  // ── Connect ───────────────────────────────────────────────────────
-  const connectToDevice = useCallback((device: Device) => {
-    serviceRef.current?.connectToTacho(device, handleData, handleStatus);
-  }, [handleData, handleStatus]);
-
-  // ── Disconnect ────────────────────────────────────────────────────
-  const disconnect = useCallback(() => {
-    serviceRef.current?.disconnect();
-    setState(prev => ({ ...prev, isConnected: false, liveData: null }));
-  }, []);
+  const disconnect = () => {
+    sharedService?.disconnect().catch(() => {/* silent */});
+    patchState({
+      status: 'idle',
+      statusMsg: 'Прекъснато',
+      isConnected: false,
+      liveData: null,
+    });
+  };
 
   return {
     ...state,
@@ -147,12 +173,13 @@ export function useTachoBluetooth() {
   };
 }
 
-// ── Send live data to Flask backend ───────────────────────────────────
-async function _sendToBackend(data: TachoLiveData): Promise<void> {
+async function sendToBackend(data: TachoLiveData): Promise<void> {
+  const userEmail = await resolveUserEmail();
   await fetch(`${BACKEND_URL}/api/tacho/live_update`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      user_email: userEmail,
       tacho_live_context: {
         current_activity: data.activity,
         activity_code: data.activityCode,

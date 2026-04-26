@@ -112,6 +112,23 @@ const SectionHeader = ({ title }: { title: string }) => (
 
 const Divider = () => <View style={s.divider} />;
 
+type LegacySummarySegment = {
+  activity?: string;
+  start?: string;
+  end?: string;
+  duration_min?: number | string;
+};
+
+type LegacySummaryData = {
+  shift_start?: string;
+  current_time?: string;
+  total_driven_min?: number | null;
+  remaining_drive_min?: number | null;
+  segments?: LegacySummarySegment[];
+  driven_today_min?: number | null;
+  remaining_today_min?: number | null;
+};
+
 const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   optionsOpen,
   setOptionsOpen,
@@ -160,7 +177,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   
   const [summaryOpen, setSummaryOpen] = React.useState(false);
-  const [summaryData, setSummaryData] = React.useState<any>(null);
+  const [summaryData, setSummaryData] = React.useState<LegacySummaryData | null>(null);
 
   const close = () => setOptionsOpen(false);
 
@@ -172,13 +189,18 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   };
 
   const openSummary = async () => {
-    const data = await getDaySummary();
+    const data = await getDaySummary() as LegacySummaryData;
     setSummaryData(data);
     setSummaryOpen(true);
   };
 
   const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
   const mapModeIcon = mapMode === 'vector' ? 'earth' : 'layers';
+  const summarySegments = Array.isArray(summaryData?.segments) ? summaryData.segments : [];
+  const summaryShiftStart = summaryData?.shift_start ?? '--:--';
+  const summaryCurrentTime = summaryData?.current_time ?? new Date().toTimeString().slice(0, 5);
+  const summaryDrivenMin = summaryData?.total_driven_min ?? summaryData?.driven_today_min ?? null;
+  const summaryRemainingMin = summaryData?.remaining_drive_min ?? summaryData?.remaining_today_min ?? null;
 
   return (
     <>
@@ -221,7 +243,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               <SectionHeader title="КАМИОН" />
               <Row
                 icon="clipboard-text-outline"
-                label="Данни шофиране 📋"
+                label="Данни шофиране"
                 onPress={() => { openSummary(); }}
                 iconBg="rgba(255,255,255,0.1)"
                 iconColor="#FFFFFF"
@@ -235,7 +257,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               />
               <Row
                 icon="bluetooth"
-                label="Свържи тахограф 📡"
+                label="Свържи тахограф"
                 onPress={() => { navigation.navigate('Tacho'); close(); }}
                 iconBg="rgba(76,175,80,0.15)"
                 iconColor="#4CAF50"
@@ -532,7 +554,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
         <View style={s.backdrop}>
           <SafeAreaView style={s.summaryDrawer}>
             <View style={s.header}>
-              <Text style={s.headerTitle}>📋 Отчет за деня</Text>
+              <Text style={s.headerTitle}>Отчет за деня</Text>
               <TouchableOpacity onPress={() => setSummaryOpen(false)}>
                 <Icon name="close" size={26} color="#FFFFFF" />
               </TouchableOpacity>
@@ -544,22 +566,22 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   <View style={s.summaryHero}>
                     <View style={s.summaryHeroItem}>
                       <Text style={s.summaryHeroLabel}>ПОЧЕТАК</Text>
-                      <Text style={s.summaryHeroVal}>{summaryData.shift_start || '--:--'}</Text>
+                      <Text style={s.summaryHeroVal}>{summaryShiftStart}</Text>
                     </View>
                     <View style={s.summaryHeroItem}>
                       <Text style={s.summaryHeroLabel}>ТЕКУЩО</Text>
-                      <Text style={s.summaryHeroVal}>{summaryData.current_time}</Text>
+                      <Text style={s.summaryHeroVal}>{summaryCurrentTime}</Text>
                     </View>
                   </View>
 
                   <View style={s.summaryStats}>
                     <View style={s.summaryStatBox}>
                       <Text style={s.summaryStatLabel}>ШОФИРАНЕ</Text>
-                      <Text style={[s.summaryStatVal, { color: '#4CAF50' }]}>{formatMin(summaryData.total_driven_min)}</Text>
+                      <Text style={[s.summaryStatVal, { color: '#4CAF50' }]}>{formatMin(summaryDrivenMin)}</Text>
                     </View>
                     <View style={s.summaryStatBox}>
                       <Text style={s.summaryStatLabel}>ОСТАВАЩО</Text>
-                      <Text style={[s.summaryStatVal, { color: NEON }]}>{formatMin(summaryData.remaining_drive_min)}</Text>
+                      <Text style={[s.summaryStatVal, { color: NEON }]}>{formatMin(summaryRemainingMin)}</Text>
                     </View>
                   </View>
 
@@ -571,16 +593,22 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                       <Text style={s.tableCell}>ДО</Text>
                       <Text style={[s.tableCell, { textAlign: 'right' }]}>МИН</Text>
                     </View>
-                    {summaryData.segments.map((seg: any, i: number) => (
+                    {summarySegments.length > 0 ? summarySegments.map((seg, i) => (
                       <View key={i} style={s.tableRow}>
                         <Text style={[s.tableCell, { flex: 2, fontWeight: '700', color: seg.activity === 'DRIVING' ? '#4CAF50' : '#fff' }]}>
-                          {seg.activity}
+                          {seg.activity ?? '--'}
                         </Text>
-                        <Text style={s.tableCell}>{seg.start}</Text>
-                        <Text style={s.tableCell}>{seg.end}</Text>
-                        <Text style={[s.tableCell, { textAlign: 'right', fontWeight: 'bold' }]}>{seg.duration_min}</Text>
+                        <Text style={s.tableCell}>{seg.start ?? '--:--'}</Text>
+                        <Text style={s.tableCell}>{seg.end ?? '--:--'}</Text>
+                        <Text style={[s.tableCell, { textAlign: 'right', fontWeight: 'bold' }]}>{seg.duration_min ?? '--'}</Text>
                       </View>
-                    ))}
+                    )) : (
+                      <View style={s.tableRow}>
+                        <Text style={[s.tableCell, { flex: 4, textAlign: 'center', color: 'rgba(255,255,255,0.6)' }]}>
+                          Няма детайли за сегментите за днешния ден.
+                        </Text>
+                      </View>
+                    )}
                   </ScrollView>
                 </>
               ) : (

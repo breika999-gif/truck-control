@@ -10,11 +10,50 @@ import {
   optimizeWaypointOrder,
   type RouteResult,
 } from '../api/directions';
+import { haversineMeters } from '../utils/mapUtils';
 import type { NavPhase } from './useNavigationState';
 import { fetchCamerasAlongRoute } from '../../../shared/services/backendApi';
 import type { POICard } from '../../../shared/services/backendApi';
 
 export type Coords = [number, number];
+type RouteCameraSignature = { key: string; checkpoints: Coords[] };
+
+const CAMERA_FETCH_DEBOUNCE_MS = 1200;
+const CAMERA_FETCH_PREVIEW_DEBOUNCE_MS = 350;
+const CAMERA_REFRESH_TOLERANCE_M = 120;
+const MAX_CAMERA_CACHE_ROUTES = 8;
+
+function routeCheckpointIndices(length: number): number[] {
+  if (length <= 1) return [0];
+  const fractions = [0, 0.2, 0.4, 0.6, 0.8, 1];
+  const seen = new Set<number>();
+  return fractions
+    .map(f => Math.min(length - 1, Math.max(0, Math.round((length - 1) * f))))
+    .filter(idx => {
+      if (seen.has(idx)) return false;
+      seen.add(idx);
+      return true;
+    });
+}
+
+function buildRouteCameraSignature(coords: Coords[]): RouteCameraSignature {
+  const checkpoints = routeCheckpointIndices(coords.length).map(idx => coords[idx]);
+  const key = checkpoints
+    .map(([lng, lat]) => `${lng.toFixed(4)},${lat.toFixed(4)}`)
+    .join('|');
+  return { key, checkpoints };
+}
+
+function hasSubstantialRouteChange(
+  prev: RouteCameraSignature | null,
+  next: RouteCameraSignature,
+): boolean {
+  if (!prev) return true;
+  if (prev.key === next.key) return false;
+  if (prev.checkpoints.length !== next.checkpoints.length) return true;
+
+  return next.checkpoints.some((coord, idx) => haversineMeters(coord, prev.checkpoints[idx]) > CAMERA_REFRESH_TOLERANCE_M);
+}
 
 type UseRouteOrchestratorProps = {
   isMountedRef: MutableRefObject<boolean>;
@@ -85,14 +124,14 @@ export function useRouteOrchestrator({
   const profileRerouteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navStartRef = useRef<number>(0);
   const navInitDurationRef = useRef<number>(0);
-  const poisFetchedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const cameraFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraAbortControllerRef = useRef<AbortController | null>(null);
+  const cameraCacheRef = useRef<Map<string, POICard[]>>(new Map());
+  const lastCameraSignatureRef = useRef<RouteCameraSignature | null>(null);
+  const refreshRouteCamerasRef = useRef<(routeCoords: Coords[]) => void>(() => {});
 
   const setDestination = useCallback((dest: Coords | null) => {
-    const isNew = destinationRef.current?.[0] !== dest?.[0] || destinationRef.current?.[1] !== dest?.[1];
-    if (isNew) {
-      poisFetchedRef.current = false;
-    }
     destinationRef.current = dest;
   }, []);
 
@@ -104,6 +143,64 @@ export function useRouteOrchestrator({
   useEffect(() => { avoidUnpavedRef.current = avoidUnpaved; }, [avoidUnpaved]);
   useEffect(() => { waypointsRef.current = waypoints; }, [waypoints]);
   useEffect(() => { waypointNamesRef.current = waypointNames; }, [waypointNames]);
+  useEffect(() => () => {
+    if (profileRerouteTimer.current) clearTimeout(profileRerouteTimer.current);
+    if (cameraFetchTimerRef.current) clearTimeout(cameraFetchTimerRef.current);
+    cameraAbortControllerRef.current?.abort();
+  }, []);
+
+  const rememberCameraCache = useCallback((key: string, cameras: POICard[]) => {
+    const cache = cameraCacheRef.current;
+    cache.delete(key);
+    cache.set(key, cameras);
+    while (cache.size > MAX_CAMERA_CACHE_ROUTES) {
+      const oldestKey = cache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      cache.delete(oldestKey);
+    }
+  }, []);
+
+  const refreshRouteCameras = useCallback((routeCoords: Coords[]) => {
+    if (!routeCoords.length) return;
+
+    const nextSignature = buildRouteCameraSignature(routeCoords);
+    if (!hasSubstantialRouteChange(lastCameraSignatureRef.current, nextSignature)) {
+      return;
+    }
+    lastCameraSignatureRef.current = nextSignature;
+
+    if (cameraFetchTimerRef.current) clearTimeout(cameraFetchTimerRef.current);
+    cameraAbortControllerRef.current?.abort();
+
+    const cached = cameraCacheRef.current.get(nextSignature.key);
+    if (cached) {
+      setCameraResults(cached);
+      return;
+    }
+
+    cameraFetchTimerRef.current = setTimeout(() => {
+      const controller = new AbortController();
+      cameraAbortControllerRef.current = controller;
+
+      fetchCamerasAlongRoute(routeCoords, controller.signal)
+        .then(cameras => {
+          if (!isMountedRef.current) return;
+          rememberCameraCache(nextSignature.key, cameras);
+          setCameraResults(cameras);
+        })
+        .catch(err => {
+          if (err instanceof Error && err.name === 'AbortError') return;
+        })
+        .finally(() => {
+          if (cameraAbortControllerRef.current === controller) {
+            cameraAbortControllerRef.current = null;
+          }
+        });
+    }, navigatingRef.current ? CAMERA_FETCH_DEBOUNCE_MS : CAMERA_FETCH_PREVIEW_DEBOUNCE_MS);
+  }, [isMountedRef, navigatingRef, rememberCameraCache, setCameraResults]);
+  useEffect(() => {
+    refreshRouteCamerasRef.current = refreshRouteCameras;
+  }, [refreshRouteCameras]);
 
   // Profile change WHILE navigating → debounced re-route (800 ms).
   // CRITICAL: deps = [profile] only — navigating must NOT be a dep.
@@ -144,7 +241,6 @@ export function useRouteOrchestrator({
     setCurrentStep(0);
     setSpeedLimit(null);
     setDistToTurn(null);
-    poisFetchedRef.current = false;
 
     // NAVIGATING → REROUTING; otherwise → SEARCHING
     setNavPhase(navigatingRef.current ? 'REROUTING' : 'SEARCHING');
@@ -220,16 +316,8 @@ export function useRouteOrchestrator({
         buildRoutePOIScan(result);
         const routeCoords = result.geometry.coordinates as [number, number][];
 
-        // ── Auto-fetch essentials along route ──
-        if (!poisFetchedRef.current) {
-          poisFetchedRef.current = true;
-          // 1. Cameras (safety) — no signal, must not be aborted by camera pan
-          fetchCamerasAlongRoute(routeCoords)
-            .then(cameras => { if (isMountedRef.current) setCameraResults(cameras); })
-            .catch(() => { poisFetchedRef.current = false; });
-
-          // 2 & 3. Truck Parking + Fuel — handled by handleSARSearch in MapScreen useEffect (no duplication)
-        }
+        // Safety POIs track meaningful route changes only.
+        refreshRouteCamerasRef.current(routeCoords);
 
         const coords = result.geometry.coordinates;
         let minLng = coords[0][0], maxLng = coords[0][0];

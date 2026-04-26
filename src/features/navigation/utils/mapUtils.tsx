@@ -1,7 +1,7 @@
 import React from 'react';
 import { Platform, Linking } from 'react-native';
 import Tts from 'react-native-tts';
-import type MapView from 'react-native-maps';
+import Mapbox, { UserTrackingMode } from '@rnmapbox/maps';
 
 import { MAP_CENTER } from '../../../shared/constants/config';
 import type { MapAction } from '../../../shared/services/backendApi';
@@ -352,21 +352,90 @@ interface StableCameraProps {
   userHeading?: number | null;
 }
 
+function regionToZoom(latitudeDelta = 0.01, longitudeDelta = 0.01): number {
+  const dominantDelta = Math.max(Math.abs(latitudeDelta), Math.abs(longitudeDelta), 0.0001);
+  return Math.max(2, Math.min(20, Math.log2(360 / dominantDelta)));
+}
+
+function paddingObjectToArray(padding?: { top?: number; right?: number; bottom?: number; left?: number }) {
+  return [
+    padding?.top ?? 0,
+    padding?.right ?? 0,
+    padding?.bottom ?? 0,
+    padding?.left ?? 0,
+  ];
+}
+
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded, isTracking, userCoords, userHeading }: StableCameraProps) => {
+  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords, userHeading }: StableCameraProps) => {
+    const nativeCameraRef = React.useRef<any>(null);
+    const followZoomLevel =
+      speed != null && speed > 80 ? 15.5 :
+      speed != null && speed > 40 ? 16.2 :
+      17;
+    const followPitch = speed != null && speed > 40 ? 45 : 35;
+
     React.useEffect(() => {
-      if (!navigating || !mapLoaded || !isTracking || !userCoords || !cameraRef.current) return;
-      cameraRef.current.animateCamera(
-        {
-          center: { latitude: userCoords[1], longitude: userCoords[0] },
-          heading: userHeading ?? 0,
-          pitch: 30,
-          zoom: 17,
+      cameraRef.current = {
+        animateCamera: (camera: any, options?: { duration?: number }) => {
+          nativeCameraRef.current?.setCamera({
+            centerCoordinate: camera?.center
+              ? [camera.center.longitude, camera.center.latitude]
+              : undefined,
+            heading: camera?.heading,
+            pitch: camera?.pitch,
+            zoomLevel: camera?.zoom,
+            animationMode: 'easeTo',
+            animationDuration: options?.duration ?? 600,
+          });
         },
-        { duration: 600 },
-      );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [userCoords, navigating, isTracking]);
-    return null;
+        animateToRegion: (
+          region: { latitude: number; longitude: number; latitudeDelta?: number; longitudeDelta?: number },
+          duration?: number,
+        ) => {
+          nativeCameraRef.current?.setCamera({
+            centerCoordinate: [region.longitude, region.latitude],
+            zoomLevel: regionToZoom(region.latitudeDelta, region.longitudeDelta),
+            animationMode: 'easeTo',
+            animationDuration: duration ?? 800,
+          });
+        },
+        fitToCoordinates: (
+          coords: Array<{ latitude: number; longitude: number }>,
+          options?: { edgePadding?: { top?: number; right?: number; bottom?: number; left?: number }; animated?: boolean },
+        ) => {
+          if (!coords?.length) return;
+          const lngs = coords.map(c => c.longitude);
+          const lats = coords.map(c => c.latitude);
+          nativeCameraRef.current?.fitBounds(
+            [Math.max(...lngs), Math.max(...lats)],
+            [Math.min(...lngs), Math.min(...lats)],
+            paddingObjectToArray(options?.edgePadding),
+            options?.animated === false ? 0 : 800,
+          );
+        },
+      };
+      return () => {
+        cameraRef.current = null;
+      };
+    }, [cameraRef]);
+
+    return (
+      <Mapbox.Camera
+        ref={nativeCameraRef}
+        defaultSettings={{
+          centerCoordinate: [MAP_CENTER.longitude, MAP_CENTER.latitude],
+          zoomLevel: MAP_CENTER.zoomLevel,
+        }}
+        followUserLocation={Boolean(navigating && mapLoaded && isTracking && userCoords)}
+        followUserMode={UserTrackingMode.FollowWithCourse}
+        followZoomLevel={followZoomLevel}
+        followPitch={followPitch}
+        followHeading={userHeading ?? 0}
+        followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
+        animationMode="easeTo"
+        animationDuration={600}
+      />
+    );
   },
 );

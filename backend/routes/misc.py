@@ -11,7 +11,7 @@ from utils.helpers import _is_rate_limited, _get_body, now_iso, _strip_md_fence
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
-    _adr_to_tunnel_code
+    _adr_to_tunnel_code, _mapbox_match_geometry
 )
 from services.gemini_service import _run_gemini_worker, _gemini_ready
 from services.gpt_service import _gpt4o_ready, client
@@ -291,6 +291,19 @@ def _google_directions_polyline(origin: list, destination: list, waypoints: list
     except Exception:
         return []
 
+def _simple_congestion_geojson(geometry: dict, delay_seconds: int = 0) -> dict:
+    congestion = "heavy" if delay_seconds >= 900 else "moderate" if delay_seconds >= 300 else "low"
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"congestion": congestion},
+                "geometry": geometry,
+            }
+        ],
+    }
+
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
 def calculate_route():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
@@ -322,7 +335,8 @@ def calculate_route():
         routes = r.json().get("routes", [])
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
-        geom = _tomtom_route_to_geojson(rt)
+        raw_geom = _tomtom_route_to_geojson(rt)
+        geom, snapped_primary = _mapbox_match_geometry(raw_geom)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
         total_m, steps = summary.get("lengthInMeters", 0), []
@@ -330,20 +344,36 @@ def calculate_route():
             nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
         alt_routes = routes[1:3]
-        alternatives = [{"label": ["Алтернатива 1", "Алтернатива 2"][idx], "color": ["#B922FF", "#08F384"][idx], "duration": ar.get("summary", {}).get("travelTimeInSeconds", 0), "distance": ar.get("summary", {}).get("lengthInMeters", 0), "traffic": "moderate", "geometry": _tomtom_route_to_geojson(ar), "dest_coords": destination, "congestion_geojson": _tomtom_congestion_geojson(ar, _tomtom_route_to_geojson(ar))} for idx, ar in enumerate(alt_routes)]
+        alternatives = []
+        for idx, ar in enumerate(alt_routes):
+            alt_summary = ar.get("summary", {})
+            raw_alt_geom = _tomtom_route_to_geojson(ar)
+            alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom)
+            alt_congestion = (
+                _simple_congestion_geojson(alt_geom, alt_summary.get("trafficDelayInSeconds", 0))
+                if snapped_alt else
+                _tomtom_congestion_geojson(ar, raw_alt_geom)
+            )
+            alternatives.append({
+                "label": ["Алтернатива 1", "Алтернатива 2"][idx],
+                "color": ["#B922FF", "#08F384"][idx],
+                "duration": alt_summary.get("travelTimeInSeconds", 0),
+                "distance": alt_summary.get("lengthInMeters", 0),
+                "traffic": "moderate",
+                "geometry": alt_geom,
+                "dest_coords": destination,
+                "congestion_geojson": alt_congestion,
+            })
 
-        # Calculate congestion/traffic (uses TomTom point indices — must be before re-routing)
-        congestion_geojson = _tomtom_congestion_geojson(rt, geom)
-        traffic_alerts = _tomtom_traffic_alerts(rt, geom)
+        # Section indices match the raw TomTom polyline. If we replace the geometry with snapped
+        # road segments, keep traffic colouring simple so the visible line stays aligned.
+        congestion_geojson = (
+            _simple_congestion_geojson(geom, summary.get("trafficDelayInSeconds", 0))
+            if snapped_primary else
+            _tomtom_congestion_geojson(rt, raw_geom)
+        )
+        traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
         restrictions = _extract_route_restrictions(geom)
-
-        # Re-route through Google Directions only for short/urban routes (<150 km)
-        # Long routes (highway/international) stay on TomTom coords — Google loses accuracy with sparse waypoints
-        if total_m < 150_000:
-            wps = _sample_tomtom_waypoints(instructions)
-            google_coords = _google_directions_polyline(origin, destination, wps)
-            if google_coords:
-                geom['coordinates'] = google_coords
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)

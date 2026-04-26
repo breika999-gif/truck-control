@@ -14,6 +14,15 @@ from database import _db_save_chat
 
 _TACHO_HINTS = ["тахограф", "остава", "стигам", "до колко", "почивка", "пауза", "смяна", "лимит", "седмично", "driving", "remain", "hours", "break"]
 
+gemini_bp = Blueprint('gemini', __name__)
+
+
+def _format_ctx_block(label: str, payload) -> str:
+    try:
+        return f" [{label}:{json.dumps(payload, ensure_ascii=False)}]"
+    except Exception:
+        return ""
+
 
 @gemini_bp.post("/api/gemini/chat")
 def gemini_chat():
@@ -57,7 +66,7 @@ def gemini_chat():
                 f"ефективно-остава {min_rem_h}ч ≈ {est_km}км при 80км/ч]"
             )
 
-        ble_block = _build_tacho_context_block()
+        ble_block = _build_tacho_context_block(user_email)
         if ble_block:
             ctx_note += ble_block
 
@@ -66,6 +75,12 @@ def gemini_chat():
         if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
         if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
         if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
+
+        if context.get("tacho_log"):
+            ctx_note += _format_ctx_block("TACHO_LOG", context["tacho_log"])
+
+        if context.get("tacho_week"):
+            ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
 
         if context.get("user_memory"):
             ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
@@ -84,7 +99,6 @@ def gemini_chat():
                 model=GEMINI_MODEL,
                 contents=contents,
                 config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300},
-                request_options={"timeout": 30}
             )
             return resp.text or ""
         except Exception as e:
