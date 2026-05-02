@@ -167,13 +167,19 @@ def _extract_route_restrictions(geometry: dict) -> list:
     coords = geometry.get("coordinates", [])
     if len(coords) < 2: return []
 
-    max_points = 96
+    max_points = 48
     if len(coords) > max_points:
         step = len(coords) / max_points
         coords = [coords[int(i * step)] for i in range(max_points)]
         coords[-1] = geometry.get("coordinates", [])[-1]
 
-    max_segments = 12
+    approx_m = 0.0
+    for i in range(1, len(coords)):
+        dx = coords[i][0] - coords[i - 1][0]
+        dy = coords[i][1] - coords[i - 1][1]
+        approx_m += (dx * dx + dy * dy) ** 0.5 * 111000
+
+    max_segments = 4 if approx_m <= 250000 else 2
     seg_size = max(2, (len(coords) + max_segments - 1) // max_segments)
     segments = []
     for start in range(0, len(coords), seg_size):
@@ -186,9 +192,9 @@ def _extract_route_restrictions(geometry: dict) -> list:
     results, seen = [], set()
     for seg in segments[:max_segments]:
         lats, lngs = [c[1] for c in seg], [c[0] for c in seg]
-        bbox = f"{min(lats)-0.01},{min(lngs)-0.01},{max(lats)+0.01},{max(lngs)+0.01}"
+        bbox = f"{min(lats)-0.006},{min(lngs)-0.006},{max(lats)+0.006},{max(lngs)+0.006}"
         try:
-            r = requests.post("https://overpass-api.de/api/interpreter", data={"data": f'[out:json][timeout:10];(node["maxheight"]({bbox});node["maxweight"]({bbox});node["maxwidth"]({bbox});way["maxheight"]({bbox});way["maxweight"]({bbox});way["maxwidth"]({bbox}););out center 60;'}, timeout=12)
+            r = requests.post("https://overpass-api.de/api/interpreter", data={"data": f'[out:json][timeout:4];(node["maxheight"]({bbox});node["maxweight"]({bbox});node["maxwidth"]({bbox});way["maxheight"]({bbox});way["maxweight"]({bbox});way["maxwidth"]({bbox}););out center 40;'}, timeout=5)
             elements = r.json().get("elements", [])
         except:
             continue
@@ -318,7 +324,7 @@ def calculate_route():
         rt, summary = routes[0], routes[0].get("summary", {})
         total_m = summary.get("lengthInMeters", 0)
         raw_geom = _tomtom_route_to_geojson(rt)
-        geom, snapped_primary = _mapbox_match_geometry(raw_geom) if total_m < 150_000 else (raw_geom, False)
+        geom, snapped_primary = _mapbox_match_geometry(raw_geom) if total_m < 80_000 else (raw_geom, False)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
         steps = []
@@ -328,7 +334,7 @@ def calculate_route():
 
         # If Mapbox matching refuses the geometry (common when TomTom returns many points),
         # restore the short-route Google polyline fallback that keeps urban routes snapped.
-        if not snapped_primary and total_m < 150_000:
+        if not snapped_primary and total_m < 80_000:
             wps = _sample_tomtom_waypoints(instructions)
             google_coords = _google_directions_polyline(origin, destination, wps)
             if google_coords:
@@ -342,7 +348,7 @@ def calculate_route():
             raw_alt_geom = _tomtom_route_to_geojson(ar)
             alt_geom, snapped_alt = (
                 _mapbox_match_geometry(raw_alt_geom)
-                if alt_summary.get("lengthInMeters", 0) < 150_000
+                if alt_summary.get("lengthInMeters", 0) < 80_000
                 else (raw_alt_geom, False)
             )
             alt_congestion = (
@@ -369,7 +375,9 @@ def calculate_route():
             _tomtom_congestion_geojson(rt, raw_geom)
         )
         traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
-        restrictions = _extract_route_restrictions(geom)
+        # Keep route calculation responsive. Long-route restriction scanning uses
+        # multiple Overpass calls and should move to a non-blocking endpoint.
+        restrictions = _extract_route_restrictions(geom) if total_m <= 80000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
