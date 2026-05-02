@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.py[cod]
+*.log
+*.err.log
+*.out.log
+*.db
+*.db-shm
+*.db-wal
+.pytest_cache/
+codex_*.ps1
+server.err.log
+server.out.log
+truckai.db*

@@ -3,6 +3,7 @@ import requests
 import json
 import time
 import math
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from config import (
     TOMTOM_API_KEY, MAPBOX_PUBLIC_TOKEN, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
@@ -11,6 +12,8 @@ from config import (
 from utils.helpers import _haversine_m, now_iso
 
 _tomtom_ready = bool(TOMTOM_API_KEY)
+_match_cache: dict = {}
+_MATCH_CACHE_TTL_S = 300
 
 _TT_MANEUVER_DIR = {
     "TURN_LEFT":        "left",
@@ -62,6 +65,164 @@ def _flat_route_coords(route_features: list) -> list:
                 merged.append(coord)
     return merged
 
+def _route_distance_m(coords: list) -> float:
+    total = 0.0
+    for i in range(1, len(coords)):
+        total += _haversine_m(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0])
+    return total
+
+def _match_cache_key(coords: list, edge_only_m: int = 0) -> str:
+    if len(coords) < 2:
+        return ""
+    first, last = coords[0], coords[-1]
+    distance_m = round(_route_distance_m(coords))
+    raw = json.dumps(
+        {
+            "first": [round(first[0], 5), round(first[1], 5)],
+            "last": [round(last[0], 5), round(last[1], 5)],
+            "distance": distance_m,
+            "edge": edge_only_m,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+def _match_cache_get(key: str):
+    if not key:
+        return None
+    cached = _match_cache.get(key)
+    if not cached:
+        return None
+    ts, value = cached
+    if time.time() - ts > _MATCH_CACHE_TTL_S:
+        _match_cache.pop(key, None)
+        return None
+    print(f"[ROUTING] mapbox match cache hit key={key[:8]}", flush=True)
+    return value
+
+def _match_cache_set(key: str, value):
+    if key:
+        _match_cache[key] = (time.time(), value)
+
+def _split_edge_segments(coords: list, edge_m: int) -> tuple[list, list, list]:
+    if len(coords) < 2 or edge_m <= 0:
+        return coords, [], []
+
+    total_m = _route_distance_m(coords)
+    if total_m <= edge_m * 2:
+        return coords, [], []
+
+    cum = [0.0]
+    for i in range(1, len(coords)):
+        cum.append(cum[-1] + _haversine_m(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0]))
+
+    first_end = 1
+    while first_end < len(cum) - 1 and cum[first_end] < edge_m:
+        first_end += 1
+
+    last_start = len(cum) - 2
+    last_target = total_m - edge_m
+    while last_start > 0 and cum[last_start] > last_target:
+        last_start -= 1
+
+    first = coords[:first_end + 1]
+    middle = coords[first_end:last_start + 1]
+    last = coords[last_start:]
+    return first, middle, last
+
+def _match_coordinate_chunks(coords: list) -> tuple[list, bool]:
+    CHUNK = 99  # Mapbox limit is 100, use 99 with 1-point overlap
+    all_snapped: list = []
+    any_matched = False
+    i = 0
+    while i < len(coords):
+        chunk = coords[i:i + CHUNK]
+        if len(chunk) < 2:
+            break
+
+        coords_str = ";".join(f"{c[0]},{c[1]}" for c in chunk)
+        radiuses = ";".join(["25"] * len(chunk))  # 25m tolerance — keeps us on truck route
+
+        r = requests.get(
+            f"https://api.mapbox.com/matching/v5/mapbox/driving/{coords_str}",
+            params={
+                "access_token": MAPBOX_PUBLIC_TOKEN,
+                "geometries": "geojson",
+                "radiuses": radiuses,
+                "overview": "full",
+                "tidy": "false",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        if data.get("code") == "Ok" and data.get("matchings"):
+            chunk_coords = data["matchings"][0]["geometry"]["coordinates"]
+            any_matched = True
+            if all_snapped:
+                all_snapped.extend(chunk_coords[1:])  # skip first to avoid duplicate
+            else:
+                all_snapped.extend(chunk_coords)
+        else:
+            # Matching failed for this chunk — use original coords
+            if all_snapped:
+                all_snapped.extend(chunk[1:])
+            else:
+                all_snapped.extend(chunk)
+
+        i += CHUNK - 1  # 1-point overlap between chunks
+
+    return all_snapped, any_matched
+
+def _merge_segments(*segments: list) -> list:
+    merged = []
+    for segment in segments:
+        for coord in segment:
+            if not merged or coord != merged[-1]:
+                merged.append(coord)
+    return merged
+
+def _find_openlr_code(payload) -> str | None:
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in ("openlrCode", "openLrCode", "openlr", "openLR") and isinstance(value, str) and value:
+                return value
+            found = _find_openlr_code(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for item in payload:
+            found = _find_openlr_code(item)
+            if found:
+                return found
+    return None
+
+def _mapbox_openlr_match(openlr_code: str) -> dict | None:
+    if not MAPBOX_PUBLIC_TOKEN or not openlr_code:
+        return None
+    try:
+        r = requests.get(
+            f"https://api.mapbox.com/matching/v5/mapbox/driving/{requests.utils.quote(openlr_code, safe='')}",
+            params={
+                "openlr_spec": "tomtom",
+                "openlr_format": "tomtom",
+                "geometries": "geojson",
+                "overview": "full",
+                "access_token": MAPBOX_PUBLIC_TOKEN,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code") == "Ok" and data.get("matchings"):
+            geometry = data["matchings"][0].get("geometry")
+            if geometry and len(geometry.get("coordinates", [])) >= 2:
+                return geometry
+    except Exception as exc:
+        print(f"[ROUTING] openlr match failed: {exc}", flush=True)
+    return None
+
 def _tomtom_snap_to_roads(geometry: dict, vehicle_type: str = "Truck") -> tuple[dict, bool]:
     coords = geometry.get("coordinates", [])
     if not _tomtom_ready or len(coords) < 2:
@@ -94,7 +255,7 @@ def _tomtom_snap_to_roads(geometry: dict, vehicle_type: str = "Truck") -> tuple[
         pass
     return geometry, False
 
-def _mapbox_match_geometry(geometry: dict) -> tuple[dict, bool]:
+def _mapbox_match_geometry(geometry: dict, edge_only_m: int = 0) -> tuple[dict, bool]:
     """Snap TomTom geometry to Mapbox road network using Map Matching API.
     Returns (snapped_geometry, success). Falls back to original on any error.
     """
@@ -102,52 +263,34 @@ def _mapbox_match_geometry(geometry: dict) -> tuple[dict, bool]:
     if not MAPBOX_PUBLIC_TOKEN or len(coords) < 2:
         return geometry, False
 
-    CHUNK = 99  # Mapbox limit is 100, use 99 with 1-point overlap
-    all_snapped: list = []
+    key = _match_cache_key(coords, edge_only_m)
+    cached = _match_cache_get(key)
+    if cached is not None:
+        return cached
 
     try:
-        i = 0
-        while i < len(coords):
-            chunk = coords[i:i + CHUNK]
-            if len(chunk) < 2:
-                break
-
-            coords_str = ";".join(f"{c[0]},{c[1]}" for c in chunk)
-            radiuses = ";".join(["25"] * len(chunk))  # 25m tolerance — keeps us on truck route
-
-            r = requests.get(
-                f"https://api.mapbox.com/matching/v5/mapbox/driving/{coords_str}",
-                params={
-                    "access_token": MAPBOX_PUBLIC_TOKEN,
-                    "geometries": "geojson",
-                    "radiuses": radiuses,
-                    "overview": "full",
-                    "tidy": "false",
-                },
-                timeout=10,
-            )
-            r.raise_for_status()
-            data = r.json()
-
-            if data.get("code") == "Ok" and data.get("matchings"):
-                chunk_coords = data["matchings"][0]["geometry"]["coordinates"]
-                if all_snapped:
-                    all_snapped.extend(chunk_coords[1:])  # skip first to avoid duplicate
-                else:
-                    all_snapped.extend(chunk_coords)
+        if edge_only_m > 0:
+            first, middle, last = _split_edge_segments(coords, edge_only_m)
+            first_snapped, first_ok = _match_coordinate_chunks(first)
+            if last:
+                last_snapped, last_ok = _match_coordinate_chunks(last)
             else:
-                # Matching failed for this chunk — use original coords
-                if all_snapped:
-                    all_snapped.extend(chunk[1:])
-                else:
-                    all_snapped.extend(chunk)
-
-            i += CHUNK - 1  # 1-point overlap between chunks
+                last_snapped, last_ok = [], False
+            all_snapped = _merge_segments(
+                first_snapped if first_snapped else first,
+                middle,
+                last_snapped if last_snapped else last,
+            )
+            any_matched = first_ok or last_ok
+        else:
+            all_snapped, any_matched = _match_coordinate_chunks(coords)
 
         if len(all_snapped) >= 2:
-            return {"type": "LineString", "coordinates": all_snapped}, True
-    except Exception:
-        pass
+            result = ({"type": "LineString", "coordinates": all_snapped}, any_matched)
+            _match_cache_set(key, result)
+            return result
+    except Exception as exc:
+        print(f"[ROUTING] coordinate match failed: {exc}", flush=True)
 
     return geometry, False
 
@@ -330,6 +473,7 @@ def _tool_suggest_routes(
             "computeTravelTimeFor": "all", "routeType": "fastest",
             "maxAlternatives": 2, "sectionType": "traffic",
             "routeRepresentation": "polyline",
+            "locationReferencing": ["openlr"],
         }
         if truck_profile:
             if truck_profile.get("height_m"):  params["vehicleHeight"] = truck_profile["height_m"]
@@ -347,6 +491,13 @@ def _tool_suggest_routes(
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         routes_data = r.json().get("routes", [])
+        if not routes_data and params.get("locationReferencing"):
+            retry_params = dict(params)
+            retry_params.pop("locationReferencing", None)
+            print("[ROUTING] suggest_routes openlr request returned no routes; retrying without locationReferencing", flush=True)
+            r = requests.get(url, params=retry_params, timeout=15)
+            r.raise_for_status()
+            routes_data = r.json().get("routes", [])
         if not routes_data:
             return {"error": "Няма маршрут", "steps": [], "geometry": None}
         primary_duration = routes_data[0].get("summary", {}).get("travelTimeInSeconds", 0)

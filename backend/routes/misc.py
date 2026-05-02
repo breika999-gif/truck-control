@@ -1,13 +1,13 @@
 import os, sys, json, re, requests, time as _cache_time
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
-from config import TOMTOM_API_KEY
+from config import TOMTOM_API_KEY, MAPBOX_PUBLIC_TOKEN
 from database import get_db, row_to_poi, DB_PATH
 from utils.helpers import _is_rate_limited, _get_body, now_iso
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
-    _adr_to_tunnel_code, _mapbox_match_geometry
+    _adr_to_tunnel_code, _mapbox_match_geometry, _mapbox_openlr_match, _find_openlr_code
 )
 from services.gemini_service import _gemini_ready
 from services.gpt_service import _gpt4o_ready, client
@@ -41,6 +41,7 @@ def health():
         "gpt4o_ready": _gpt4o_ready, 
         "gemini_ready": _gemini_ready, 
         "tomtom_ready": bool(TOMTOM_API_KEY), 
+        "mapbox_ready": bool(MAPBOX_PUBLIC_TOKEN),
         "timestamp": now_iso()
     })
 
@@ -308,7 +309,7 @@ def calculate_route():
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
     # Base avoid list — low emission zones + unpaved
     avoid_list = ["lowEmissionZones", "unpavedRoads"] if truck.get("avoidUnpaved") else ["lowEmissionZones"]
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline"}
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "locationReferencing": ["openlr"]}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]
@@ -319,12 +320,35 @@ def calculate_route():
     if code: params["vehicleAdrTunnelRestrictionCode"] = code
     try:
         r = requests.get(f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json", params=params, timeout=15)
-        routes = r.json().get("routes", [])
+        tomtom_data = r.json()
+        routes = tomtom_data.get("routes", [])
+        if not routes and params.get("locationReferencing"):
+            retry_params = dict(params)
+            retry_params.pop("locationReferencing", None)
+            print("[ROUTING] openlr route request returned no routes; retrying without locationReferencing", flush=True)
+            r = requests.get(f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json", params=retry_params, timeout=15)
+            tomtom_data = r.json()
+            routes = tomtom_data.get("routes", [])
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
         total_m = summary.get("lengthInMeters", 0)
         raw_geom = _tomtom_route_to_geojson(rt)
-        geom, snapped_primary = _mapbox_match_geometry(raw_geom) if total_m < 80_000 else (raw_geom, False)
+        geom, snapped_primary = raw_geom, False
+        openlr_code = _find_openlr_code(rt)
+        match_path = "raw"
+        if openlr_code:
+            openlr_geom = _mapbox_openlr_match(openlr_code)
+            if openlr_geom:
+                geom, snapped_primary = openlr_geom, True
+                match_path = "openlr"
+        if not snapped_primary:
+            if total_m < 80_000:
+                geom, snapped_primary = _mapbox_match_geometry(raw_geom)
+                match_path = "coordinate_match" if snapped_primary else "raw"
+            elif total_m <= 150_000:
+                geom, snapped_primary = _mapbox_match_geometry(raw_geom, edge_only_m=15_000)
+                match_path = "coordinate_edge_match" if snapped_primary else "raw"
+        print(f"[ROUTING] using {match_path} openlr={bool(openlr_code)} distance_m={total_m} coords={len(raw_geom.get('coordinates', []))}", flush=True)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
         steps = []
@@ -346,11 +370,23 @@ def calculate_route():
         for idx, ar in enumerate(alt_routes):
             alt_summary = ar.get("summary", {})
             raw_alt_geom = _tomtom_route_to_geojson(ar)
-            alt_geom, snapped_alt = (
-                _mapbox_match_geometry(raw_alt_geom)
-                if alt_summary.get("lengthInMeters", 0) < 80_000
-                else (raw_alt_geom, False)
-            )
+            alt_m = alt_summary.get("lengthInMeters", 0)
+            alt_geom, snapped_alt = raw_alt_geom, False
+            alt_openlr_code = _find_openlr_code(ar)
+            alt_match_path = "raw"
+            if alt_openlr_code:
+                alt_openlr_geom = _mapbox_openlr_match(alt_openlr_code)
+                if alt_openlr_geom:
+                    alt_geom, snapped_alt = alt_openlr_geom, True
+                    alt_match_path = "openlr"
+            if not snapped_alt:
+                if alt_m < 80_000:
+                    alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom)
+                    alt_match_path = "coordinate_match" if snapped_alt else "raw"
+                elif alt_m <= 150_000:
+                    alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom, edge_only_m=15_000)
+                    alt_match_path = "coordinate_edge_match" if snapped_alt else "raw"
+            print(f"[ROUTING] alt {idx + 1} using {alt_match_path} openlr={bool(alt_openlr_code)} distance_m={alt_m} coords={len(raw_alt_geom.get('coordinates', []))}", flush=True)
             alt_congestion = (
                 _simple_congestion_geojson(alt_geom, alt_summary.get("trafficDelayInSeconds", 0))
                 if snapped_alt else

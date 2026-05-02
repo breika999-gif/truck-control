@@ -88,19 +88,36 @@ def _dedupe_route_pois(items: list, coords: list, max_detour_m: int, max_results
     results.sort(key=lambda x: x["distance_m"])
     return results[:max_results]
 
-def _fallback_pois_along_route(coords: list, category: str, max_results: int = 20) -> list:
+def _fallback_pois_along_route(coords: list, category: str, max_results: int = 20, debug: dict | None = None) -> list:
     samples = _sample_route_points(coords)
+    if debug is not None:
+        debug["fallback_samples"] = len(samples)
+        debug["tomtom_search_results"] = 0
+        debug["service_results"] = 0
+        debug["raw_results"] = 0
+        debug["deduped_results"] = 0
     raw = []
     for lng, lat in samples:
         if category == "fuel":
-            raw.extend(_tomtom_search("gas station", lat, lng, limit=8))
-            raw.extend(_tomtom_search("fuel station", lat, lng, limit=8))
-            raw.extend(_tool_find_fuel(lat, lng, 30_000))
+            tt_results = _tomtom_search("gas station", lat, lng, limit=8) + _tomtom_search("fuel station", lat, lng, limit=8)
+            service_results = _tool_find_fuel(lat, lng, 30_000)
+            if debug is not None:
+                debug["tomtom_search_results"] += len(tt_results)
+                debug["service_results"] += len(service_results)
+            raw.extend(tt_results)
+            raw.extend(service_results)
         else:
-            raw.extend(_tool_find_truck_parking(lat, lng, 30_000))
+            service_results = _tool_find_truck_parking(lat, lng, 30_000)
+            if debug is not None:
+                debug["service_results"] += len(service_results)
+            raw.extend(service_results)
         if len(raw) >= max_results * 4:
             break
-    return _dedupe_route_pois(raw, coords, 15_000, max_results)
+    results = _dedupe_route_pois(raw, coords, 15_000, max_results)
+    if debug is not None:
+        debug["raw_results"] = len(raw)
+        debug["deduped_results"] = len(results)
+    return results
 
 def _transparking_along_route(coords: list, max_results: int = 20) -> list:
     """Find TransParking truck stops along a route using our local DB."""
@@ -220,17 +237,26 @@ def poi_along_route_v2():
     data = _get_body()
     coords, category = data.get("coords", []), data.get("category", "truck_stop")
     if not coords or len(coords) < 2: return jsonify({"pois": []})
+    debug = {} if data.get("debug") else None
     if category == "truck_stop":
         results = _transparking_along_route(coords, max_results=20)
+        if debug is not None:
+            debug["primary_results"] = len(results)
         if len(results) < 3:
-            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20), coords, 15_000, 20)
+            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20, debug=debug), coords, 15_000, 20)
     else:
         results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=25)
+        if debug is not None:
+            debug["primary_results"] = len(results)
         if len(results) < 3:
-            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20), coords, 15_000, 20)
+            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20, debug=debug), coords, 15_000, 20)
         for r in results:
             r["category"] = category
-    return jsonify({"pois": results})
+    response = {"pois": results}
+    if debug is not None:
+        debug["final_results"] = len(results)
+        response["debug"] = debug
+    return jsonify(response)
 
 @poi_bp.post("/api/cameras-along-route")
 def cameras_along_route_v2():
