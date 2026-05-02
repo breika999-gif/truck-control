@@ -854,9 +854,22 @@ const MapScreen: React.FC = () => {
     : dominantCongestion === 'moderate' ? '#FF9500'
     : '#13BDFF';
 
+  const useNavigationMapStyle = navigating || navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
   const mapStyleURL: string =
     mapMode === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' :
-    lightMode ? 'mapbox://styles/mapbox/navigation-day-v1' : 'mapbox://styles/mapbox/navigation-night-v1';
+    useNavigationMapStyle ?
+      (lightMode ? 'mapbox://styles/mapbox/navigation-day-v1' : 'mapbox://styles/mapbox/navigation-night-v1') :
+      JSON.stringify({
+        version: 8,
+        imports: [{ id: 'basemap', url: 'mapbox://styles/mapbox/standard', config: {
+          lightPreset: lightMode ? 'day' : 'night',
+          showPointOfInterestLabels: false,
+          showTransitLabels: true,
+          showPlaceLabels: true,
+          showRoadLabels: true,
+          showTrafficIncidents: true,
+        }}],
+      });
 
   const searchTop = insets.top + 18;
   const isSearchingAlongRoute = loadingPOI && sarMode;
