@@ -4,7 +4,8 @@ from flask import Blueprint, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
 from utils.helpers import _is_rate_limited, _get_body, now_iso
 from services.tomtom_service import _tomtom_along_route
-from services.poi_service import _tool_find_truck_parking, _tool_find_speed_cameras, _tool_find_overtaking_restrictions
+from services.tomtom_service import _tomtom_search
+from services.poi_service import _tool_find_truck_parking, _tool_find_speed_cameras, _tool_find_overtaking_restrictions, _tool_find_fuel
 
 def _point_to_segment_distance_m(point: list, start: list, end: list) -> float:
     px, py = point[0], point[1]
@@ -23,6 +24,83 @@ def _distance_to_polyline_m(point: list, coords: list) -> float:
     for idx in range(len(coords) - 1):
         best = min(best, _point_to_segment_distance_m(point, coords[idx], coords[idx + 1]))
     return best
+
+def _route_position_m(point: list, coords: list) -> float:
+    if not coords:
+        return 0.0
+    if len(coords) == 1:
+        return 0.0
+    cum = [0.0]
+    for idx in range(1, len(coords)):
+        cum.append(cum[-1] + math.sqrt((coords[idx][0] - coords[idx - 1][0]) ** 2 + (coords[idx][1] - coords[idx - 1][1]) ** 2) * 111000)
+    best_pos, best_dist = 0.0, float("inf")
+    px, py = point[0], point[1]
+    for idx in range(len(coords) - 1):
+        ax, ay = coords[idx][0], coords[idx][1]
+        bx, by = coords[idx + 1][0], coords[idx + 1][1]
+        dx, dy = bx - ax, by - ay
+        len_sq = dx * dx + dy * dy
+        t = 0.0 if len_sq == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+        cx, cy = ax + t * dx, ay + t * dy
+        dist = math.sqrt((cx - px) ** 2 + (cy - py) ** 2) * 111000
+        if dist < best_dist:
+            seg_m = math.sqrt(dx * dx + dy * dy) * 111000
+            best_dist = dist
+            best_pos = cum[idx] + t * seg_m
+    return best_pos
+
+def _sample_route_points(coords: list, step_m: int = 25_000, max_points: int = 10) -> list:
+    if not coords or len(coords) < 2:
+        return []
+    cum = [0.0]
+    for idx in range(1, len(coords)):
+        cum.append(cum[-1] + math.sqrt((coords[idx][0] - coords[idx - 1][0]) ** 2 + (coords[idx][1] - coords[idx - 1][1]) ** 2) * 111000)
+    samples, next_target = [], step_m
+    for idx, dist in enumerate(cum):
+        if dist >= next_target:
+            samples.append(coords[idx])
+            next_target += step_m
+            if len(samples) >= max_points:
+                break
+    if not samples:
+        samples = [coords[len(coords) // 2]]
+    return samples
+
+def _dedupe_route_pois(items: list, coords: list, max_detour_m: int, max_results: int) -> list:
+    seen, results = set(), []
+    for item in items:
+        lat, lng = item.get("lat"), item.get("lng")
+        if lat is None or lng is None:
+            continue
+        detour_m = int(_distance_to_polyline_m([lng, lat], coords))
+        if detour_m > max_detour_m:
+            continue
+        key = (round(lat, 4), round(lng, 4), (item.get("name") or "").lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        route_m = int(_route_position_m([lng, lat], coords))
+        enriched = dict(item)
+        enriched["distance_m"] = route_m
+        enriched["detour_m"] = detour_m
+        enriched["travel_time"] = int(route_m / 22.2)
+        results.append(enriched)
+    results.sort(key=lambda x: x["distance_m"])
+    return results[:max_results]
+
+def _fallback_pois_along_route(coords: list, category: str, max_results: int = 20) -> list:
+    samples = _sample_route_points(coords)
+    raw = []
+    for lng, lat in samples:
+        if category == "fuel":
+            raw.extend(_tomtom_search("gas station", lat, lng, limit=8))
+            raw.extend(_tomtom_search("fuel station", lat, lng, limit=8))
+            raw.extend(_tool_find_fuel(lat, lng, 30_000))
+        else:
+            raw.extend(_tool_find_truck_parking(lat, lng, 30_000))
+        if len(raw) >= max_results * 4:
+            break
+    return _dedupe_route_pois(raw, coords, 15_000, max_results)
 
 def _transparking_along_route(coords: list, max_results: int = 20) -> list:
     """Find TransParking truck stops along a route using our local DB."""
@@ -144,8 +222,12 @@ def poi_along_route_v2():
     if not coords or len(coords) < 2: return jsonify({"pois": []})
     if category == "truck_stop":
         results = _transparking_along_route(coords, max_results=20)
+        if len(results) < 3:
+            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20), coords, 15_000, 20)
     else:
         results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=25)
+        if len(results) < 3:
+            results = _dedupe_route_pois(results + _fallback_pois_along_route(coords, category, max_results=20), coords, 15_000, 20)
         for r in results:
             r["category"] = category
     return jsonify({"pois": results})

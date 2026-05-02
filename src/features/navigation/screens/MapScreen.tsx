@@ -856,18 +856,7 @@ const MapScreen: React.FC = () => {
 
   const mapStyleURL: string =
     mapMode === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' :
-    JSON.stringify({
-      version: 8,
-      imports: [{ id: 'basemap', url: 'mapbox://styles/mapbox/standard', config: {
-        lightPreset: lightMode ? 'day' : 'night',
-        showPointOfInterestLabels: false,
-        showTransitLabels: true,
-        showPlaceLabels: true,
-        showRoadLabels: true,
-        showTrafficIncidents: true,
-        show3dObjects: false,
-      }}],
-    });
+    lightMode ? 'mapbox://styles/mapbox/navigation-day-v1' : 'mapbox://styles/mapbox/navigation-night-v1';
 
   const searchTop = insets.top + 18;
   const isSearchingAlongRoute = loadingPOI && sarMode;
