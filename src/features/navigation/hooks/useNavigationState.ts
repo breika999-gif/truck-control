@@ -24,7 +24,6 @@ export const useNavigationState = () => {
   const [distToTurn, setDistToTurn]           = useState<number | null>(null);
   const [speedLimit, setSpeedLimit]           = useState<number | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState(0);
-  const [simulating, setSimulating]           = useState(false);
   const [routeOptions, setRouteOptions]       = useState<RouteOption[]>([]);
   const [routeOptDest, setRouteOptDest]       = useState<RouteOptDest | null>(null);
   const [selectedRouteIdx, setSelectedRouteIdx] = useState<number | null>(null);
@@ -53,7 +52,6 @@ export const useNavigationState = () => {
     distToTurn, setDistToTurn,
     speedLimit, setSpeedLimit,
     remainingSeconds, setRemainingSeconds,
-    simulating, setSimulating,
     routeOptions, setRouteOptions,
     routeOptDest, setRouteOptDest,
     selectedRouteIdx, setSelectedRouteIdx,

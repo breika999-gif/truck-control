@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Tts from 'react-native-tts';
 import { RouteStep, bgInstruction } from '../api/directions';
-import { ttsSpeak } from '../utils/mapUtils';
+
 
 export function useVoice(navigating: boolean, currentStep: number, route?: { steps: RouteStep[] } | null) {
   const [voiceMuted, setVoiceMuted] = useState(false);
@@ -65,10 +65,12 @@ export function useVoice(navigating: boolean, currentStep: number, route?: { ste
     // Priority: 1) Mapbox maneuver.instruction
     //           2) bgInstruction() — generated Bulgarian fallback
     //           3) voiceInstructions announcement
-    const text =
+    const stripTags = (s: string) => s.replace(/<[^>]*>/g, '').trim();
+    const raw =
       step.maneuver.instruction ||
       bgInstruction(step) ||
       step.voiceInstructions?.[0]?.announcement;
+    const text = raw ? stripTags(raw) : undefined;
 
     if (text) {
       Tts.stop();

@@ -152,7 +152,11 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     setRetrieving(true);
     try {
       const place = await retrievePlace(s.place_id);
-      if (place) onSelect(place);
+      if (place) {
+        onSelect(place);
+        setQuery('');
+        setDestFocused(false);
+      }
     } finally {
       setRetrieving(false);
     }

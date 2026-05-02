@@ -24,6 +24,7 @@ export const useChatPanelsState = () => {
   const [tachographResult, setTachographResult] = useState<AITachoResult | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
+  const isRecordingRef = useRef(false);
   const [micLoading, setMicLoading]   = useState(false);
   const [kbHeight, setKbHeight]       = useState(0);
 
@@ -31,11 +32,19 @@ export const useChatPanelsState = () => {
   const geminiScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', e => setKbHeight(e.endCoordinates.height));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
     return () => {
       show.remove();
       hide.remove();
+      if (isRecordingRef.current) {
+        AudioRecorderPlayer.stopRecorder().catch(() => {});
+        AudioRecorderPlayer.removeRecordBackListener();
+      }
     };
   }, []);
 
@@ -73,7 +82,7 @@ export const useChatPanelsState = () => {
       setIsRecording(true);
       await audioRecorderPlayer.startRecorder();
       audioRecorderPlayer.addRecordBackListener(() => {});
-    } catch (err) {
+    } catch {
       setIsRecording(false);
       // console.warn('[Mic] startRecorder failed:', err);
     }
@@ -98,7 +107,7 @@ export const useChatPanelsState = () => {
         setChatInput(text);
         await onChat();
       }
-    } catch (err) {
+    } catch {
       // console.warn('[Mic] stopRecorder failed:', err);
     } finally {
       setMicLoading(false);

@@ -162,9 +162,6 @@ export class TachoConnector {
   ): Promise<'ble'> {
     const connected = await device.bleDevice!.connect({ timeout: 10000 });
     await connected.discoverAllServicesAndCharacteristics();
-    // Log discovered services for UUID discovery
-    const services = await connected.services();
-    console.log('[TachoConnector] BLE services:', services.map(s => s.uuid));
     onStatus('connected', `Свързан с ${device.name} (BLE)`);
     return 'ble';
   }

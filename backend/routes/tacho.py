@@ -27,7 +27,9 @@ def tacho_live_update():
 @tacho_bp.post("/api/tacho/session")
 def tacho_save_session():
     body = _get_body()
-    email, secs, stype = (body.get("user_email") or "").strip(), int(body.get("driven_seconds") or 0), (body.get("type") or "driving").strip()
+    email = (body.get("user_email") or "").strip()
+    if not email: return jsonify({"ok": False, "error": "user_email required"}), 400
+    secs, stype = int(body.get("driven_seconds") or 0), (body.get("type") or "driving").strip()
     if secs <= 0: return jsonify({"ok": False, "error": "driven_seconds must be > 0"}), 400
     with get_db() as db:
         db.execute("INSERT INTO tacho_sessions (user_email, date, start_time, end_time, driven_seconds, type) VALUES (?,?,?,?,?,?)", (email, (body.get("date") or now_iso()[:10]).strip(), (body.get("start_time") or now_iso()).strip(), (body.get("end_time") or now_iso()).strip(), secs, stype))

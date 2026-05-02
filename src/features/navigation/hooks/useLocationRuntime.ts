@@ -6,8 +6,6 @@ import {
   fetchSpeedLimitAtPoint,
 } from '../api/tilequery';
 import {
-  fetchRoute,
-  adrToExclude,
   getSpeedLimitAtPosition,
   getCurrentStepIndex,
   type RouteResult,
@@ -46,21 +44,21 @@ export const useLocationRuntime = ({
   navigatingRef,
   routeRef,
   profileRef,
-  destinationRef,
-  destinationNameRef,
-  waypointsRef,
-  lastRerouteRef,
+  destinationRef: _destinationRef,
+  destinationNameRef: _destinationNameRef,
+  waypointsRef: _waypointsRef,
+  lastRerouteRef: _lastRerouteRef,
   stoppedSinceRef,
   lastRestrictionRef,
-  avoidUnpavedRef,
+  avoidUnpavedRef: _avoidUnpavedRef,
   setTunnelWarning,
   setSpeedLimit,
   setCurrentStep,
   setDistToTurn,
-  setNavPhase,
-  setRoute,
-  setNavCongestionGeoJSON,
-  setBackendOnline,
+  setNavPhase: _setNavPhase,
+  setRoute: _setRoute,
+  setNavCongestionGeoJSON: _setNavCongestionGeoJSON,
+  setBackendOnline: _setBackendOnline,
   navigating,
 }: UseLocationRuntimeProps) => {
   const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
@@ -72,10 +70,7 @@ export const useLocationRuntime = ({
   const lastRestrictionCoordsRef = useRef<[number, number] | null>(null);
   const lastSpeedLimitCoordsRef = useRef<[number, number] | null>(null);
   const smoothedHeadingRef = useRef<number | null>(null);
-
-  const isSimulatingRef = useRef(false);
-  const simIndexRef = useRef(0);
-  const simIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const headingHistoryRef = useRef<number[]>([]);
 
   useEffect(() => {
     userCoordsRef.current = userCoords;
@@ -101,7 +96,6 @@ export const useLocationRuntime = ({
       watchId = Geolocation.watchPosition(
         (pos) => {
           if (!isMountedRef.current) return;
-          if (isSimulatingRef.current) return;
           const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
           userCoordsRef.current = coords;
           setUserCoords(coords);
@@ -112,11 +106,23 @@ export const useLocationRuntime = ({
           setSpeed(Math.round(kmh));
           const hdg = pos.coords.heading ?? -1;
           if (hdg >= 0) {
-            // Exponential smoothing (α=0.3) — damps GPS heading jitter
-            smoothedHeadingRef.current = smoothedHeadingRef.current === null
-              ? hdg
-              : 0.3 * hdg + 0.7 * smoothedHeadingRef.current;
-            setUserHeading(Math.round(smoothedHeadingRef.current));
+            // 1. Outlier detection — use ref (not state) to avoid stale closure
+            const prev = smoothedHeadingRef.current;
+            if (prev !== null) {
+              const diff = Math.abs(((hdg - prev) + 360) % 360);
+              const angleDiff = diff > 180 ? 360 - diff : diff;
+              if (angleDiff > 150) return; // ignore GPS outlier
+            }
+            // 2. Circular rolling average (last 4) — handles 0°/360° wrap correctly
+            headingHistoryRef.current.push(hdg);
+            if (headingHistoryRef.current.length > 4) headingHistoryRef.current.shift();
+            const toRad = (d: number) => (d * Math.PI) / 180;
+            const sinSum = headingHistoryRef.current.reduce((s, h) => s + Math.sin(toRad(h)), 0);
+            const cosSum = headingHistoryRef.current.reduce((s, h) => s + Math.cos(toRad(h)), 0);
+            const avg = (Math.atan2(sinSum, cosSum) * 180) / Math.PI;
+            const circAvg = Math.round(avg < 0 ? avg + 360 : avg);
+            smoothedHeadingRef.current = circAvg;
+            setUserHeading(circAvg);
           }
           isDrivingRef.current = kmh > 3;
 
@@ -225,13 +231,11 @@ export const useLocationRuntime = ({
     userCoordsRef,
     setUserCoords,
     userHeading,
+    setUserHeading,
     gpsReady,
     setGpsReady,
     speed,
     setSpeed,
     isDrivingRef,
-    isSimulatingRef,
-    simIndexRef,
-    simIntervalRef,
   };
 };

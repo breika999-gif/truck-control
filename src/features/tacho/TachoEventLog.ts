@@ -126,8 +126,9 @@ export async function checkHosViolations(): Promise<HosViolation[]> {
 
   if (todayEvents.length === 0) return [];
 
-  // 1. Check continuous driving > 4h30min (270 min) without a break ≥15min
+  // 1. Check continuous driving > 4h30min (270 min) without a full 45min or split 15+30 break
   let continuousDrivingMin = 0;
+  let splitStarted = false;
   for (let i = 0; i < todayEvents.length; i++) {
     const e = todayEvents[i];
     const next = todayEvents[i + 1];
@@ -137,8 +138,17 @@ export async function checkHosViolations(): Promise<HosViolation[]> {
 
     if (e.activity === 3) { // DRIVING
       continuousDrivingMin += durationMin;
-    } else if (durationMin >= 15) { // break ≥ 15min resets counter
+    } else if (durationMin >= 45) {
+      // Full 45-min break — full reset
       continuousDrivingMin = 0;
+      splitStarted = false;
+    } else if (durationMin >= 30 && splitStarted) {
+      // Second part of split break (15+30) — full reset
+      continuousDrivingMin = 0;
+      splitStarted = false;
+    } else if (durationMin >= 15) {
+      // First part of split break — mark started, do NOT reset yet
+      splitStarted = true;
     }
   }
 

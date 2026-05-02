@@ -73,4 +73,4 @@ const FuelPanel: React.FC<FuelPanelProps> = ({ fuel, onClose, onAddWaypoint, top
   );
 };
 
-export default FuelPanel;
+export default React.memo(FuelPanel);

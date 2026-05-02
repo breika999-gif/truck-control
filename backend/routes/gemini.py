@@ -1,9 +1,9 @@
 import re
 import json
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 from google import genai as _google_genai
 from config import GEMINI_MODEL, _GEMINI_SYSTEM, ANTHROPIC_API_KEY
-from services.gemini_service import _gemini_client, _gemini_ready, _personal_gemini_clients
+from services.gemini_service import _gemini_client, _gemini_ready
 from services.gpt_service import _run_gpt4o_internal, _gpt4o_ready, _get_gpt_route_insight
 from services.tacho_service import _tacho_summary
 from utils.helpers import (
@@ -17,9 +17,12 @@ _TACHO_HINTS = ["тахограф", "остава", "стигам", "до кол
 gemini_bp = Blueprint('gemini', __name__)
 
 
-def _format_ctx_block(label: str, payload) -> str:
+def _format_ctx_block(label: str, payload, max_chars: int = 800) -> str:
     try:
-        return f" [{label}:{json.dumps(payload, ensure_ascii=False)}]"
+        s = json.dumps(payload, ensure_ascii=False)
+        if len(s) > max_chars:
+            s = s[:max_chars] + "…"
+        return f" [{label}:{s}]"
     except Exception:
         return ""
 
@@ -77,13 +80,19 @@ def gemini_chat():
         if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
         if context.get("tacho_log"):
-            ctx_note += _format_ctx_block("TACHO_LOG", context["tacho_log"])
+            tacho_log = context["tacho_log"]
+            if isinstance(tacho_log, list) and len(tacho_log) > 15:
+                tacho_log = tacho_log[-15:]
+            ctx_note += _format_ctx_block("TACHO_LOG", tacho_log)
 
         if context.get("tacho_week"):
             ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
 
         if context.get("user_memory"):
-            ctx_note += " [ПАМЕТ: " + "; ".join(context["user_memory"]) + "]"
+            mem = context["user_memory"]
+            if isinstance(mem, list) and len(mem) > 10:
+                mem = mem[-10:]
+            ctx_note += " [ПАМЕТ: " + "; ".join(mem) + "]"
         
         if context.get("driver_habits"):
             ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
@@ -142,15 +151,3 @@ def gemini_validate():
         msg = "Невалиден API ключ." if "API_KEY_INVALID" in err else "Квотата е изчерпана." if "429" in err else f"Грешка: {err[:120]}"
         return jsonify({"ok": False, "error": msg}), 400
 
-@gemini_bp.post("/api/gemini/transcribe")
-def gemini_transcribe():
-    if not _gemini_ready: from routes.misc import whisper_transcribe; return whisper_transcribe()
-    audio_file = request.files.get("audio")
-    if not audio_file: return jsonify({"ok": False, "error": "No audio file"}), 400
-    key = (request.form.get("user_api_key") or "").strip()
-    client = _personal_gemini_clients.get(key) or _google_genai.Client(api_key=key) if key else _gemini_client
-    if key and key not in _personal_gemini_clients: _personal_gemini_clients[key] = client
-    try:
-        resp = client.models.generate_content(model=GEMINI_MODEL, contents=[{"role": "user", "parts": [{"inline_data": {"data": audio_file.read(), "mime_type": audio_file.mimetype or "audio/m4a"}}, {"text": "Transcribe the following Bulgarian speech exactly. Return ONLY text."}]}], config={"temperature": 0.0})
-        return jsonify({"ok": bool(resp.text), "text": resp.text.strip()})
-    except: return jsonify({"ok": False, "error": "Transcription unavailable"}), 500

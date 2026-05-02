@@ -163,4 +163,4 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   );
 };
 
-export default ParkingBubble;
+export default React.memo(ParkingBubble);

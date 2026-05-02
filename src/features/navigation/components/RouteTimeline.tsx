@@ -28,7 +28,7 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   const totalKm = totalDistM / 1000;
   if (totalKm <= 0) return null;
 
-  // Filter POIs and calculate live km-remaining from user position
+  // Filter POIs ahead of user, calculate live km-remaining
   const pins = routeAheadPOIs
     .map(poi => {
       const remainingKm = userCoords
@@ -36,12 +36,18 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
         : poi.distKm;
       return { ...poi, remainingKm };
     })
-    .filter(p => p.remainingKm > 0 && p.distKm <= totalKm)
+    // Keep only POIs ahead (distKm > traveled) and within total route
+    .filter(p => p.remainingKm > 0 && p.distKm > 0 && p.distKm <= totalKm)
     .sort((a, b) => a.distKm - b.distKm);
 
-  // Progress: traveled portion (top = destination, bottom = origin)
-  const traveledKm = totalKm - (pins[0]?.remainingKm ?? totalKm);
-  const progressPct = Math.min(1, Math.max(0, traveledKm / totalKm));
+  // Progress: use nearest POI's route position vs its current distance to infer traveled km
+  // e.g. POI at distKm=80 is now 20km away → user is at ~60km
+  const progressPct = (() => {
+    if (!userCoords || pins.length === 0) return 0;
+    const nearest = pins[0];
+    const estimatedTraveledKm = nearest.distKm - nearest.remainingKm;
+    return Math.min(1, Math.max(0, estimatedTraveledKm / totalKm));
+  })();
 
   return (
     <View style={styles.container}>

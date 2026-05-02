@@ -45,7 +45,7 @@ export const ARROW_UTURN         = require('../../../shared/assets/maneuver/arro
 export const ARROW_ROUNDABOUT    = require('../../../shared/assets/maneuver/arrow_roundabout.png') as number;
 
 // ── Camera padding constants ──────────────────────────────────────────────────
-export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 280 };
+export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: 350, paddingBottom: 0 };
 export const ZERO_PADDING = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
 
 // ── App deep-link URL builders ────────────────────────────────────────────────
@@ -261,6 +261,13 @@ export function fmtHOS(drivenSeconds: number): string {
 
 /** Straight-line distance between two [lng, lat] points in metres (Haversine). */
 export function haversineMeters(a: [number, number], b: [number, number]): number {
+  if (
+    !a || !b ||
+    !Number.isFinite(a[0]) || !Number.isFinite(a[1]) ||
+    !Number.isFinite(b[0]) || !Number.isFinite(b[1])
+  ) {
+    return Infinity;
+  }
   const R = 6_371_000;
   const toRad = (d: number) => (d * Math.PI) / 180;
   const dLat = toRad(b[1] - a[1]);
@@ -420,6 +427,29 @@ export const StableCamera = React.memo(
       };
     }, [cameraRef]);
 
+    React.useEffect(() => {
+      if (!navigating || !mapLoaded || !isTracking || !userCoords) return;
+
+      nativeCameraRef.current?.setCamera({
+        centerCoordinate: userCoords,
+        zoomLevel: followZoomLevel,
+        pitch: followPitch,
+        heading: speed != null && speed > 3 ? (userHeading ?? 0) : 0,
+        padding: NAV_PADDING,
+        animationMode: 'easeTo',
+        animationDuration: 600,
+      });
+    }, [
+      followPitch,
+      followZoomLevel,
+      isTracking,
+      mapLoaded,
+      navigating,
+      speed,
+      userCoords,
+      userHeading,
+    ]);
+
     return (
       <Mapbox.Camera
         ref={nativeCameraRef}
@@ -428,10 +458,10 @@ export const StableCamera = React.memo(
           zoomLevel: MAP_CENTER.zoomLevel,
         }}
         followUserLocation={Boolean(navigating && mapLoaded && isTracking && userCoords)}
-        followUserMode={UserTrackingMode.FollowWithCourse}
+        followUserMode={speed != null && speed > 3 ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
         followZoomLevel={followZoomLevel}
         followPitch={followPitch}
-        followHeading={userHeading ?? 0}
+        followHeading={speed != null && speed > 3 ? (userHeading ?? 0) : undefined}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
         animationDuration={600}

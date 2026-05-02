@@ -12,8 +12,8 @@ import {
 const HANDLE_H = 92; // handle + infoRow + destName always visible when collapsed
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { EdgeInsets } from 'react-native-safe-area-context';
-import { styles, NEON } from '../screens/MapScreen.styles';
-import { colors, spacing } from '../../../shared/constants/theme';
+import { styles } from '../screens/MapScreen.styles';
+import { spacing } from '../../../shared/constants/theme';
 import {
   fmtDistance,
   fmtDuration,
@@ -39,7 +39,6 @@ interface NavigationHUDProps {
   onStop: () => void;
   onClose: () => void;
   drivingSeconds: number;
-  testLanesMode: boolean;
   insets: EdgeInsets;
   loadingRoute?: boolean;
   gpsReady?: boolean;
@@ -71,8 +70,8 @@ interface NavigationHUDProps {
 const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   navigating,
   route,
-  currentStep,
-  distToTurn,
+  currentStep: _currentStep,
+  distToTurn: _distToTurn,
   speed,
   speedLimit,
   remainingSeconds,
@@ -83,7 +82,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   drivingSeconds,
   insets,
   loadingRoute,
-  gpsReady,
+  gpsReady: _gpsReady,
   onStart,
   profile,
   dominantCongestion,
@@ -500,7 +499,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               <Text style={styles.startBtnText}>
                 {navigating
                   ? '🛑 Спри навигацията'
-                  : '🚀 Тръгваме!'}
+                  : '🚀 Тръгни'}
               </Text>
             </TouchableOpacity>
           </View>

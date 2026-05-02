@@ -13,7 +13,7 @@ import {
 import { haversineMeters } from '../utils/mapUtils';
 import type { NavPhase } from './useNavigationState';
 import { fetchCamerasAlongRoute } from '../../../shared/services/backendApi';
-import type { POICard } from '../../../shared/services/backendApi';
+import type { POICard, RouteOption } from '../../../shared/services/backendApi';
 
 export type Coords = [number, number];
 type RouteCameraSignature = { key: string; checkpoints: Coords[] };
@@ -44,6 +44,25 @@ function buildRouteCameraSignature(coords: Coords[]): RouteCameraSignature {
   return { key, checkpoints };
 }
 
+function routeOptionSignature(option: RouteOption): string {
+  const coords = option.geometry.coordinates as Coords[];
+  if (!coords.length) return `${Math.round(option.distance)}|${Math.round(option.duration)}`;
+  const first = coords[0];
+  const mid = coords[Math.floor(coords.length / 2)];
+  const last = coords[coords.length - 1];
+  const checkpoints = [first, mid, last]
+    .map(([lng, lat]) => `${lng.toFixed(3)},${lat.toFixed(3)}`)
+    .join('|');
+  return `${Math.round(option.distance / 1000)}|${Math.round(option.duration / 60)}|${checkpoints}`;
+}
+
+function sameRouteOption(a: RouteOption, b: RouteOption): boolean {
+  if (routeOptionSignature(a) === routeOptionSignature(b)) return true;
+  const distanceDelta = Math.abs(a.distance - b.distance);
+  const durationDelta = Math.abs(a.duration - b.duration);
+  return distanceDelta < 1000 && durationDelta < 120;
+}
+
 function hasSubstantialRouteChange(
   prev: RouteCameraSignature | null,
   next: RouteCameraSignature,
@@ -69,8 +88,6 @@ type UseRouteOrchestratorProps = {
   waypointNames: string[];
   buildRoutePOIScan: (r: RouteResult) => void;
   setCameraResults: (cameras: POICard[]) => void;
-  setParkingResults: (pois: POICard[]) => void;
-  setFuelResults: (pois: POICard[]) => void;
   setRoute: (route: RouteResult | null) => void;
   setNavPhase: (phase: NavPhase) => void;
   setCurrentStep: (step: number) => void;
@@ -87,7 +104,6 @@ type UseRouteOrchestratorProps = {
 export function useRouteOrchestrator({
   isMountedRef,
   navigatingRef,
-  routeRef,
   profileRef,
   userCoordsRef,
   cameraRef,
@@ -98,8 +114,6 @@ export function useRouteOrchestrator({
   waypointNames,
   buildRoutePOIScan,
   setCameraResults,
-  setParkingResults,
-  setFuelResults,
   setRoute,
   setNavPhase,
   setCurrentStep,
@@ -294,9 +308,9 @@ export function useRouteOrchestrator({
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)
       setNavCongestionGeoJSON(result?.congestionGeoJSON ?? null);
 
-      // Show alternatives in RouteOptionsPanel only during ROUTE_PREVIEW (not rerouting)
-      if (result?.alternatives?.length && !navigatingRef.current) {
-        const primary: import('../../../shared/services/backendApi').RouteOption = {
+      // Show RouteOptionsPanel during preview even when the backend returns only the primary route.
+      if (result && !navigatingRef.current) {
+        const primary: RouteOption = {
           label: 'Най-бърз',
           color: '#13BDFF',
           duration: result.duration,
@@ -306,7 +320,9 @@ export function useRouteOrchestrator({
           dest_coords: dest,
           congestion_geojson: result.congestionGeoJSON as any,
         };
-        setRouteOptions([primary, ...result.alternatives]);
+        const alternatives = (result.alternatives ?? [])
+          .filter(opt => !sameRouteOption(primary, opt));
+        setRouteOptions([primary, ...alternatives]);
         setRouteOptDest({ name: destinationNameRef.current, coords: dest, waypoints: waypointsArg });
       } else if (!navigatingRef.current) {
         setRouteOptions([]);
@@ -344,7 +360,7 @@ export function useRouteOrchestrator({
       } else {
         if (!navigatingRef.current) cameraRef.current?.animateToRegion({ latitude: dest[1], longitude: dest[0], latitudeDelta: 0.05, longitudeDelta: 0.05 }, 800);
       }
-    } catch (err) {
+    } catch {
       setBackendOnline(false);
       if (!navigatingRef.current) cameraRef.current?.animateToRegion({ latitude: dest[1], longitude: dest[0], latitudeDelta: 0.05, longitudeDelta: 0.05 }, 800);
     } finally {

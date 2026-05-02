@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { RouteResult } from '../api/directions';
-import { fetchElevationAtPoint, fetchNearbyParking, fetchNearbyFuel } from '../api/tilequery';
+import { fetchElevationAtPoint } from '../api/tilequery';
+import { fetchPOIsAlongRoute, type POICard } from '../../../shared/services/backendApi';
 import { weatherEmoji, haversineMeters } from '../utils/mapUtils';
 
 export interface RoutePOI {
@@ -9,6 +10,7 @@ export interface RoutePOI {
   distKm: number;
   lng: number;
   lat: number;
+  distFromUserKm?: number;
 }
 
 export interface WeatherPoint {
@@ -23,7 +25,28 @@ export interface RouteInsight {
   distKm: number;
 }
 
-export const useRouteInsights = (route: RouteResult | null, userCoords?: [number, number] | null) => {
+type RouteInsightsOptions = {
+  navigating?: boolean;
+  setParkingResults?: (pois: POICard[]) => void;
+  setFuelResults?: (pois: POICard[]) => void;
+};
+
+function dedupePOICards(cards: POICard[]): POICard[] {
+  const seen = new Set<string>();
+  return cards.filter(card => {
+    if (!Number.isFinite(card.lat) || !Number.isFinite(card.lng)) return false;
+    const key = `${card.name.toLowerCase()}|${card.lat.toFixed(4)}|${card.lng.toFixed(4)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export const useRouteInsights = (
+  route: RouteResult | null,
+  userCoords?: [number, number] | null,
+  options: RouteInsightsOptions = {},
+) => {
   const [elevProfile, setElevProfile] = useState<number[]>([]);
   const [weatherPoints, setWeatherPoints] = useState<WeatherPoint[]>([]);
   const [routeAheadPOIs, setRouteAheadPOIs] = useState<RoutePOI[]>([]);
@@ -31,7 +54,23 @@ export const useRouteInsights = (route: RouteResult | null, userCoords?: [number
 
   const elevAbortRef = useRef<AbortController | null>(null);
   const weatherAbortRef = useRef<AbortController | null>(null);
+  const poiAbortRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
+
+  // Refs for POI caching + refresh logic
+  const routeForPOIRef = useRef<RouteResult | null>(null);
+  const cumDistRef = useRef<number[]>([]);
+  const allPOIsRef = useRef<RoutePOI[]>([]);          // full cache — never re-fetch while it has data
+  const lastFilterCoordRef = useRef<[number, number] | null>(null);
+  const userCoordsRef = useRef(userCoords ?? null);
+  const navigatingRef = useRef(options.navigating ?? false);
+  const setParkingResultsRef = useRef(options.setParkingResults);
+  const setFuelResultsRef = useRef(options.setFuelResults);
+
+  useEffect(() => { userCoordsRef.current = userCoords ?? null; }, [userCoords]);
+  useEffect(() => { navigatingRef.current = options.navigating ?? false; }, [options.navigating]);
+  useEffect(() => { setParkingResultsRef.current = options.setParkingResults; }, [options.setParkingResults]);
+  useEffect(() => { setFuelResultsRef.current = options.setFuelResults; }, [options.setFuelResults]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -46,6 +85,10 @@ export const useRouteInsights = (route: RouteResult | null, userCoords?: [number
       setWeatherPoints([]);
       setRouteAheadPOIs([]);
       setHillWarnings([]);
+      allPOIsRef.current = [];
+      routeForPOIRef.current = null;
+      setParkingResultsRef.current?.([]);
+      setFuelResultsRef.current?.([]);
     }
   }, [route]);
 
@@ -131,45 +174,150 @@ export const useRouteInsights = (route: RouteResult | null, userCoords?: [number
     }
   }, []);
 
-  const buildRoutePOIScan = useCallback(async (r: RouteResult) => {
-    const coords = r.geometry.coordinates;
-    if (coords.length < 2) return;
+  const getUserProgressKm = useCallback((uPos: [number, number]) => {
+    const coords = routeForPOIRef.current?.geometry.coordinates as [number, number][] | undefined;
+    const cumDist = cumDistRef.current;
+    if (!coords?.length || !cumDist.length) return 0;
 
-    const cumDist: number[] = [0];
-    for (let i = 1; i < coords.length; i++) {
-      cumDist.push(cumDist[i - 1] + haversineMeters(coords[i - 1] as [number, number], coords[i] as [number, number]));
+    let nearestIdx = 0;
+    let nearestDistM = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const distM = haversineMeters(uPos, coords[i]);
+      if (distM < nearestDistM) {
+        nearestDistM = distM;
+        nearestIdx = i;
+      }
     }
-    const totalM = cumDist[cumDist.length - 1];
 
-    const fractions = [0.33, 0.66];
-    const sampleIdxs = fractions
-      .map((f) => {
-        const target = f * totalM;
-        return cumDist.findIndex((d) => d >= target);
-      })
-      .filter((i) => i > 0);
-
-    const results: RoutePOI[] = [];
-    await Promise.all(
-      sampleIdxs.map(async (idx) => {
-        const [lng, lat] = coords[idx] as [number, number];
-        const distFromStartKm = Math.round(cumDist[idx] / 1000);
-        const [parkings, fuels] = await Promise.all([
-          fetchNearbyParking(lng, lat, 3000),
-          fetchNearbyFuel(lng, lat, 3000),
-        ]);
-        for (const p of parkings.slice(0, 1)) {
-          results.push({ type: 'parking', name: p.name, distKm: distFromStartKm, lng: p.lng, lat: p.lat });
-        }
-        for (const f of fuels.slice(0, 1)) {
-          results.push({ type: 'fuel', name: f.name, distKm: distFromStartKm, lng: f.lng, lat: f.lat });
-        }
-      }),
-    );
-
-    results.sort((a, b) => a.distKm - b.distKm);
-    if (isMountedRef.current) setRouteAheadPOIs(results.slice(0, 6));
+    return (cumDist[nearestIdx] ?? 0) / 1000;
   }, []);
+
+  // Filter the cached allPOIsRef to the next 4 POIs ahead — zero network calls
+  const filterAndSetVisible = useCallback((uPos: [number, number]) => {
+    const progressKm = getUserProgressKm(uPos);
+    const ahead = allPOIsRef.current
+      .filter(p => p.distKm > progressKm)
+      .sort((a, b) => a.distKm - b.distKm)
+      .map(p => ({
+        ...p,
+        distFromUserKm: Math.round(p.distKm - progressKm),
+      }))
+      .slice(0, 4);
+    setRouteAheadPOIs(ahead);
+  }, [getUserProgressKm]);
+
+  // Fetch ALL POIs for the whole route at once and fill the cache
+  const executePOIFetch = useCallback(async (uPos: [number, number] | null) => {
+    const r = routeForPOIRef.current;
+    if (!r) return;
+
+    poiAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    poiAbortRef.current = ctrl;
+
+    const coords = r.geometry.coordinates as [number, number][];
+    const cumDist = cumDistRef.current;
+
+    const routeDistForPOI = (lng: number, lat: number): number => {
+      let minD = Infinity;
+      let minI = 0;
+      for (let i = 0; i < coords.length; i++) {
+        const d = haversineMeters([lng, lat], coords[i] as [number, number]);
+        if (d < minD) { minD = d; minI = i; }
+      }
+      return cumDist[minI] ?? 0;
+    };
+
+    try {
+      const [truckStops, fuels] = await Promise.all([
+        fetchPOIsAlongRoute(coords, 'truck_stop', ctrl.signal),
+        fetchPOIsAlongRoute(coords, 'fuel', ctrl.signal),
+      ]);
+
+      if (ctrl.signal.aborted || !isMountedRef.current) return;
+
+      setParkingResultsRef.current?.(dedupePOICards(truckStops).slice(0, 8));
+      setFuelResultsRef.current?.(dedupePOICards(fuels).slice(0, 8));
+
+      const all: RoutePOI[] = [
+        ...truckStops.map(p => ({
+          type: 'parking' as const,
+          name: p.name || 'Паркинг',
+          distKm: Math.round(routeDistForPOI(p.lng, p.lat) / 1000),
+          lng: p.lng,
+          lat: p.lat,
+        })),
+        ...fuels.map(p => ({
+          type: 'fuel' as const,
+          name: p.name || 'Гориво',
+          distKm: Math.round((p.distance_m != null ? p.distance_m : routeDistForPOI(p.lng, p.lat)) / 1000),
+          lng: p.lng,
+          lat: p.lat,
+        })),
+      ];
+
+      // Store full cache — re-fetches only happen when cache runs dry
+      allPOIsRef.current = all;
+
+      if (uPos) {
+        filterAndSetVisible(uPos);
+      } else {
+        // No user position yet — show all sorted by route distance
+        setRouteAheadPOIs(all.sort((a, b) => a.distKm - b.distKm).slice(0, 4));
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') return;
+    }
+  }, [filterAndSetVisible]);
+
+  const buildRoutePOIScan = useCallback((r: RouteResult) => {
+    routeForPOIRef.current = r;
+    const reuseNavigationCache = navigatingRef.current && allPOIsRef.current.length > 0;
+    if (!reuseNavigationCache) {
+      allPOIsRef.current = []; // clear stale cache from previous route
+    }
+
+    const coords = r.geometry.coordinates as [number, number][];
+    const cum: number[] = [0];
+    for (let i = 1; i < coords.length; i++) {
+      cum.push(cum[i - 1] + haversineMeters(coords[i - 1] as [number, number], coords[i] as [number, number]));
+    }
+    cumDistRef.current = cum;
+
+    const uPos = userCoordsRef.current;
+    lastFilterCoordRef.current = uPos;
+    if (reuseNavigationCache) {
+      if (uPos) filterAndSetVisible(uPos);
+      return;
+    }
+    void executePOIFetch(uPos); // one fetch for the whole route
+  }, [executePOIFetch, filterAndSetVisible]);
+
+  // Update visible POIs from cache as driver moves — no network calls
+  useEffect(() => {
+    if (!userCoords || !routeForPOIRef.current) return;
+
+    const movedM = lastFilterCoordRef.current
+      ? haversineMeters(lastFilterCoordRef.current, userCoords)
+      : Infinity;
+
+    if (movedM < 2000) return; // update UI every 2km
+    lastFilterCoordRef.current = userCoords;
+
+    // POI is "ahead" if it is further along the route than the user
+    const progressKm = getUserProgressKm(userCoords);
+    const aheadInCache = allPOIsRef.current.filter(
+      p => p.distKm > progressKm,
+    ).length;
+
+    if (aheadInCache > 0) {
+      // Cache still has POIs — just filter, zero network
+      filterAndSetVisible(userCoords);
+    } else {
+      // Cache exhausted — fetch a fresh batch for remaining route
+      void executePOIFetch(userCoords);
+    }
+  }, [userCoords, filterAndSetVisible, executePOIFetch]);
 
   return {
     elevProfile,

@@ -2036,43 +2036,6 @@ export const styles = StyleSheet.create({
     shadowOpacity: 1,
     shadowRadius: 4,
   },
-  // ── Visual Debug Overlay ──────────────────────────────────────────────────
-  debugOverlay: {
-    position: 'absolute',
-    left: spacing.md,
-    backgroundColor: 'rgba(0,4,12,0.92)',
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#ffaa00',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    zIndex: 25,
-    minWidth: 190,
-    shadowColor: '#ffaa00',
-    shadowOpacity: 0.7,
-    shadowRadius: 8,
-    elevation: 20,
-  },
-  debugTitle: {
-    color: '#ffaa00',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-    marginBottom: 5,
-  },
-  debugRow: { color: '#e0e8ff', fontSize: 11, fontWeight: '600', marginBottom: 2 },
-  debugLaneTestBtn: {
-    marginTop: 6, paddingHorizontal: 10, paddingVertical: 5,
-    borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(0,191,255,0.5)',
-    backgroundColor: 'rgba(0,191,255,0.08)',
-  },
-  debugLaneTestBtnOn: {
-    borderColor: NEON,
-    backgroundColor: 'rgba(0,191,255,0.30)',
-    shadowColor: NEON, shadowOpacity: 0.8, shadowRadius: 6, elevation: 6,
-  },
-  debugLaneTestTxt: { color: NEON, fontSize: 11, fontWeight: '800' },
-
   // ── Live Speedometer Ring (replaces speedBox) ─────────────────────────────
   speedRing: {
     width: 92,

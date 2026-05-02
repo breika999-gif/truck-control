@@ -24,38 +24,57 @@ def _distance_to_polyline_m(point: list, coords: list) -> float:
         best = min(best, _point_to_segment_distance_m(point, coords[idx], coords[idx + 1]))
     return best
 
-def _transparking_along_route(coords: list, max_results: int = 6) -> list:
+def _transparking_along_route(coords: list, max_results: int = 20) -> list:
     """Find TransParking truck stops along a route using our local DB."""
     if not coords or len(coords) < 2:
         return []
 
-    # Sample 3 points at 25%, 50%, 75% of route
-    n = len(coords)
-    sample_idxs = [n // 4, n // 2, (3 * n) // 4]
-    sample_pts = list({i: coords[i] for i in sample_idxs}.values())
+    cum = [0.0]
+    for i in range(1, len(coords)):
+        dx = coords[i][0] - coords[i - 1][0]
+        dy = coords[i][1] - coords[i - 1][1]
+        cum.append(cum[-1] + math.sqrt(dx * dx + dy * dy) * 111000)
+
+    STEP_M = 25_000
+    MAX_POINTS = 20
+
+    sample_idxs = []
+    next_target = STEP_M
+    for i, d in enumerate(cum):
+        if d >= next_target:
+            sample_idxs.append(i)
+            next_target += STEP_M
+            if len(sample_idxs) >= MAX_POINTS:
+                break
+
+    if not sample_idxs:
+        sample_idxs = [len(coords) // 2]
 
     PAD = 0.09  # ~10 km
     seen, results = set(), []
 
     with get_db() as db:
-        for pt in sample_pts:
-            lng, lat = pt[0], pt[1]
+        for idx in sample_idxs:
+            lng, lat = coords[idx][0], coords[idx][1]
+            # NOTE: transparking_cache schema has lat/lng columns swapped —
+            # the column named "lat" stores longitude values and vice versa.
             rows = db.execute(
                 "SELECT pointid, name, lat, lng FROM transparking_cache "
                 "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 20",
-                (lat - PAD, lat + PAD, lng - PAD, lng + PAD)
+                (lng - PAD, lng + PAD, lat - PAD, lat + PAD)
             ).fetchall()
             for r in rows:
                 if r["pointid"] in seen:
                     continue
                 seen.add(r["pointid"])
-                dist_m = int(math.sqrt((r["lat"] - lat)**2 + (r["lng"] - lng)**2) * 111000)
-                # Estimate travel time based on distance (assuming average 80km/h = 22.2 m/s)
+                # Swap back: real_lat = r["lng"], real_lng = r["lat"]
+                real_lat, real_lng = r["lng"], r["lat"]
+                dist_m = int(math.sqrt((real_lat - lat)**2 + (real_lng - lng)**2) * 111000)
                 travel_s = int(dist_m / 22.2)
                 results.append({
                     "name": r["name"],
-                    "lat": r["lat"],
-                    "lng": r["lng"],
+                    "lat": real_lat,
+                    "lng": real_lng,
                     "distance_m": dist_m,
                     "travel_time": travel_s,
                     "transparking_id": r["pointid"],
@@ -75,11 +94,13 @@ def list_pois():
     email = (request.args.get("user_email") or "").strip()
     if not email: return jsonify({"error": "user_email required"}), 400
     cat = request.args.get("category")
+    limit = min(max(request.args.get("limit", default=100, type=int) or 100, 1), 500)
+    offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
     with get_db() as conn:
         if cat:
-            rows = conn.execute("SELECT * FROM pois WHERE category=? AND user_email=? ORDER BY created_at DESC", (cat, email)).fetchall()
+            rows = conn.execute("SELECT * FROM pois WHERE category=? AND user_email=? ORDER BY created_at DESC LIMIT ? OFFSET ?", (cat, email, limit, offset)).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM pois WHERE user_email=? ORDER BY created_at DESC", (email,)).fetchall()
+            rows = conn.execute("SELECT * FROM pois WHERE user_email=? ORDER BY created_at DESC LIMIT ? OFFSET ?", (email, limit, offset)).fetchall()
     return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
 
 @poi_bp.post("/api/pois")
@@ -110,8 +131,9 @@ def get_parking_bbox():
         sw_lat, sw_lng = float(request.args.get("swLat")), float(request.args.get("swLng"))
         ne_lat, ne_lng = float(request.args.get("neLat")), float(request.args.get("neLng"))
         with get_db() as db:
-            rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lat, ne_lat, sw_lng, ne_lng)).fetchall()
-            features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lng"], r["lat"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"}} for r in rows]
+            # lat/lng columns are swapped in schema: "lat" holds lng values, "lng" holds lat values
+            rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lng, ne_lng, sw_lat, ne_lat)).fetchall()
+            features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lat"], r["lng"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"}} for r in rows]
             return jsonify({"type": "FeatureCollection", "features": features})
     except: return jsonify({"error": "invalid params"}), 400
 
@@ -121,9 +143,9 @@ def poi_along_route_v2():
     coords, category = data.get("coords", []), data.get("category", "truck_stop")
     if not coords or len(coords) < 2: return jsonify({"pois": []})
     if category == "truck_stop":
-        results = _transparking_along_route(coords)
+        results = _transparking_along_route(coords, max_results=20)
     else:
-        results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=10)
+        results = _tomtom_along_route(coords, "gas station", max_detour_s=900, limit=25)
         for r in results:
             r["category"] = category
     return jsonify({"pois": results})
@@ -131,9 +153,16 @@ def poi_along_route_v2():
 @poi_bp.post("/api/cameras-along-route")
 def cameras_along_route_v2():
     coords = _get_body().get("coords", [])
-    if not coords or len(coords) < 2: return jsonify({"cameras": []})
+    if not coords or not isinstance(coords, list) or len(coords) < 2:
+        return jsonify({"ok": False, "error": "Invalid coords"}), 400
+    MAX_COORDS = 80
+    if len(coords) > MAX_COORDS:
+        step = len(coords) / MAX_COORDS
+        coords = [coords[int(i * step)] for i in range(MAX_COORDS)]
     SEG_SIZE, seen_ids, cameras, pad = 150, set(), [], 0.008
+    MAX_SEGMENTS = 10
     segments = [coords[i:i+SEG_SIZE] for i in range(0, len(coords), SEG_SIZE)]
+    segments = segments[:MAX_SEGMENTS]
     for i, seg in enumerate(segments):
         work_seg = (segments[i-1][-20:] + seg) if i > 0 else seg
         lats, lngs = [c[1] for c in work_seg], [c[0] for c in work_seg]
@@ -163,7 +192,7 @@ def cameras_along_route_v2():
 @poi_bp.get("/api/proximity-alerts")
 def proximity_alerts():
     lat, lng = request.args.get("lat", type=float), request.args.get("lng", type=float)
-    rad = request.args.get("radius_m", default=10000, type=int)
+    rad = min(max(request.args.get("radius_m", default=5000, type=int) or 5000, 0), 15000)
     if lat is None or lng is None: return jsonify({"ok": False}), 400
     cams = _tool_find_speed_cameras(lat, lng, rad)
     ovt = _tool_find_overtaking_restrictions(lat, lng, rad)

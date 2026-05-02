@@ -112,4 +112,4 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
   );
 };
 
-export default TachoResultCard;
+export default React.memo(TachoResultCard);

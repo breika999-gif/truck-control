@@ -482,11 +482,15 @@ export async function listStarred(userEmail?: string): Promise<SavedPOI[]> {
 // ── TachoEngine v2 — EU HOS 561/2006 ─────────────────────────────────────────
 
 /** Save a completed driving session and get updated daily/weekly summary. */
-export async function saveTachoSession(session: TachoSessionPayload): Promise<TachoSummary | null> {
+export async function saveTachoSession(
+  session: TachoSessionPayload,
+  signal?: AbortSignal,
+): Promise<TachoSummary | null> {
   try {
     const res = await apiRequest<TachoSummary>('/api/tacho/session', {
       method: 'POST',
       body: JSON.stringify(session),
+      signal,
     });
     return res.ok ? res : null;
   } catch {
@@ -563,12 +567,21 @@ export async function fetchPOIsAlongRoute(
   category: 'truck_stop' | 'fuel',
   signal?: AbortSignal,
 ): Promise<POICard[]> {
+  // Pre-sample to max 400 points — backend samples again, but this keeps payload small
+  const MAX_SEND = 400;
+  const sampled: [number, number][] = coords.length <= MAX_SEND
+    ? coords
+    : [
+        coords[0],
+        ...coords.slice(1, -1).filter((_, i) => i % Math.ceil((coords.length - 2) / (MAX_SEND - 2)) === 0),
+        coords[coords.length - 1],
+      ];
   try {
     const { BACKEND_URL } = await import('../constants/config');
     const res = await fetch(`${BACKEND_URL}/api/poi-along-route`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coords, category }),
+      body: JSON.stringify({ coords: sampled, category }),
       signal,
     });
     const data = await res.json();

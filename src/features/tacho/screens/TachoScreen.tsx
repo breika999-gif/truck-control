@@ -6,13 +6,10 @@ import {
   TouchableOpacity,
   ScrollView,
   StatusBar,
-  Dimensions,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTachoBluetooth } from '../hooks/useTachoBluetooth';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
-
-const { width } = Dimensions.get('window');
 
 const TachoScreen: React.FC = () => {
   const {
@@ -141,7 +138,7 @@ const TachoScreen: React.FC = () => {
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
       
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Тахограф 📡</Text>
+        <Text style={styles.headerTitle}>Тахограф</Text>
         <Text style={styles.headerSubtitle}>VDO DTCO 4.1 / Smart 2</Text>
       </View>
 

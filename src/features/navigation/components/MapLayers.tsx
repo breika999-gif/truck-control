@@ -3,16 +3,14 @@ import { View, Text } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import type * as GeoJSON from 'geojson';
 import { RouteResult } from '../api/directions';
-import { RouteOption, POICard } from '../../../shared/services/backendApi';
+import { RouteOption, POICard, SavedPOI } from '../../../shared/services/backendApi';
 import { TruckPOI, POI_META } from '../api/poi';
+import { MapLayersConfig } from '../hooks/useMapUIState';
 
 interface MapLayersProps {
   mapIsLoaded: boolean;
   mapMode: string;
-  showTraffic: boolean;
-  showIncidents: boolean;
-  showRestrictions: boolean;
-  showStarredLayer: boolean;
+  mapLayers: MapLayersConfig;
   navigating: boolean;
   trafficKey: number;
   lightMode: boolean;
@@ -22,48 +20,32 @@ interface MapLayersProps {
   routeLineColor: string;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
-  starGeoJSON: GeoJSON.FeatureCollection;
-  starredPOIs: any[];
   customOriginRef: React.MutableRefObject<[number, number] | null>;
   userCoords: [number, number] | null;
   destination: [number, number] | null;
   parkingResults: POICard[];
   fuelResults: POICard[];
+  starredPOIs: SavedPOI[];
   businessResults: any[];
   cameraResults: any[];
-  cameraGeoJSON: GeoJSON.FeatureCollection;
   overtakingResults: any[]; 
-  overtakingGeoJSON: GeoJSON.FeatureCollection;
   navCongestionVisible: GeoJSON.FeatureCollection | null;
   routeOptions: RouteOption[];
   selectedRouteIdx: number | null;
-  navigateTo: (coords: [number, number], name: string) => void;
   setSelectedParking: (p: POICard) => void;
   setSelectedFuel: (f: POICard) => void;
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
   restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'; value: string }>;
-  currentStep?: number;
-  drivingSeconds?: number;
-  hosLimitS?: number;
   poiResults?: TruckPOI[];
-  poiResultsGeoJSON?: GeoJSON.FeatureCollection;
   handlePOINavigate?: (poi: TruckPOI) => void;
 }
-
-const NEON = '#13BDFF';
-const SAFE_GREEN = '#4CAF50';
-const WARN_YELLOW = '#FFC107';
-const DANGER_RED = '#F44336';
 
 const MapLayers: React.FC<MapLayersProps> = ({
   mapIsLoaded,
   mapMode,
-  showTraffic,
-  showIncidents,
-  showRestrictions,
-  showStarredLayer,
+  mapLayers,
   navigating,
   trafficKey,
   lightMode,
@@ -73,35 +55,29 @@ const MapLayers: React.FC<MapLayersProps> = ({
   routeLineColor,
   exitsGeoJSON,
   navTrafficAlerts,
-  starGeoJSON,
-  starredPOIs,
   customOriginRef,
   userCoords,
   destination,
   parkingResults,
   fuelResults,
+  starredPOIs,
   businessResults,
   cameraResults,
-  cameraGeoJSON,
   overtakingResults,
-  overtakingGeoJSON,
   navCongestionVisible,
   routeOptions,
   selectedRouteIdx,
-  navigateTo,
   setSelectedParking,
   setSelectedFuel,
   handleSelectRouteOption,
   ttsSpeak,
   voiceMutedRef,
   restrictionPoints = [],
-  currentStep = 0,
-  drivingSeconds = 0,
-  hosLimitS = 16200,
   poiResults = [],
-  poiResultsGeoJSON,
   handlePOINavigate,
 }) => {
+
+  const { traffic: showTraffic } = mapLayers;
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
@@ -112,47 +88,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
       properties: { value: rp.value, type: rp.type },
     })),
   }), [restrictionPoints]);
-
-  const fuelGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: fuelResults.filter(f => f.lat && f.lng).map((f, i) => ({
-      type: 'Feature',
-      id: i,
-      geometry: { type: 'Point', coordinates: [f.lng, f.lat] },
-      properties: { index: i, name: f.name, distance_m: f.distance_m },
-    })),
-  }), [fuelResults]);
-
-  const parkingGeoJSON_withIdx = React.useMemo<GeoJSON.FeatureCollection>(() => {
-    const remainingS = hosLimitS - drivingSeconds;
-    
-    return {
-      type: 'FeatureCollection',
-      features: parkingResults.filter(p => p.lat && p.lng).map((p, i) => {
-        let tachoStatus = 'safe';
-        if (p.travel_time) {
-          const bufferS = 900; // 15 min buffer
-          if (p.travel_time > remainingS) {
-            tachoStatus = 'danger';
-          } else if (p.travel_time > (remainingS - bufferS)) {
-            tachoStatus = 'warning';
-          }
-        }
-
-        return {
-          type: 'Feature',
-          id: i,
-          geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
-          properties: { 
-            index: i, 
-            name: p.name, 
-            distance_m: p.distance_m,
-            tachoStatus 
-          },
-        };
-      }),
-    };
-  }, [parkingResults, drivingSeconds, hosLimitS]);
 
   const originCoords = customOriginRef.current ?? userCoords;
 
@@ -271,10 +206,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
       )}
 
       {/* ── Incidents overlay ── */}
-      {mapIsLoaded && showIncidents && mapMode !== 'satellite' && (
+      {mapIsLoaded && mapMode !== 'satellite' && (
         <Mapbox.VectorSource id="incidents-v1" url="mapbox://mapbox.mapbox-traffic-v1">
           <Mapbox.SymbolLayer
             id="incident-signs-point"
+            slot="top"
             sourceLayerID="incidents"
             filter={['==', ['geometry-type'], 'Point']}
             minZoomLevel={7}
@@ -290,6 +226,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           />
           <Mapbox.SymbolLayer
             id="incident-signs-line"
+            slot="top"
             sourceLayerID="incidents"
             filter={['==', ['geometry-type'], 'LineString']}
             minZoomLevel={7}
@@ -306,6 +243,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           />
           <Mapbox.LineLayer
             id="incident-lines"
+            slot="top"
             sourceLayerID="incidents"
             filter={['==', ['geometry-type'], 'LineString']}
             style={{ lineColor: '#e74c3c', lineWidth: 6, lineOpacity: 1.0, lineCap: 'butt', lineDasharray: [2, 2] }}
@@ -314,10 +252,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
       )}
 
       {/* ── Truck restrictions ── */}
-      {mapIsLoaded && mapMode !== 'satellite' && (showRestrictions || navigating) && (
+      {mapIsLoaded && mapMode !== 'satellite' && (
         <Mapbox.VectorSource id="streets-v8" url="mapbox://mapbox.mapbox-streets-v8">
           <Mapbox.LineLayer
             id="truck-bridge-warning"
+            slot="middle"
+            aboveLayerID="route-line"
             sourceLayerID="road"
             filter={['==', ['get', 'structure'], 'bridge']}
             minZoomLevel={10}
@@ -325,6 +265,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
           />
           <Mapbox.LineLayer
             id="truck-tunnel-warning"
+            slot="middle"
+            aboveLayerID="route-line"
             sourceLayerID="road"
             filter={['==', ['get', 'structure'], 'tunnel']}
             minZoomLevel={10}
@@ -384,7 +326,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         <Mapbox.ShapeSource id="route-arrows-source" shape={{ type: 'Feature', properties: {}, geometry: route.geometry }}>
           <Mapbox.SymbolLayer
             id="route-direction-arrows"
-            slot="top"
+            slot="middle"
             style={{
               symbolPlacement: 'line', symbolSpacing: 80, textField: '▲', textSize: 14,
               textColor: 'rgba(255,255,255,0.85)', textHaloColor: 'rgba(0,0,0,0.30)', textHaloWidth: 1,
@@ -442,7 +384,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             slot="top"
             style={{
               iconImage: 'dest-flag',
-              iconSize: 0.6,
+              iconSize: 0.34,
               iconAnchor: 'bottom',
               iconAllowOverlap: true,
               iconIgnorePlacement: true,
@@ -544,6 +486,28 @@ const MapLayers: React.FC<MapLayersProps> = ({
             elevation: 5,
           }}>
             <Text style={{ fontSize: 16 }}>⛽</Text>
+          </View>
+        </Mapbox.PointAnnotation>
+      ))}
+
+      {/* Starred Places */}
+      {mapIsLoaded && starredPOIs.filter(p => p.lat && p.lng).map((p, i) => (
+        <Mapbox.PointAnnotation
+          key={`star-pin-${i}`}
+          id={`star-pin-${i}`}
+          coordinate={[p.lng, p.lat]}
+        >
+          <View style={{
+            width: 32, height: 32,
+            borderRadius: 16,
+            backgroundColor: '#1a1a2e',
+            borderWidth: 2,
+            borderColor: '#FFD700',
+            alignItems: 'center',
+            justifyContent: 'center',
+            elevation: 4,
+          }}>
+            <Text style={{ fontSize: 16 }}>⭐</Text>
           </View>
         </Mapbox.PointAnnotation>
       ))}

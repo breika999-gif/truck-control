@@ -1,30 +1,18 @@
 import os, sys, json, re, requests, time as _cache_time
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import (
-    OPENAI_API_KEY, TOMTOM_API_KEY, _ORCHESTRATOR_SYSTEM, _SYNTHESIZER_SYSTEM,
-    ANTHROPIC_API_KEY
-)
+from config import TOMTOM_API_KEY
 from database import get_db, row_to_poi, DB_PATH
-from utils.helpers import _is_rate_limited, _get_body, now_iso, _strip_md_fence
+from utils.helpers import _is_rate_limited, _get_body, now_iso
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
     _adr_to_tunnel_code, _mapbox_match_geometry
 )
-from services.gemini_service import _run_gemini_worker, _gemini_ready
+from services.gemini_service import _gemini_ready
 from services.gpt_service import _gpt4o_ready, client
 
 misc_bp = Blueprint('misc', __name__)
-
-try:
-    import anthropic as _anthropic_lib
-    _anthropic_client = _anthropic_lib.Anthropic(api_key=ANTHROPIC_API_KEY)
-    _anthropic_ready = bool(ANTHROPIC_API_KEY)
-except:
-    _anthropic_client = None
-    _anthropic_ready = False
 
 from collections import OrderedDict
 
@@ -71,33 +59,6 @@ def google_sync():
                 count += 1
         conn.commit()
     return jsonify({"ok": True, "imported": count})
-
-@misc_bp.route("/api/orchestrate", methods=["POST"])
-def orchestrate():
-    if not _anthropic_ready or not _gemini_ready: return jsonify({"ok": False, "error": "APIs not ready"}), 503
-    if _is_rate_limited(limit=10, window_s=60): return jsonify({"ok": False, "error": "Rate limited"}), 429
-    user_msg = (_get_body().get("message") or "").strip()
-    if not user_msg: return jsonify({"ok": False, "error": "Empty message"}), 400
-    try:
-        orch_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_ORCHESTRATOR_SYSTEM, messages=[{"role": "user", "content": user_msg}], timeout=30)
-        if not orch_resp.content: return jsonify({"ok": False, "error": "Empty orchestrator response"}), 500
-        tasks = json.loads(_strip_md_fence(orch_resp.content[0].text.strip()))[:3]
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
-    if not tasks: return jsonify({"ok": False, "error": "No tasks returned by orchestrator"}), 500
-    worker_results = [""] * len(tasks)
-    with ThreadPoolExecutor(max_workers=max(1, len(tasks))) as pool:
-        futures = {pool.submit(_run_gemini_worker, t.get("task", ""), t.get("context", "")): i for i, t in enumerate(tasks)}
-        for future in as_completed(futures): worker_results[futures[future]] = future.result()
-    synthesis_prompt = f"Оригинална заявка: {user_msg}\n\n" + "\n\n".join(f"Подзадача {i+1} ({tasks[i].get('task', '')}):\n{res}" for i, res in enumerate(worker_results))
-    try:
-        synth_resp = _anthropic_client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=512, system=_SYNTHESIZER_SYSTEM, messages=[{"role": "user", "content": synthesis_prompt}])
-        if not synth_resp.content: return jsonify({"ok": False, "error": "Empty synthesizer response"}), 500
-        return jsonify({"ok": True, "answer": synth_resp.content[0].text.strip(), "tasks": [{"task": t.get("task", ""), "result": worker_results[i]} for i, t in enumerate(tasks)]})
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
 
 @misc_bp.route("/api/truck-bans/cache", methods=["DELETE", "POST"])
 def clear_truck_bans_cache():
@@ -335,20 +296,35 @@ def calculate_route():
         routes = r.json().get("routes", [])
         if not routes: return jsonify({"error": "Няма маршрут"}), 404
         rt, summary = routes[0], routes[0].get("summary", {})
+        total_m = summary.get("lengthInMeters", 0)
         raw_geom = _tomtom_route_to_geojson(rt)
-        geom, snapped_primary = _mapbox_match_geometry(raw_geom)
+        geom, snapped_primary = _mapbox_match_geometry(raw_geom) if total_m < 150_000 else (raw_geom, False)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
-        total_m, steps = summary.get("lengthInMeters", 0), []
+        steps = []
         for i, instr in enumerate(instructions):
             nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
             steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
+
+        # If Mapbox matching refuses the geometry (common when TomTom returns many points),
+        # restore the short-route Google polyline fallback that keeps urban routes snapped.
+        if not snapped_primary and total_m < 150_000:
+            wps = _sample_tomtom_waypoints(instructions)
+            google_coords = _google_directions_polyline(origin, destination, wps)
+            if google_coords:
+                geom = {"type": "LineString", "coordinates": google_coords}
+                snapped_primary = True
+
         alt_routes = routes[1:3]
         alternatives = []
         for idx, ar in enumerate(alt_routes):
             alt_summary = ar.get("summary", {})
             raw_alt_geom = _tomtom_route_to_geojson(ar)
-            alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom)
+            alt_geom, snapped_alt = (
+                _mapbox_match_geometry(raw_alt_geom)
+                if alt_summary.get("lengthInMeters", 0) < 150_000
+                else (raw_alt_geom, False)
+            )
             alt_congestion = (
                 _simple_congestion_geojson(alt_geom, alt_summary.get("trafficDelayInSeconds", 0))
                 if snapped_alt else
@@ -373,7 +349,7 @@ def calculate_route():
             _tomtom_congestion_geojson(rt, raw_geom)
         )
         traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
-        restrictions = _extract_route_restrictions(geom)
+        restrictions = [] if total_m > 100000 else _extract_route_restrictions(geom)
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)

@@ -67,6 +67,9 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
         system_txt += f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h. Truck Profile: {prof.get('height_m', 4.0)}m height, {prof.get('weight_t', 18)}t weight, {prof.get('width_m', 2.55)}m width, {prof.get('length_m', 12)}m length, {prof.get('axle_count', 3)} axles, hazmat={prof.get('hazmat_class', 'none')}."
 
     messages = [{"role": "system", "content": system_txt}]
+    MAX_HISTORY = 12
+    if len(history) > MAX_HISTORY:
+        history = history[-MAX_HISTORY:]
     for h in history: messages.append({"role": "assistant" if h.get("role") == "model" else "user", "content": h.get("text", "")})
     messages.append({"role": "user", "content": user_msg})
 

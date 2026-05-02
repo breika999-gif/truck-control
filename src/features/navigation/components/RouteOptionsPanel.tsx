@@ -23,7 +23,7 @@ interface RouteOptionsPanelProps {
 const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   routeOptions,
   selectedRouteIdx,
-  routeOptDest,
+  routeOptDest: _routeOptDest,
   restrictionChecking,
   restrictionWarnings,
   insets,
@@ -31,6 +31,8 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   onDismiss,
   onStart,
 }) => {
+  const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+
   return (
     <View style={[styles.routeOptionsPanel, { bottom: insets.bottom + 16 }]}>
       {/* Liquid Glass top highlight line */}
@@ -52,7 +54,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
         contentContainerStyle={styles.routeOptionsContent}
       >
         {routeOptions.map((opt, i) => {
-          const isSelected = selectedRouteIdx === i;
+          const isSelected = effectiveSelectedRouteIdx === i;
           const trafficEmoji =
             opt.traffic === 'heavy' ? '🔴' : opt.traffic === 'moderate' ? '🟡' : opt.traffic === 'low' ? '🟢' : null;
           const minDur = Math.min(...routeOptions.map(o => o.duration));
@@ -90,7 +92,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
       </ScrollView>
 
       {/* Restrictions + Start button */}
-      {selectedRouteIdx !== null && (
+      {effectiveSelectedRouteIdx !== null && (
         <View style={styles.routeSelectedSummary}>
           {restrictionChecking && (
             <ActivityIndicator size="small" color={NEON} style={{ alignSelf: 'center' }} />
@@ -101,7 +103,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
           
           {/* Traffic delay calculation for the badge */}
           {(() => {
-            const selOpt = routeOptions[selectedRouteIdx];
+            const selOpt = routeOptions[effectiveSelectedRouteIdx];
             const totalDelay = selOpt?.traffic_alerts?.reduce((acc, a) => acc + (a.delay_min || 0), 0) || 0;
             
             return (
@@ -113,7 +115,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                     onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts);
                   }}
                 >
-                  <Text style={styles.routeStartBtnTxt}>🚀 Старт</Text>
+                  <Text style={styles.routeStartBtnTxt}>🚀 Тръгни</Text>
                 </TouchableOpacity>
                 
                 {totalDelay > 0 && (

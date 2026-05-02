@@ -1,6 +1,8 @@
 import type GeoJSON from 'geojson';
 import { BACKEND_URL } from '../../../shared/constants/config';
 
+const ROUTE_FETCH_TIMEOUT_MS = 60000;
+
 export interface MaxspeedEntry {
   speed?: number;
   unit?: 'km/h' | 'mph';
@@ -157,7 +159,7 @@ export async function fetchRoute(
   optimizeWaypoints: boolean = false,
 ): Promise<RouteResult | null> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), ROUTE_FETCH_TIMEOUT_MS);
 
   if (signal) {
     if (signal.aborted) {
@@ -183,7 +185,6 @@ export async function fetchRoute(
         optimize: optimizeWaypoints,
       }),
     });
-    clearTimeout(timeoutId);
     if (!res.ok) return null;
     const data = await res.json();
     if (data.error) return null;
@@ -216,6 +217,8 @@ export async function fetchRoute(
     };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -275,7 +278,7 @@ function fmtDistBg(m: number): string {
  */
 export function bgInstruction(step: RouteStep): string {
   const { type, modifier } = step.maneuver;
-  const road  = step.name ? ` по ${step.name}` : '';
+  const road  = step.name ? ` по ${step.name.replace(/<[^>]*>/g, '').trim()}` : '';
   const ahead = step.distance > 50 ? ` след ${fmtDistBg(step.distance)}` : '';
 
   switch (type) {

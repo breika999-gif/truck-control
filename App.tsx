@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { StatusBar } from 'react-native';
+import { LogBox, StatusBar } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -10,6 +10,11 @@ import type { RootStackParamList } from './src/shared/types/navigation';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 if (Mapbox.setTelemetryEnabled) Mapbox.setTelemetryEnabled(false);
+
+LogBox.ignoreLogs([
+  'SafeAreaView has been deprecated',
+  'onRegionIsChanging is deprecated',
+]);
 import MapScreen from './src/features/navigation/screens/MapScreen';
 import VehicleProfileScreen from './src/features/vehicle/screens/VehicleProfileScreen';
 import POIListScreen from './src/features/navigation/screens/POIListScreen';

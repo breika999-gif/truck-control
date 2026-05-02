@@ -7,12 +7,11 @@ import {
   TachoSummary,
   TachoSessionPayload,
 } from '../../../shared/services/backendApi';
-import { checkHosViolations, HosViolation, getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
+import { checkHosViolations, HosViolation } from '../../tacho/TachoEventLog';
 import { recordDailyStats } from '../utils/driverHabits';
 
 const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
 const DAILY_LIMIT_9H = 32400; // 9h
-const DAILY_LIMIT_10H = 36000; // 10h
 const PENDING_TACHO_SESSIONS_KEY = '@truckai/pending_tacho_sessions_v1';
 
 async function loadPendingTachoSessions(): Promise<TachoSessionPayload[]> {
@@ -51,8 +50,6 @@ export function useTacho(
   const hosIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hosCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endOfDayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Track current activity for end-of-day detection (0=REST,1=AVAIL,2=WORK,3=DRIVING)
-  const currentActivityRef = useRef<number>(-1);
   // Track first drive time for driverHabits
   const firstDriveTimeRef = useRef<number | null>(null);
   const lastStopTimeRef = useRef<number | null>(null);
@@ -63,12 +60,18 @@ export function useTacho(
   const warned20Ref = useRef(false);
   const warned10Ref = useRef(false);
   const isMountedRef = useRef(true);
+  const abortControllerRef = useRef<AbortController | null>(null);
   // WTD shift start: timestamp (ms) when the shift began (first activity after rest)
   const shiftStartRef = useRef<number | null>(null);
 
   // Sync ref
   useEffect(() => { drivingSecondsRef.current = drivingSeconds; }, [drivingSeconds]);
-  useEffect(() => () => { isMountedRef.current = false; }, []);
+  useEffect(() => () => {
+    isMountedRef.current = false;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  }, []);
 
   // ── Load tacho summary on mount ──────────
   useEffect(() => {
@@ -88,7 +91,7 @@ export function useTacho(
     });
   }, [googleUserRef]);
 
-  const flushPendingSessions = useCallback(async () => {
+  const flushPendingSessions = useCallback(async (signal?: AbortSignal) => {
     const pending = await loadPendingTachoSessions();
     if (pending.length === 0) return;
 
@@ -96,7 +99,8 @@ export function useTacho(
     let latestSummary: TachoSummary | null = null;
 
     for (const payload of pending) {
-      const summary = await saveTachoSession(payload);
+      if (signal?.aborted) return;
+      const summary = await saveTachoSession(payload, signal);
       if (summary?.ok) {
         latestSummary = summary;
       } else {
@@ -105,7 +109,7 @@ export function useTacho(
     }
 
     await savePendingTachoSessions(failed);
-    if (latestSummary && isMountedRef.current) {
+    if (latestSummary && isMountedRef.current && !signal?.aborted) {
       setTachoSummary(latestSummary);
     }
   }, []);
@@ -276,10 +280,18 @@ export function useTacho(
         start_time:     sessionStartRef.current,
         end_time:       new Date().toISOString(),
       };
-      void saveTachoSession(payload).then(async s => {
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+
+      void saveTachoSession(payload, signal).then(async s => {
+        if (signal.aborted) return;
         if (s?.ok) {
           if (isMountedRef.current) setTachoSummary(s);
-          await flushPendingSessions();
+          await flushPendingSessions(signal);
           return;
         }
 

@@ -8,7 +8,6 @@ import {
   Modal,
   SafeAreaView,
   StyleSheet,
-  Linking,
   ActivityIndicator,
   Image,
 } from 'react-native';
@@ -19,10 +18,10 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Tts from 'react-native-tts';
 import { getDaySummary } from '../../tacho/TachoEventLog';
 import { POI_META, type POICategory } from '../api/poi';
-import { POI_CATEGORIES, openInBrowser } from '../utils/mapUtils';
+import { POI_CATEGORIES } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
-import type { MapMode } from '../hooks/useMapUIState';
+import type { MapMode, MapLayersConfig } from '../hooks/useMapUIState';
 import { styles as mapStyles, NEON } from '../screens/MapScreen.styles';
 
 const LOGO = require('../../../shared/assets/TruckExpoAi.png');
@@ -36,25 +35,15 @@ interface OptionsPanelProps {
   setLightMode: (light: boolean | ((v: boolean) => boolean)) => void;
   voiceMuted: boolean;
   setVoiceMuted: (muted: boolean | ((v: boolean) => boolean)) => void;
-  showTraffic: boolean;
-  setShowTraffic: (show: boolean | ((v: boolean) => boolean)) => void;
-  showIncidents: boolean;
-  setShowIncidents: (show: boolean | ((v: boolean) => boolean)) => void;
-  showRestrictions: boolean;
-  setShowRestrictions: (show: boolean | ((v: boolean) => boolean)) => void;
-  showContours: boolean;
-  setShowContours: (show: boolean | ((v: boolean) => boolean)) => void;
+  mapLayers: MapLayersConfig;
+  toggleLayer: (layer: keyof MapLayersConfig) => void;
   avoidUnpaved: boolean;
   setAvoidUnpaved: (value: boolean | ((v: boolean) => boolean)) => void;
-  showStarredLayer: boolean;
-  setShowStarredLayer: (show: boolean | ((v: boolean) => boolean)) => void;
   navigating: boolean;
   route: RouteResult | null;
   simulating: boolean;
   startSim: () => void;
   stopSim: () => void;
-  debugMode: boolean;
-  setDebugMode: (debug: boolean | ((v: boolean) => boolean)) => void;
   poiCategory: POICategory | null;
   handlePOISearch: (cat: POICategory) => void;
   sarMode: boolean;
@@ -70,7 +59,6 @@ interface OptionsPanelProps {
   setMapIsLoaded: (loaded: boolean) => void;
   userCoords: [number, number] | null;
   onReportCamera: () => void;
-  onOpenPoiHistory: () => void;
   backendOnline: boolean;
 }
 
@@ -138,25 +126,15 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setLightMode,
   voiceMuted,
   setVoiceMuted,
-  showTraffic,
-  setShowTraffic,
-  showIncidents,
-  setShowIncidents,
-  showRestrictions,
-  setShowRestrictions,
-  showContours,
-  setShowContours,
+  mapLayers,
+  toggleLayer,
   avoidUnpaved,
   setAvoidUnpaved,
-  showStarredLayer,
-  setShowStarredLayer,
   navigating,
   route,
   simulating,
   startSim,
   stopSim,
-  debugMode,
-  setDebugMode,
   poiCategory,
   handlePOISearch,
   sarMode,
@@ -171,8 +149,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setMapIsLoaded,
   userCoords,
   onReportCamera,
-  onOpenPoiHistory,
-  backendOnline,
+  backendOnline: _backendOnline,
 }) => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   
@@ -287,43 +264,18 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconColor={lightMode ? '#A78BFA' : '#FCD34D'}
                 iconBg={lightMode ? 'rgba(167,139,250,0.15)' : 'rgba(252,211,77,0.15)'}
               />
-              <Row
-                icon="terrain"
-                label="Релеф (контури)"
-                onPress={() => setShowContours(v => !v)}
-                iconColor={showContours ? '#FFFFFF' : C_OFF}
-                active={showContours}
-                rightEl={
-                  <View style={[s.toggle, showContours && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{showContours ? 'ВКЛ' : 'ИЗК'}</Text>
-                  </View>
-                }
-              />
-
               {/* ТРАФИК */}
               <Divider />
               <SectionHeader title="ТРАФИК" />
               <Row
                 icon="traffic-light"
                 label="Трафик на картата"
-                onPress={() => setShowTraffic(v => !v)}
-                iconColor={showTraffic ? '#FFFFFF' : C_OFF}
-                active={showTraffic}
+                onPress={() => toggleLayer('traffic')}
+                iconColor={mapLayers.traffic ? '#FFFFFF' : C_OFF}
+                active={mapLayers.traffic}
                 rightEl={
-                  <View style={[s.toggle, showTraffic && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{showTraffic ? 'ВКЛ' : 'ИЗК'}</Text>
-                  </View>
-                }
-              />
-              <Row
-                icon="alert-octagon"
-                label="Инциденти"
-                onPress={() => setShowIncidents(v => !v)}
-                iconColor={showIncidents ? '#FFBC40' : C_OFF}
-                active={showIncidents}
-                rightEl={
-                  <View style={[s.toggle, showIncidents && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{showIncidents ? 'ВКЛ' : 'ИЗК'}</Text>
+                  <View style={[s.toggle, mapLayers.traffic && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{mapLayers.traffic ? 'ВКЛ' : 'ИЗК'}</Text>
                   </View>
                 }
               />
@@ -331,18 +283,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               {/* КАМИОН */}
               <Divider />
               <SectionHeader title="ОГРАНИЧЕНИЯ" />
-              <Row
-                icon="truck-alert"
-                label="Ограничения за камион"
-                onPress={() => setShowRestrictions(v => !v)}
-                iconColor={showRestrictions ? '#FF6B6B' : C_OFF}
-                active={showRestrictions}
-                rightEl={
-                  <View style={[s.toggle, showRestrictions && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{showRestrictions ? 'ВКЛ' : 'ИЗК'}</Text>
-                  </View>
-                }
-              />
               <Row
                 icon="road-variant"
                 label="Само асфалт"
@@ -358,12 +298,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               <Row
                 icon="star"
                 label="Любими места"
-                onPress={() => setShowStarredLayer(v => !v)}
-                iconColor={showStarredLayer ? '#FFD700' : C_OFF}
-                active={showStarredLayer}
+                onPress={() => toggleLayer('starred')}
+                iconColor={mapLayers.starred ? '#FFD700' : C_OFF}
+                active={mapLayers.starred}
                 rightEl={
-                  <View style={[s.toggle, showStarredLayer && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{showStarredLayer ? 'ВКЛ' : 'ИЗК'}</Text>
+                  <View style={[s.toggle, mapLayers.starred && s.toggleOn]}>
+                    <Text style={s.toggleTxt}>{mapLayers.starred ? 'ВКЛ' : 'ИЗК'}</Text>
                   </View>
                 }
               />
@@ -435,12 +375,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                       active={!sarMode && poiCategory === cat}
                     />
                   ))}
-                  <Row
-                    icon="map-marker-multiple"
-                    label="История на POI"
-                    onPress={() => { onOpenPoiHistory(); close(); }}
-                    iconColor={C_ACT}
-                  />
                 </>
               )}
 
@@ -458,12 +392,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                       active={sarMode && poiCategory === cat}
                     />
                   ))}
-                  <Row
-                    icon="map-marker-multiple"
-                    label="История на POI"
-                    onPress={() => { onOpenPoiHistory(); close(); }}
-                    iconColor={C_ACT}
-                  />
                 </>
               )}
 
@@ -505,7 +433,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               )}
 
               {/* DEV */}
-              {route && (
+              {__DEV__ && route && (
                 <>
                   <Divider />
                   <SectionHeader title="DEV" />
@@ -515,18 +443,6 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                     onPress={() => { simulating ? stopSim() : startSim(); close(); }}
                     iconColor={simulating ? '#FF4444' : '#4CAF50'}
                     iconBg={simulating ? 'rgba(255,68,68,0.15)' : 'rgba(76,175,80,0.15)'}
-                  />
-                  <Row
-                    icon="bug"
-                    label="Debug overlay"
-                    onPress={() => setDebugMode(v => !v)}
-                    iconColor={debugMode ? '#FF9100' : C_OFF}
-                    active={debugMode}
-                    rightEl={
-                      <View style={[s.toggle, debugMode && s.toggleOn]}>
-                        <Text style={s.toggleTxt}>{debugMode ? 'ВКЛ' : 'ИЗК'}</Text>
-                      </View>
-                    }
                   />
                 </>
               )}
@@ -565,7 +481,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 <>
                   <View style={s.summaryHero}>
                     <View style={s.summaryHeroItem}>
-                      <Text style={s.summaryHeroLabel}>ПОЧЕТАК</Text>
+                      <Text style={s.summaryHeroLabel}>НАЧАЛО</Text>
                       <Text style={s.summaryHeroVal}>{summaryShiftStart}</Text>
                     </View>
                     <View style={s.summaryHeroItem}>
