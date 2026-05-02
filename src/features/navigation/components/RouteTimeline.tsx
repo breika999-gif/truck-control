@@ -1,12 +1,10 @@
 import React, { useState, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, LayoutChangeEvent } from 'react-native';
 import type { RoutePOI } from '../hooks/useRouteInsights';
-import { haversineMeters } from '../utils/mapUtils';
 
 interface RouteTimelineProps {
   routeAheadPOIs: RoutePOI[];
   totalDistM: number;
-  userCoords: [number, number] | null;
   onPOIPress: (poi: RoutePOI) => void;
 }
 
@@ -16,7 +14,6 @@ const PIN_HALF = PIN_SIZE / 2;
 const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   routeAheadPOIs,
   totalDistM,
-  userCoords,
   onPOIPress,
 }) => {
   const [barHeight, setBarHeight] = useState(0);
@@ -28,22 +25,18 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   const totalKm = totalDistM / 1000;
   if (totalKm <= 0) return null;
 
-  // Filter POIs ahead of user, calculate live km-remaining
+  // routeAheadPOIs is already filtered by route progress in useRouteInsights.
   const pins = routeAheadPOIs
     .map(poi => {
-      const remainingKm = userCoords
-        ? Math.round(haversineMeters(userCoords, [poi.lng, poi.lat]) / 1000)
-        : poi.distKm;
+      const remainingKm = poi.distFromUserKm ?? poi.distKm;
       return { ...poi, remainingKm };
     })
-    // Keep only POIs ahead (distKm > traveled) and within total route
-    .filter(p => p.remainingKm > 0 && p.distKm > 0 && p.distKm <= totalKm)
+    .filter(p => p.distKm > 0 && p.distKm <= totalKm)
     .sort((a, b) => a.distKm - b.distKm);
 
-  // Progress: use nearest POI's route position vs its current distance to infer traveled km
-  // e.g. POI at distKm=80 is now 20km away → user is at ~60km
+  // Use nearest upcoming POI to infer route progress for the vertical track.
   const progressPct = (() => {
-    if (!userCoords || pins.length === 0) return 0;
+    if (pins.length === 0) return 0;
     const nearest = pins[0];
     const estimatedTraveledKm = nearest.distKm - nearest.remainingKm;
     return Math.min(1, Math.max(0, estimatedTraveledKm / totalKm));

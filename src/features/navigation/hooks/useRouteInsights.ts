@@ -60,7 +60,7 @@ export const useRouteInsights = (
   // Refs for POI caching + refresh logic
   const routeForPOIRef = useRef<RouteResult | null>(null);
   const cumDistRef = useRef<number[]>([]);
-  const allPOIsRef = useRef<RoutePOI[]>([]);          // full cache — never re-fetch while it has data
+  const allPOIsRef = useRef<RoutePOI[]>([]);
   const lastFilterCoordRef = useRef<[number, number] | null>(null);
   const userCoordsRef = useRef(userCoords ?? null);
   const navigatingRef = useRef(options.navigating ?? false);
@@ -256,7 +256,6 @@ export const useRouteInsights = (
         })),
       ];
 
-      // Store full cache — re-fetches only happen when cache runs dry
       allPOIsRef.current = all;
 
       if (uPos) {
@@ -272,10 +271,10 @@ export const useRouteInsights = (
 
   const buildRoutePOIScan = useCallback((r: RouteResult) => {
     routeForPOIRef.current = r;
-    const reuseNavigationCache = navigatingRef.current && allPOIsRef.current.length > 0;
-    if (!reuseNavigationCache) {
-      allPOIsRef.current = []; // clear stale cache from previous route
-    }
+    allPOIsRef.current = [];
+    setRouteAheadPOIs([]);
+    setParkingResultsRef.current?.([]);
+    setFuelResultsRef.current?.([]);
 
     const coords = r.geometry.coordinates as [number, number][];
     const cum: number[] = [0];
@@ -286,12 +285,8 @@ export const useRouteInsights = (
 
     const uPos = userCoordsRef.current;
     lastFilterCoordRef.current = uPos;
-    if (reuseNavigationCache) {
-      if (uPos) filterAndSetVisible(uPos);
-      return;
-    }
     void executePOIFetch(uPos); // one fetch for the whole route
-  }, [executePOIFetch, filterAndSetVisible]);
+  }, [executePOIFetch]);
 
   // Update visible POIs from cache as driver moves — no network calls
   useEffect(() => {

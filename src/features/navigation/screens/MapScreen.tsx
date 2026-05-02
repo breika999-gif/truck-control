@@ -449,6 +449,7 @@ const MapScreen: React.FC = () => {
   const shouldCenterOnIdleGpsRef = useRef(true);
   const autoRetrackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressPanUntilRef = useRef(0);
+  const lastMapTouchAtRef = useRef(0);
   const backendPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const offRouteCountRef   = useRef(0);
@@ -736,7 +737,9 @@ const MapScreen: React.FC = () => {
 
   const handleUserMapPan = useCallback(() => {
     if (!navigating) return;
-    if (Date.now() < suppressPanUntilRef.current) return;
+    const now = Date.now();
+    if (now < suppressPanUntilRef.current) return;
+    if (now - lastMapTouchAtRef.current > 1200) return;
     setIsTracking(false);
     setAutoRetrackNonce(n => n + 1);
   }, [navigating]);
@@ -862,6 +865,7 @@ const MapScreen: React.FC = () => {
         showPlaceLabels: true,
         showRoadLabels: true,
         showTrafficIncidents: true,
+        show3dObjects: false,
       }}],
     });
 
@@ -978,6 +982,9 @@ const MapScreen: React.FC = () => {
         attributionPosition={{ bottom: 8, left: 8 }}
         onDidFinishLoadingStyle={() => setMapIsLoaded(true)}
         onLongPress={handleMapLongPress}
+        onTouchStart={() => {
+          lastMapTouchAtRef.current = Date.now();
+        }}
         onRegionIsChanging={(feature: any) => {
           if (navigating && isTracking && feature?.properties?.isUserInteraction) {
             handleUserMapPan();
@@ -1107,7 +1114,6 @@ const MapScreen: React.FC = () => {
         <RouteTimeline
           routeAheadPOIs={routeAheadPOIs}
           totalDistM={route.distance}
-          userCoords={userCoords}
           onPOIPress={(poi) => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
         />
       )}
