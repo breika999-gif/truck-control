@@ -18,11 +18,9 @@ app.register_blueprint(poi_bp)
 app.register_blueprint(tacho_bp)
 app.register_blueprint(misc_bp)
 
+# Initialize DB schema and background tasks (works with both gunicorn and dev server)
+init_db()
+start_background_tasks()
+
 if __name__ == "__main__":
-    # Initialize DB schema
-    init_db()
-    # Start background threads (Transparking cache, etc.)
-    start_background_tasks()
-    
-    # Run Flask
     app.run(host="0.0.0.0", port=FLASK_PORT, debug=FLASK_DEBUG)
