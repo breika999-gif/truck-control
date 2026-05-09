@@ -22,6 +22,40 @@ _gpt4o_ready = bool(OPENAI_API_KEY)
 _gpt_cache: dict[str, tuple[dict, float]] = {}
 _GPT_CACHE_TTL = 600
 
+ALL_TOOLS = _TOOLS
+NAV_TOOL_NAMES = {
+    "set_route", "navigate_to", "suggest_routes", "add_waypoint",
+    "get_route_info", "check_traffic_route", "avoid_area", "clear_route",
+    "get_eta", "calculate_hos_reach",
+}
+SEARCH_TOOL_NAMES = {
+    "search_pois", "search_business", "geocode_location",
+    "get_nearby_parking", "find_truck_parking",
+    "get_nearby_fuel", "find_fuel_stations",
+}
+NAV_TOOLS = [
+    tool for tool in ALL_TOOLS
+    if tool.get("function", {}).get("name") in NAV_TOOL_NAMES
+]
+SEARCH_TOOLS = [
+    tool for tool in ALL_TOOLS
+    if tool.get("function", {}).get("name") in SEARCH_TOOL_NAMES
+]
+NAV_KEYWORDS_FOR_TOOLS = [
+    "маршрут", "навигирай", "карай до", "стигни до", "route", "navigate",
+]
+SEARCH_KEYWORDS_FOR_TOOLS = [
+    "намери", "търси", "близо", "parking", "гориво", "fuel", "паркинг",
+]
+
+def pick_tools(msg: str) -> list:
+    text = (msg or "").lower()
+    if any(keyword in text for keyword in NAV_KEYWORDS_FOR_TOOLS):
+        return NAV_TOOLS or ALL_TOOLS
+    if any(keyword in text for keyword in SEARCH_KEYWORDS_FOR_TOOLS):
+        return SEARCH_TOOLS or ALL_TOOLS
+    return ALL_TOOLS
+
 def _gpt_cache_get(key: str) -> dict | None:
     entry = _gpt_cache.get(key)
     if entry and time.time() < entry[1]: return entry[0]
@@ -72,11 +106,12 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
         history = history[-MAX_HISTORY:]
     for h in history: messages.append({"role": "assistant" if h.get("role") == "model" else "user", "content": h.get("text", "")})
     messages.append({"role": "user", "content": user_msg})
+    tools = pick_tools(user_msg)
 
     action, accumulated_content = None, []
     try:
         for turn in range(4):
-            resp = client.chat.completions.create(model="gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini", messages=messages, tools=_TOOLS, parallel_tool_calls=False, temperature=0.4, timeout=30)
+            resp = client.chat.completions.create(model="gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini", messages=messages, tools=tools, parallel_tool_calls=False, temperature=0.4, timeout=30)
             curr_msg = resp.choices[0].message
             if curr_msg.content: accumulated_content.append(curr_msg.content)
             if not curr_msg.tool_calls: break

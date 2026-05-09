@@ -2,8 +2,14 @@ import re
 import json
 from flask import Blueprint, jsonify
 from google import genai as _google_genai
-from config import GEMINI_MODEL, _GEMINI_SYSTEM, ANTHROPIC_API_KEY
-from services.gemini_service import _gemini_client, _gemini_ready
+from config import (
+    GEMINI_MODEL,
+    ANTHROPIC_API_KEY,
+)
+from services.gemini_service import (
+    _gemini_client, _gemini_ready, classify_intent, is_simple_message,
+    build_gemini_system,
+)
 from services.gpt_service import _run_gpt4o_internal, _gpt4o_ready, _get_gpt_route_insight
 from services.tacho_service import _tacho_summary
 from utils.helpers import (
@@ -15,6 +21,7 @@ from database import _db_save_chat
 _TACHO_HINTS = ["тахограф", "остава", "стигам", "до колко", "почивка", "пауза", "смяна", "лимит", "седмично", "driving", "remain", "hours", "break"]
 
 gemini_bp = Blueprint('gemini', __name__)
+
 
 
 def _format_ctx_block(label: str, payload, max_chars: int = 800) -> str:
@@ -44,10 +51,15 @@ def gemini_chat():
     if not user_msg: return jsonify({"ok": False, "error": "message is required"}), 400
 
     history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
+    is_simple = is_simple_message(user_msg)
+    intent = "general" if is_simple else classify_intent(user_msg)
+    has_memory = bool((body.get("context") or {}).get("user_memory"))
+    system_instruction = build_gemini_system(intent, has_memory)
 
     def call_gemini_task():
         contents = []
-        for h in history[-6:]:
+        history_window = 2 if is_simple else 6
+        for h in history[-history_window:]:
             role = "user" if h.get("role") == "user" else "model"
             contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
 
@@ -107,7 +119,7 @@ def gemini_chat():
             resp = _gemini_client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=contents,
-                config={"system_instruction": _GEMINI_SYSTEM, "temperature": 0.65, "max_output_tokens": 300},
+                config={"system_instruction": system_instruction, "temperature": 0.65, "max_output_tokens": 300},
             )
             return resp.text or ""
         except Exception as e:
