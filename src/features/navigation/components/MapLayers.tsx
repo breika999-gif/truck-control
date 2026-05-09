@@ -51,6 +51,21 @@ function formatPOIDistance(distanceM?: number): string | null {
     : `${Math.round(distanceM)}m`;
 }
 
+function toPointGeoJSON(
+  items: Array<{ lng: number; lat: number }>,
+): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: items
+      .filter(item => item.lat && item.lng)
+      .map((item, idx) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [item.lng, item.lat] },
+        properties: { idx },
+      })),
+  };
+}
+
 const POIMarker = ({
   symbol,
   accent,
@@ -499,87 +514,110 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.PointAnnotation>
       ))}
 
-      {/* Fuel station pins — PointAnnotation */}
-      {mapIsLoaded && fuelResults.filter(f => f.lat && f.lng).map((f, i) => (
-        <Mapbox.PointAnnotation
-          key={`fuel-pin-${i}`}
-          id={`fuel-pin-${i}`}
-          coordinate={[f.lng, f.lat]}
-          onSelected={() => {
-            setSelectedFuel(f);
-            if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
+      {/* Fuel station pins — SymbolLayer (GPU-rendered, 3D-aware) */}
+      {mapIsLoaded && fuelResults.length > 0 && (
+        <Mapbox.ShapeSource
+          id="fuel-source"
+          shape={toPointGeoJSON(fuelResults)}
+          onPress={e => {
+            const idx = e.features[0]?.properties?.idx as number | undefined;
+            if (idx != null) {
+              const f = fuelResults[idx];
+              if (f) {
+                setSelectedFuel(f);
+                if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
+              }
+            }
           }}
         >
-          <POIMarker
-            symbol="⛽"
-            accent="#f59e0b"
-            symbolSize={16}
-            label={formatPOIDistance(f.distance_m)}
+          <Mapbox.SymbolLayer
+            id="fuel-symbols"
+            style={{
+              iconImage: 'fuel-icon',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconPitchAlignment: 'viewport',
+              iconAllowOverlap: false,
+              iconAnchor: 'bottom',
+            }}
           />
-        </Mapbox.PointAnnotation>
-      ))}
+        </Mapbox.ShapeSource>
+      )}
 
-      {/* Starred Places */}
-      {mapIsLoaded && starredPOIs.filter(p => p.lat && p.lng).map((p, i) => (
-        <Mapbox.PointAnnotation
-          key={`star-pin-${i}`}
-          id={`star-pin-${i}`}
-          coordinate={[p.lng, p.lat]}
+      {/* Starred Places — SymbolLayer */}
+      {mapIsLoaded && starredPOIs.length > 0 && (
+        <Mapbox.ShapeSource
+          id="starred-source"
+          shape={toPointGeoJSON(starredPOIs)}
         >
-          <POIMarker
-            symbol="★"
-            accent="#FFD700"
-            symbolColor="#FFD700"
-            symbolSize={18}
+          <Mapbox.SymbolLayer
+            id="starred-symbols"
+            style={{
+              iconImage: 'star-icon',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconPitchAlignment: 'viewport',
+              iconAllowOverlap: false,
+              iconAnchor: 'bottom',
+            }}
           />
-        </Mapbox.PointAnnotation>
-      ))}
+        </Mapbox.ShapeSource>
+      )}
 
-      {/* Business pins — PointAnnotation */}
-      {mapIsLoaded && businessResults.filter(b => b.lat && b.lng).map((b, i) => (
-        <Mapbox.PointAnnotation
-          key={`biz-pin-${i}`}
-          id={`biz-pin-${i}`}
-          coordinate={[b.lng, b.lat]}
+      {/* Business pins — SymbolLayer */}
+      {mapIsLoaded && businessResults.length > 0 && (
+        <Mapbox.ShapeSource
+          id="biz-source"
+          shape={toPointGeoJSON(businessResults)}
         >
-          <POIMarker
-            symbol="🏢"
-            accent="#00e5ff"
-            symbolSize={16}
+          <Mapbox.SymbolLayer
+            id="biz-symbols"
+            style={{
+              iconImage: 'biz-icon',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconPitchAlignment: 'viewport',
+              iconAllowOverlap: false,
+              iconAnchor: 'bottom',
+            }}
           />
-        </Mapbox.PointAnnotation>
-      ))}
+        </Mapbox.ShapeSource>
+      )}
 
-      {/* Camera pins — PointAnnotation */}
-      {mapIsLoaded && cameraResults.filter(c => c.lat && c.lng).map((c, i) => (
-        <Mapbox.PointAnnotation
-          key={`camera-pin-${i}`}
-          id={`camera-pin-${i}`}
-          coordinate={[c.lng, c.lat]}
+      {/* Camera pins — SymbolLayer */}
+      {mapIsLoaded && cameraResults.length > 0 && (
+        <Mapbox.ShapeSource
+          id="camera-source"
+          shape={toPointGeoJSON(cameraResults)}
         >
-          <POIMarker
-            symbol="📷"
-            accent="#ff3b30"
-            symbolSize={15}
-            label={c.maxspeed ? `${c.maxspeed}` : null}
+          <Mapbox.SymbolLayer
+            id="camera-symbols"
+            style={{
+              iconImage: 'camera-icon',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconPitchAlignment: 'viewport',
+              iconAllowOverlap: false,
+              iconAnchor: 'bottom',
+            }}
           />
-        </Mapbox.PointAnnotation>
-      ))}
+        </Mapbox.ShapeSource>
+      )}
 
-      {/* Overtaking restrictions — PointAnnotation */}
-      {mapIsLoaded && overtakingResults.filter(r => r.lat && r.lng).map((r, i) => (
-        <Mapbox.PointAnnotation
-          key={`overtaking-pin-${i}`}
-          id={`overtaking-pin-${i}`}
-          coordinate={[r.lng, r.lat]}
+      {/* Overtaking restrictions — SymbolLayer */}
+      {mapIsLoaded && overtakingResults.length > 0 && (
+        <Mapbox.ShapeSource
+          id="overtaking-source"
+          shape={toPointGeoJSON(overtakingResults)}
         >
-          <POIMarker
-            symbol="🚫"
-            accent="#ff3b30"
-            symbolSize={15}
+          <Mapbox.SymbolLayer
+            id="overtaking-symbols"
+            style={{
+              iconImage: 'no-overtaking',
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconPitchAlignment: 'viewport',
+              iconAllowOverlap: false,
+              iconAnchor: 'bottom',
+            }}
           />
-        </Mapbox.PointAnnotation>
-      ))}
+        </Mapbox.ShapeSource>
+      )}
 
       {/* Route alternatives */}
       {mapIsLoaded && routeOptions.map((opt, i) => {
