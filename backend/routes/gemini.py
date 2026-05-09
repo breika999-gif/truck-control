@@ -34,6 +34,26 @@ def _format_ctx_block(label: str, payload, max_chars: int = 800) -> str:
         return ""
 
 
+def _digest_tacho_log(tacho_log) -> str:
+    if not tacho_log or not isinstance(tacho_log, dict):
+        return ""
+    segs = tacho_log.get("segments", [])
+    driven = sum(s.get("duration_min", 0) for s in segs if s.get("activity") == "DRIVING")
+    recent_driving = 0
+    for s in reversed(segs):
+        if s.get("activity") == "DRIVING":
+            recent_driving += s.get("duration_min", 0)
+        else:
+            break
+    rem = tacho_log.get("remaining_drive_min", 0)
+    pause_in = max(0, 270 - recent_driving)
+    shift = tacho_log.get("shift_start", "")
+    return (
+        f"карал:{driven}мин непрекъснато:{recent_driving}мин "
+        f"остава:{rem}мин пауза_след:{pause_in}мин смяна:{shift}"
+    )
+
+
 @gemini_bp.post("/api/gemini/chat")
 def gemini_chat():
     if _is_rate_limited(limit=30, window_s=60):
@@ -92,12 +112,15 @@ def gemini_chat():
         if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
         if context.get("tacho_log"):
-            tacho_log = context["tacho_log"]
-            if isinstance(tacho_log, list) and len(tacho_log) > 15:
-                tacho_log = tacho_log[-15:]
-            ctx_note += _format_ctx_block("TACHO_LOG", tacho_log)
+            digest = _digest_tacho_log(context["tacho_log"])
+            if digest:
+                ctx_note += f" [TACHO:{digest}]"
 
-        if context.get("tacho_week"):
+        _week_hints = {"седмично", "седмица", "тази седмица", "weekly", "week", "90ч", "56ч"}
+        _habit_hints = {"обичайно", "обикновено", "тръгвам", "спирам", "статистика"}
+        msg_lower = user_msg.lower()
+
+        if context.get("tacho_week") and any(h in msg_lower for h in _week_hints):
             ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
 
         if context.get("user_memory"):
@@ -106,8 +129,8 @@ def gemini_chat():
                 mem = mem[-10:]
             ctx_note += " [ПАМЕТ: " + "; ".join(mem) + "]"
         
-        if context.get("driver_habits"):
-            ctx_note += f" [НАВИЦИ: {json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+        if context.get("driver_habits") and any(h in msg_lower for h in _habit_hints):
+            ctx_note += f" [НАВИЦИ:{json.dumps(context['driver_habits'], ensure_ascii=False)}]"
 
         if _has_nav_intent(user_msg) and context.get("destination") and _gpt4o_ready:
             rd = _get_gpt_route_insight(str(context["destination"]), context)
@@ -124,7 +147,8 @@ def gemini_chat():
             return resp.text or ""
         except Exception as e:
             if _gpt4o_ready:
-                res = _run_gpt4o_internal(user_msg, history, context)
+                _gpt_ctx = {k: context[k] for k in ("lat", "lng", "profile", "speed_kmh") if k in context}
+                res = _run_gpt4o_internal(user_msg, history, _gpt_ctx)
                 return res.get("reply", "") if isinstance(res, dict) else ""
             return f"Грешка: {str(e)}"
 
@@ -136,7 +160,11 @@ def gemini_chat():
     nav_cmd, clean_reply = _extract_nav_intent(gemini_text)
     app_intent, clean_reply = _extract_app_intent(clean_reply)
     
-    gpt_res = _run_gpt4o_internal(user_msg, history, context, user_email=user_email) if nav_cmd and _gpt4o_ready else None
+    if nav_cmd and _gpt4o_ready:
+        _gpt_ctx = {k: context[k] for k in ("lat", "lng", "profile", "speed_kmh") if k in context}
+        gpt_res = _run_gpt4o_internal(user_msg, history, _gpt_ctx, user_email=user_email)
+    else:
+        gpt_res = None
     action = gpt_res.get("action") if gpt_res else None
     
     rem_tags = re.findall(r'<remember\s+category="(\w+)">(.*?)</remember>', clean_reply, re.DOTALL)
