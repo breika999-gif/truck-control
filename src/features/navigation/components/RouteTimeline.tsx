@@ -10,6 +10,7 @@ interface RouteTimelineProps {
 
 const PIN_SIZE = 28;
 const PIN_HALF = PIN_SIZE / 2;
+const PIN_TOP_PAD = 10;
 
 const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   routeAheadPOIs,
@@ -31,8 +32,10 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
       const remainingKm = poi.distFromUserKm ?? poi.distKm;
       return { ...poi, remainingKm };
     })
-    .filter(p => p.distKm > 0 && p.distKm <= totalKm)
-    .sort((a, b) => a.distKm - b.distKm);
+    .filter(p => p.distKm > 0 && p.distKm <= totalKm && p.remainingKm >= 0)
+    .sort((a, b) => a.remainingKm - b.remainingKm);
+
+  const farthestVisibleKm = Math.max(1, ...pins.map(p => p.remainingKm));
 
   // Use nearest upcoming POI to infer route progress for the vertical track.
   const progressPct = (() => {
@@ -57,10 +60,14 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
 
         {/* POI pins positioned along the track */}
         {barHeight > 0 && pins.map((poi, i) => {
-          // pct=0 → bottom (origin), pct=1 → top (dest)
-          const pct = poi.distKm / totalKm;
-          // top = (1 - pct) * barHeight so pct=1 is at top
-          const top = (1 - pct) * barHeight - PIN_HALF;
+          // The route can be thousands of km, so the side rail shows the next
+          // visible stops, not the full-route scale. This keeps nearby fuel and
+          // parking readable instead of pinned under the bottom HUD.
+          const pct = pins.length === 1
+            ? 0.5
+            : Math.min(1, Math.max(0, poi.remainingKm / farthestVisibleKm));
+          const usableHeight = Math.max(0, barHeight - PIN_SIZE - PIN_TOP_PAD * 2);
+          const top = PIN_TOP_PAD + (1 - pct) * usableHeight;
           const isFuel = poi.type === 'fuel';
           return (
             <TouchableOpacity

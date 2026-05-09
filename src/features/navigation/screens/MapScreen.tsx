@@ -935,6 +935,29 @@ const MapScreen: React.FC = () => {
     navigateTo(poi.coordinates, poi.name);
   }, [navigateTo, clearPOI]);
 
+  const handleRouteTimelinePOIPress = useCallback((poi: import('../hooks/useRouteInsights').RoutePOI) => {
+    const samePlace = (p: POICard) =>
+      Math.abs(p.lng - poi.lng) < 0.00001 &&
+      Math.abs(p.lat - poi.lat) < 0.00001;
+    if (poi.type === 'fuel') {
+      const fuel = fuelResults.find(samePlace) ?? {
+        name: poi.name,
+        lng: poi.lng,
+        lat: poi.lat,
+        distance_m: Math.round((poi.distFromUserKm ?? poi.distKm) * 1000),
+      };
+      setSelectedFuel(fuel);
+    } else {
+      const parking = parkingResults.find(samePlace) ?? {
+        name: poi.name,
+        lng: poi.lng,
+        lat: poi.lat,
+        distance_m: Math.round((poi.distFromUserKm ?? poi.distKm) * 1000),
+      };
+      setSelectedParking(parking);
+    }
+  }, [fuelResults, parkingResults, setSelectedFuel, setSelectedParking]);
+
   const handleReportCamera = useCallback(async () => {
     playCameraAlert();
     if (userCoords) {
@@ -997,6 +1020,7 @@ const MapScreen: React.FC = () => {
           if (geminiChatOpen) setGeminiChatOpen(false);
           if (longPressCoord) setLongPressCoord(null);
           if (selectedParking) setSelectedParking(null);
+          if (selectedFuel) setSelectedFuel(null);
         }}
       >
         <Mapbox.Images
@@ -1116,7 +1140,7 @@ const MapScreen: React.FC = () => {
         <RouteTimeline
           routeAheadPOIs={routeAheadPOIs}
           totalDistM={route.distance}
-          onPOIPress={(poi) => navigateTo([poi.lng, poi.lat], poi.name, undefined, false)}
+          onPOIPress={handleRouteTimelinePOIPress}
         />
       )}
 
@@ -1187,34 +1211,38 @@ const MapScreen: React.FC = () => {
         />
       )}
 
-      <ParkingResultsPanel
-        parkingResults={parkingResults}
-        searchTop={searchTop}
-        onDismiss={() => setParkingResults([])}
-        onNavigate={(coords, name) => navigateTo(coords, name)}
-        onAddWaypoint={(coords, name) => addWaypoint(coords, name)}
-        onClearSelectedParking={() => setSelectedParking(null)}
-        onOpenInfo={async (p) => {
-          if (p.transparking_id) {
-            const url = await getTransParkingUrl(p.transparking_id);
-            navigation.navigate('TruckParking', { url });
-          } else if (p.website) {
-            openInBrowser(p.website);
-          } else {
-            navigation.navigate('TruckParking', {});
-          }
-        }}
-        onSpeak={(text) => ttsSpeak(text)}
-      />
+      {!route && !navigating && (
+        <ParkingResultsPanel
+          parkingResults={parkingResults}
+          searchTop={searchTop}
+          onDismiss={() => setParkingResults([])}
+          onNavigate={(coords, name) => navigateTo(coords, name)}
+          onAddWaypoint={(coords, name) => addWaypoint(coords, name)}
+          onClearSelectedParking={() => setSelectedParking(null)}
+          onOpenInfo={async (p) => {
+            if (p.transparking_id) {
+              const url = await getTransParkingUrl(p.transparking_id);
+              navigation.navigate('TruckParking', { url });
+            } else if (p.website) {
+              openInBrowser(p.website);
+            } else {
+              navigation.navigate('TruckParking', {});
+            }
+          }}
+          onSpeak={(text) => ttsSpeak(text)}
+        />
+      )}
 
-      <FuelResultsPanel
-        fuelResults={fuelResults}
-        navigating={navigating}
-        searchTop={searchTop}
-        onDismiss={() => setFuelResults([])}
-        onNavigate={(coords, name) => navigateTo(coords, name)}
-        onAddWaypoint={(coords, name) => addWaypoint(coords, name)}
-      />
+      {!route && (
+        <FuelResultsPanel
+          fuelResults={fuelResults}
+          navigating={navigating}
+          searchTop={searchTop}
+          onDismiss={() => setFuelResults([])}
+          onNavigate={(coords, name) => navigateTo(coords, name)}
+          onAddWaypoint={(coords, name) => addWaypoint(coords, name)}
+        />
+      )}
 
       {/* ── Tachograph card from GPT-4o ── */}
       {tachographResult && (

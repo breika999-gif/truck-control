@@ -243,14 +243,14 @@ export const useRouteInsights = (
         ...truckStops.map(p => ({
           type: 'parking' as const,
           name: p.name || 'Паркинг',
-          distKm: Math.round(routeDistForPOI(p.lng, p.lat) / 1000),
+          distKm: Math.max(1, Math.round(routeDistForPOI(p.lng, p.lat) / 1000)),
           lng: p.lng,
           lat: p.lat,
         })),
         ...fuels.map(p => ({
           type: 'fuel' as const,
           name: p.name || 'Гориво',
-          distKm: Math.round((p.distance_m != null ? p.distance_m : routeDistForPOI(p.lng, p.lat)) / 1000),
+          distKm: Math.max(1, Math.round(routeDistForPOI(p.lng, p.lat) / 1000)),
           lng: p.lng,
           lat: p.lat,
         })),

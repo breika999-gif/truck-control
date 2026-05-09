@@ -42,6 +42,70 @@ interface MapLayersProps {
   handlePOINavigate?: (poi: TruckPOI) => void;
 }
 
+const POI_MARKER_SIZE = 36;
+
+function formatPOIDistance(distanceM?: number): string | null {
+  if (distanceM == null || !Number.isFinite(distanceM)) return null;
+  return distanceM >= 1000
+    ? `${(distanceM / 1000).toFixed(1)}km`
+    : `${Math.round(distanceM)}m`;
+}
+
+const POIMarker = ({
+  symbol,
+  accent,
+  label,
+  dark = true,
+  symbolColor = '#ffffff',
+  symbolSize = 17,
+}: {
+  symbol: string;
+  accent: string;
+  label?: string | null;
+  dark?: boolean;
+  symbolColor?: string;
+  symbolSize?: number;
+}) => (
+  <View style={{ alignItems: 'center', width: 64 }}>
+    <View style={{
+      width: POI_MARKER_SIZE,
+      height: POI_MARKER_SIZE,
+      borderRadius: POI_MARKER_SIZE / 2,
+      backgroundColor: dark ? '#091426' : '#ffffff',
+      borderWidth: 2.5,
+      borderColor: accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: accent,
+      shadowOpacity: 0.55,
+      shadowRadius: 6,
+      elevation: 5,
+    }}>
+      <Text style={{
+        color: symbolColor,
+        fontWeight: '900',
+        fontSize: symbolSize,
+        lineHeight: symbolSize + 4,
+      }}>
+        {symbol}
+      </Text>
+    </View>
+    {label ? (
+      <View style={{
+        marginTop: 2,
+        backgroundColor: 'rgba(0,0,0,0.78)',
+        borderRadius: 6,
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+      }}>
+        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+          {label}
+        </Text>
+      </View>
+    ) : null}
+  </View>
+);
+
 const MapLayers: React.FC<MapLayersProps> = ({
   mapIsLoaded,
   mapMode,
@@ -409,34 +473,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
               if (p.voice_desc && !voiceMutedRef.current) ttsSpeak(p.voice_desc);
             }}
           >
-            <View style={{
-              width: 36, height: 36,
-              borderRadius: 18,
-              backgroundColor: '#0a1a2e',
-              borderWidth: 2.5,
-              borderColor: '#13BDFF',
-              alignItems: 'center',
-              justifyContent: 'center',
-              shadowColor: '#13BDFF',
-              shadowOpacity: 0.5,
-              shadowRadius: 6,
-              elevation: 4,
-            }}>
-              <Text style={{ color: '#13BDFF', fontWeight: 'bold', fontSize: 16 }}>P</Text>
-            </View>
-            {p.distance_m != null && (
-              <View style={{
-                marginTop: 2,
-                backgroundColor: 'rgba(0,0,0,0.75)',
-                borderRadius: 6,
-                paddingHorizontal: 4,
-                paddingVertical: 1,
-              }}>
-                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
-                  {p.distance_m >= 1000 ? `${(p.distance_m / 1000).toFixed(1)}km` : `${Math.round(p.distance_m)}m`}
-                </Text>
-              </View>
-            )}
+            <POIMarker
+              symbol="P"
+              accent="#13BDFF"
+              symbolColor="#13BDFF"
+              label={formatPOIDistance(p.distance_m)}
+            />
           </View>
         </Mapbox.MarkerView>
       ))}
@@ -449,15 +491,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
           coordinate={p.coordinates}
           onSelected={() => handlePOINavigate && handlePOINavigate(p)}
         >
-          <View style={{
-            padding: 4,
-            backgroundColor: 'rgba(15,15,30,0.85)',
-            borderRadius: 20,
-            borderWidth: 1,
-            borderColor: '#13BDFF',
-          }}>
-            <Text style={{ fontSize: 18 }}>{POI_META[p.category]?.emoji || '📍'}</Text>
-          </View>
+          <POIMarker
+            symbol={POI_META[p.category]?.emoji || '📍'}
+            accent={p.category === 'gas_station' ? '#f59e0b' : '#13BDFF'}
+            symbolSize={16}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
@@ -472,21 +510,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
             if (f.voice_desc && !voiceMutedRef.current) ttsSpeak(f.voice_desc);
           }}
         >
-          <View style={{
-            width: 30, height: 30,
-            borderRadius: 15,
-            backgroundColor: '#1a1a2e',
-            borderWidth: 2,
-            borderColor: '#f59e0b',
-            alignItems: 'center',
-            justifyContent: 'center',
-            shadowColor: '#f59e0b',
-            shadowOpacity: 0.6,
-            shadowRadius: 4,
-            elevation: 5,
-          }}>
-            <Text style={{ fontSize: 16 }}>⛽</Text>
-          </View>
+          <POIMarker
+            symbol="⛽"
+            accent="#f59e0b"
+            symbolSize={16}
+            label={formatPOIDistance(f.distance_m)}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
@@ -497,18 +526,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
           id={`star-pin-${i}`}
           coordinate={[p.lng, p.lat]}
         >
-          <View style={{
-            width: 32, height: 32,
-            borderRadius: 16,
-            backgroundColor: '#1a1a2e',
-            borderWidth: 2,
-            borderColor: '#FFD700',
-            alignItems: 'center',
-            justifyContent: 'center',
-            elevation: 4,
-          }}>
-            <Text style={{ fontSize: 16 }}>⭐</Text>
-          </View>
+          <POIMarker
+            symbol="★"
+            accent="#FFD700"
+            symbolColor="#FFD700"
+            symbolSize={18}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
@@ -519,17 +542,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
           id={`biz-pin-${i}`}
           coordinate={[b.lng, b.lat]}
         >
-          <View style={{
-            width: 28, height: 28,
-            borderRadius: 14,
-            backgroundColor: 'rgba(0,40,60,0.92)',
-            borderWidth: 2,
-            borderColor: '#00e5ff',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <Text style={{ fontSize: 16 }}>🏢</Text>
-          </View>
+          <POIMarker
+            symbol="🏢"
+            accent="#00e5ff"
+            symbolSize={16}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
@@ -540,19 +557,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
           id={`camera-pin-${i}`}
           coordinate={[c.lng, c.lat]}
         >
-          <View style={{
-            backgroundColor: 'rgba(30,0,0,0.9)',
-            borderRadius: 6,
-            padding: 4,
-            borderWidth: 1.5,
-            borderColor: '#ff3b30',
-            alignItems: 'center',
-          }}>
-            <Text style={{ fontSize: 16 }}>📷</Text>
-            {c.maxspeed && (
-              <Text style={{ color: '#ff3b30', fontSize: 8, fontWeight: '800' }}>{c.maxspeed}</Text>
-            )}
-          </View>
+          <POIMarker
+            symbol="📷"
+            accent="#ff3b30"
+            symbolSize={15}
+            label={c.maxspeed ? `${c.maxspeed}` : null}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
@@ -563,17 +573,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
           id={`overtaking-pin-${i}`}
           coordinate={[r.lng, r.lat]}
         >
-          <View style={{
-            width: 32, height: 32,
-            borderRadius: 16,
-            backgroundColor: '#fff',
-            borderWidth: 3,
-            borderColor: '#ff3b30',
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}>
-            <Text style={{ fontSize: 14 }}>🚫🚛</Text>
-          </View>
+          <POIMarker
+            symbol="🚫"
+            accent="#ff3b30"
+            symbolSize={15}
+          />
         </Mapbox.PointAnnotation>
       ))}
 
