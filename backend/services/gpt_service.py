@@ -50,11 +50,15 @@ SEARCH_KEYWORDS_FOR_TOOLS = [
 
 def pick_tools(msg: str) -> list:
     text = (msg or "").lower()
-    if any(keyword in text for keyword in NAV_KEYWORDS_FOR_TOOLS):
+    has_nav = any(keyword in text for keyword in NAV_KEYWORDS_FOR_TOOLS)
+    has_search = any(keyword in text for keyword in SEARCH_KEYWORDS_FOR_TOOLS)
+    if has_nav and has_search:
+        return NAV_TOOLS + SEARCH_TOOLS
+    if has_nav:
         return NAV_TOOLS or ALL_TOOLS
-    if any(keyword in text for keyword in SEARCH_KEYWORDS_FOR_TOOLS):
+    if has_search:
         return SEARCH_TOOLS or ALL_TOOLS
-    return ALL_TOOLS
+    return []  # no tools for general chat
 
 def _gpt_cache_get(key: str) -> dict | None:
     entry = _gpt_cache.get(key)
@@ -94,14 +98,24 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
         cached = _gpt_cache_get(_cache_key)
         if cached: return cached
 
+    _PROFILE_KEYWORDS = {"маршрут", "навигирай", "карай до", "стигни до", "route", "navigate",
+                         "avoid", "restriction", "height", "weight", "adr", "hazmat",
+                         "тегло", "височина", "опасни"}
     system_txt = _SYSTEM_PROMPT
     if context:
         driven_h = context.get("driven_seconds", 0) / 3600
         prof = context.get("profile", {})
-        system_txt += f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h. Truck Profile: {prof.get('height_m', 4.0)}m height, {prof.get('weight_t', 18)}t weight, {prof.get('width_m', 2.55)}m width, {prof.get('length_m', 12)}m length, {prof.get('axle_count', 3)} axles, hazmat={prof.get('hazmat_class', 'none')}."
+        need_profile = any(kw in user_msg.lower() for kw in _PROFILE_KEYWORDS)
+        profile_part = (
+            f" Truck Profile: {prof.get('height_m', 4.0)}m height, {prof.get('weight_t', 18)}t weight, "
+            f"{prof.get('width_m', 2.55)}m width, {prof.get('length_m', 12)}m length, "
+            f"{prof.get('axle_count', 3)} axles, hazmat={prof.get('hazmat_class', 'none')}."
+            if need_profile else ""
+        )
+        system_txt += f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h.{profile_part}"
 
     messages = [{"role": "system", "content": system_txt}]
-    MAX_HISTORY = 12
+    MAX_HISTORY = 4
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
     for h in history: messages.append({"role": "assistant" if h.get("role") == "model" else "user", "content": h.get("text", "")})
@@ -109,9 +123,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
     tools = pick_tools(user_msg)
 
     action, accumulated_content = None, []
+    _model = "gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini"
     try:
         for turn in range(4):
-            resp = client.chat.completions.create(model="gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini", messages=messages, tools=tools, parallel_tool_calls=False, temperature=0.4, timeout=30)
+            _kwargs: dict = {"model": _model, "messages": messages, "temperature": 0.4, "timeout": 30}
+            if tools:
+                _kwargs["tools"] = tools
+                _kwargs["parallel_tool_calls"] = False
+            resp = client.chat.completions.create(**_kwargs)
             curr_msg = resp.choices[0].message
             if curr_msg.content: accumulated_content.append(curr_msg.content)
             if not curr_msg.tool_calls: break
@@ -145,6 +164,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
                               "toilets": p.get("toilets", False), "wifi": p.get("wifi", False),
                               "security": p.get("security", False), "lighting": p.get("lighting", False),
                               "capacity": p.get("capacity"), "website": p.get("website"),
+                              "transparking_id": p.get("transparking_id"),
                               "opening_hours": p.get("opening_hours"), "phone": p.get("phone"),
                               "voice_desc": _build_voice_desc(p)} for p in raw[:5]]
                     tool_act = {"action": "show_pois", "category": "truck_stop", "cards": cards}

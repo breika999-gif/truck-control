@@ -26,7 +26,7 @@ interface MapLayersProps {
   parkingResults: POICard[];
   fuelResults: POICard[];
   starredPOIs: SavedPOI[];
-  businessResults: any[];
+  businessResults: POICard[];
   cameraResults: any[];
   overtakingResults: any[]; 
   navCongestionVisible: GeoJSON.FeatureCollection | null;
@@ -34,6 +34,7 @@ interface MapLayersProps {
   selectedRouteIdx: number | null;
   setSelectedParking: (p: POICard) => void;
   setSelectedFuel: (f: POICard) => void;
+  onBizMarkerPress: (business: POICard) => void;
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
@@ -148,6 +149,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   selectedRouteIdx,
   setSelectedParking,
   setSelectedFuel,
+  onBizMarkerPress,
   handleSelectRouteOption,
   ttsSpeak,
   voiceMutedRef,
@@ -567,6 +569,13 @@ const MapLayers: React.FC<MapLayersProps> = ({
         <Mapbox.ShapeSource
           id="biz-source"
           shape={toPointGeoJSON(businessResults)}
+          onPress={e => {
+            const idx = e.features[0]?.properties?.idx as number | undefined;
+            if (idx != null) {
+              const business = businessResults[idx];
+              if (business) onBizMarkerPress(business);
+            }
+          }}
         >
           <Mapbox.SymbolLayer
             id="biz-symbols"

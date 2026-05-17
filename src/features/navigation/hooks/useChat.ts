@@ -2,13 +2,15 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import Tts from 'react-native-tts';
 import {
   ChatMessage, ChatContext, sendChatMessage, sendGeminiMessage,
-  AppIntent, TachoSummary
+  AppIntent, TachoSummary, POICard
 } from '../../../shared/services/backendApi';
 import { GoogleAccount } from '../../../shared/services/accountManager';
 import { VehicleProfile } from '../../../shared/types/vehicle';
 import { getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
 import { getMemorySummary, addMemory } from '../utils/geminiMemory';
 import { getHabitsSummary } from '../utils/driverHabits';
+import type { RouteResult } from '../api/directions';
+import { HOS_LIMIT_S } from '../utils/mapUtils';
 
 interface ChatProps {
   userCoords: [number, number] | null;
@@ -16,6 +18,9 @@ interface ChatProps {
   speed: number;
   profile: VehicleProfile | null;
   tachoSummary: TachoSummary | null;
+  parkingResults: POICard[];
+  route: RouteResult | null;
+  destinationName: string | null;
   gptHistory: ChatMessage[];
   setGptHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   geminiHistory: ChatMessage[];
@@ -42,6 +47,9 @@ export function useChat({
   speed,
   profile,
   tachoSummary,
+  parkingResults,
+  route,
+  destinationName,
   gptHistory,
   setGptHistory,
   geminiHistory,
@@ -203,11 +211,19 @@ export function useChat({
       driven_seconds:           drivingSeconds,
       speed_kmh:                speed,
       profile:                  profile || undefined,
+      destination:              destinationName ?? undefined,
+      route_distance_km:        route ? Math.round(route.distance / 100) / 10 : undefined,
+      route_duration_min:       route ? Math.round(route.duration / 60) : undefined,
+      remaining_drive_min:      Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60)),
       shift_start_iso:          tachoSummary?.shift_start_iso,
       reduced_rests_remaining:  tachoSummary?.reduced_rests_remaining,
       daily_driving_limit_h:    tachoSummary?.daily_limit_h,
       tacho_log:                Object.keys(tachoLog).length > 0 ? tachoLog : undefined,
       tacho_week:               Object.keys(tachoWeek).length > 0 ? tachoWeek : undefined,
+      parking_cards:            parkingResults
+        .filter(p => p.transparking_id)
+        .map(p => ({ name: p.name, transparking_id: p.transparking_id }))
+        .slice(0, 5),
       user_memory:              userMemory.length > 0 ? userMemory : undefined,
       driver_habits:            driverHabits || undefined,
     };
@@ -255,7 +271,7 @@ export function useChat({
 
     setGeminiLoading(false);
   }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, tachoSummary,
-      googleUser, handleAppIntent, speak, processAction]);
+      parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction]);
 
   return {
     gptLoading,

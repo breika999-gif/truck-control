@@ -67,8 +67,10 @@ _SOFIA_BYPASS = [[23.2600, 42.7400], [23.4300, 42.7100]]
 GEMINI_BASE = (
     "TruckAI асистент за камионджии. САМО БЪЛГАРСКИ. Обръщай се 'Колега'. "
     "Данните в [...] са вътрешни — не ги цитирай. "
-    "При паркинг за камиони → "
-    "[APP:{\"app\":\"chrome\",\"url\":\"https://truckerapps.eu/transparking/pl/map/\"}]"
+    "При конкретен паркинг с PARKING_CARDS в контекст → "
+    "[APP:{\"app\":\"transparking\",\"transparking_id\":\"<id от PARKING_CARDS>\"}]. "
+    "При общ въпрос за паркинг → "
+    "[APP:{\"app\":\"transparking\"}]"
 )
 
 GEMINI_TACHO_RULES = (
@@ -77,12 +79,11 @@ GEMINI_TACHO_RULES = (
     "Седм: 56ч, 2седм: 90ч. При <30мин → предупреди.\n"
     "WTD: краен=shift_start+(13 или 15ч ако reduced_rests>0)ч. "
     "Спри при по-ранния от тахо/работен ден.\n"
-    "При 'Мога ли до X': dist/80=ч → сравни с Остава. "
-    "Да→'~Xкм/~Yч, имаш Zч'. Не→'нужна почивка след Kкм.'\n"
+    "МАРШРУТ контекст: dist=реално разстояние, ест=реално времетраене, остава=оставащо шофьорско. "
+    "При 'Мога ли до X': сравни ест с остава. Да→'~Xкм/~Yч, имаш Zмин'. Не→'нужна почивка, стигаш след Kкм.'\n"
     "tacho_log: ползвай remaining_drive_min и segments за точни часове.\n"
     "tacho_week: weekly_remaining_min за седмичен лимит.\n"
-    "driver_habits: ползвай за персонализирани препоръки.\n"
-    "gpt_route_data: обясни на шофьора на човешки — без JSON в отговора."
+    "driver_habits: ползвай за персонализирани препоръки."
 )
 
 GEMINI_MEMORY_RULES = (
@@ -254,6 +255,26 @@ _TOOLS = [
                     "lng":   {"type": "number"},
                 },
                 "required": ["query", "lat", "lng"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_truck_parking",
+            "description": (
+                "Find truck parking lots near a city or coordinates. "
+                "Use when user asks for parking, truck stop, overnight stop, rest area. "
+                "Always geocode city name to lat/lng before calling."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lat":      {"type": "number"},
+                    "lng":      {"type": "number"},
+                    "radius_m": {"type": "integer", "default": 5000},
+                },
+                "required": ["lat", "lng"],
             },
         },
     },

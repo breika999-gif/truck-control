@@ -10,11 +10,11 @@ from services.gemini_service import (
     _gemini_client, _gemini_ready, classify_intent, is_simple_message,
     build_gemini_system,
 )
-from services.gpt_service import _run_gpt4o_internal, _gpt4o_ready, _get_gpt_route_insight
+from services.gpt_service import _run_gpt4o_internal, _gpt4o_ready
 from services.tacho_service import _tacho_summary
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
-    _extract_nav_intent, _extract_app_intent, _has_nav_intent, _strip_md_fence
+    _extract_nav_intent, _extract_app_intent, _strip_md_fence
 )
 from database import _db_save_chat
 
@@ -73,70 +73,84 @@ def gemini_chat():
     history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
     is_simple = is_simple_message(user_msg)
     intent = "general" if is_simple else classify_intent(user_msg)
-    has_memory = bool((body.get("context") or {}).get("user_memory"))
+    has_memory = bool((body.get("context") or {}).get("user_memory")) and not is_simple
     system_instruction = build_gemini_system(intent, has_memory)
 
     def call_gemini_task():
         contents = []
-        history_window = 2 if is_simple else 6
-        for h in history[-history_window:]:
-            role = "user" if h.get("role") == "user" else "model"
-            contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
 
-        ctx_note = ""
-        if context.get("lat"):
-            ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
+        if is_simple:
+            # No history, no context — just the message itself
+            contents.append({"role": "user", "parts": [{"text": user_msg}]})
+        else:
+            for h in history[-6:]:
+                role = "user" if h.get("role") == "user" else "model"
+                contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
 
-        if not context.get("tacho_log") and any(h in user_msg.lower() for h in _TACHO_HINTS):
-            tacho = _tacho_summary(user_email)
-            min_rem_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
-            est_km = round(min_rem_h * 80)
-            
-            # Reconstruct detailed tacho note from original implementation
-            ctx_note += (
-                f" [ТАХОГРАФ: шофирано-непрекъснато {tacho['continuous_remaining_h']}ч/4.5ч; "
-                f"днес {tacho['daily_driven_h']}ч/{tacho['daily_limit_h']}ч; "
-                f"оставащо днес {tacho['daily_remaining_h']}ч; "
-                f"седмично {tacho['weekly_driven_h']}ч/56ч; "
-                f"ефективно-остава {min_rem_h}ч ≈ {est_km}км при 80км/ч]"
-            )
+            ctx_note = ""
+            msg_lower = user_msg.lower()
 
-        ble_block = _build_tacho_context_block(user_email)
-        if ble_block:
-            ctx_note += ble_block
+            if context.get("lat"):
+                ctx_note += f" [GPS: {context['lat']:.4f},{context['lng']:.4f}]"
 
-        # Inject frontend overrides if present
-        fe_ctx = ""
-        if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
-        if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
-        if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
+            if not context.get("tacho_log") and any(h in msg_lower for h in _TACHO_HINTS):
+                tacho = _tacho_summary(user_email)
+                min_rem_h = round(min(tacho['continuous_remaining_h'], tacho['daily_remaining_h']), 1)
+                est_km = round(min_rem_h * 80)
+                ctx_note += (
+                    f" [ТАХОГРАФ: шофирано-непрекъснато {tacho['continuous_remaining_h']}ч/4.5ч; "
+                    f"днес {tacho['daily_driven_h']}ч/{tacho['daily_limit_h']}ч; "
+                    f"оставащо днес {tacho['daily_remaining_h']}ч; "
+                    f"седмично {tacho['weekly_driven_h']}ч/56ч; "
+                    f"ефективно-остава {min_rem_h}ч ≈ {est_km}км при 80км/ч]"
+                )
 
-        if context.get("tacho_log"):
-            digest = _digest_tacho_log(context["tacho_log"])
-            if digest:
-                ctx_note += f" [TACHO:{digest}]"
+            # BLE tacho: only when tacho-relevant
+            if intent == "tacho" or any(h in msg_lower for h in _TACHO_HINTS):
+                ble_block = _build_tacho_context_block(user_email)
+                if ble_block:
+                    ctx_note += ble_block
 
-        _week_hints = {"седмично", "седмица", "тази седмица", "weekly", "week", "90ч", "56ч"}
-        _habit_hints = {"обичайно", "обикновено", "тръгвам", "спирам", "статистика"}
-        msg_lower = user_msg.lower()
+            fe_ctx = ""
+            if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
+            if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
+            if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
-        if context.get("tacho_week") and any(h in msg_lower for h in _week_hints):
-            ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
+            if context.get("destination"):
+                rd_parts = []
+                if context.get("route_distance_km") is not None:
+                    rd_parts.append(f"dist={context['route_distance_km']}км")
+                if context.get("route_duration_min") is not None:
+                    rd_parts.append(f"ест={context['route_duration_min']}мин")
+                if context.get("remaining_drive_min") is not None:
+                    rd_parts.append(f"остава={context['remaining_drive_min']}мин")
+                if rd_parts:
+                    ctx_note += f" [МАРШРУТ до {context['destination']}: {' '.join(rd_parts)}]"
 
-        if context.get("user_memory"):
-            mem = context["user_memory"]
-            if isinstance(mem, list) and len(mem) > 10:
-                mem = mem[-10:]
-            ctx_note += " [ПАМЕТ: " + "; ".join(mem) + "]"
-        
-        if context.get("driver_habits") and any(h in msg_lower for h in _habit_hints):
-            ctx_note += f" [НАВИЦИ:{json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+            if context.get("tacho_log"):
+                digest = _digest_tacho_log(context["tacho_log"])
+                if digest:
+                    ctx_note += f" [TACHO:{digest}]"
 
-        if _has_nav_intent(user_msg) and context.get("destination") and _gpt4o_ready:
-            rd = _get_gpt_route_insight(str(context["destination"]), context)
-            if rd: ctx_note += f" [gpt_route_data: {json.dumps(rd, ensure_ascii=False)}]"
+            _week_hints = {"седмично", "седмица", "тази седмица", "weekly", "week", "90ч", "56ч"}
+            _habit_hints = {"обичайно", "обикновено", "тръгвам", "спирам", "статистика"}
 
-        contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
+            if context.get("tacho_week") and any(h in msg_lower for h in _week_hints):
+                ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
+
+            if context.get("user_memory"):
+                mem = context["user_memory"]
+                if isinstance(mem, list) and len(mem) > 10:
+                    mem = mem[-10:]
+                ctx_note += " [ПАМЕТ: " + "; ".join(mem) + "]"
+
+            if context.get("driver_habits") and any(h in msg_lower for h in _habit_hints):
+                ctx_note += f" [НАВИЦИ:{json.dumps(context['driver_habits'], ensure_ascii=False)}]"
+
+            if context.get("parking_cards"):
+                ctx_note += f" [PARKING_CARDS:{json.dumps(context['parking_cards'], ensure_ascii=False)[:300]}]"
+
+            contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
         
         try:
             resp = _gemini_client.models.generate_content(
