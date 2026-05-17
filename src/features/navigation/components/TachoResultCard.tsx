@@ -25,6 +25,30 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
   onNavigate,
   topOffset,
 }) => {
+  const asFiniteNumber = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+
+  const drivenHours = asFiniteNumber(result.drivenHours) ?? 0;
+  const remainingHours = asFiniteNumber(result.remainingHours) ?? 0;
+  const dailyDrivenH = asFiniteNumber(tachoSummary?.daily_driven_h);
+  const dailyRemainingH = asFiniteNumber(tachoSummary?.daily_remaining_h);
+  const dailyLimitH = asFiniteNumber(tachoSummary?.daily_limit_h);
+  const weeklyDrivenH = asFiniteNumber(tachoSummary?.weekly_driven_h);
+  const weeklyRemainingH = asFiniteNumber(tachoSummary?.weekly_remaining_h);
+  const weeklyLimitH = asFiniteNumber(tachoSummary?.weekly_limit_h);
+  const hasDailySummary = dailyDrivenH !== null && dailyRemainingH !== null && dailyLimitH !== null;
+  const hasWeeklySummary = weeklyDrivenH !== null && weeklyRemainingH !== null && weeklyLimitH !== null;
+  const biweeklyDrivenH = tachoSummary?.biweekly_driven_h;
+  const biweeklyRemainingH = tachoSummary?.biweekly_remaining_h;
+  const biweeklyLimitH = tachoSummary?.biweekly_limit_h;
+  const hasBiweeklySummary =
+    Number.isFinite(biweeklyDrivenH) &&
+    Number.isFinite(biweeklyRemainingH) &&
+    Number.isFinite(biweeklyLimitH);
+  const weeklyRegularRests = tachoSummary?.weekly_regular_rests ?? 0;
+  const weeklyReducedRests = tachoSummary?.weekly_reduced_rests ?? 0;
+  const reducedRestsRemaining = tachoSummary?.reduced_rests_remaining ?? 0;
+
   return (
     <View style={[styles.tachPanel, { top: topOffset }]}>
       <View style={styles.parkingPanelHeader}>
@@ -36,39 +60,43 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
 
       <View style={styles.tachCard}>
         {/* Continuous session */}
-        <Text style={styles.tachRow}>🕐 Изкарани: {result.drivenHours.toFixed(1)} ч</Text>
+        <Text style={styles.tachRow}>🕐 Изкарани: {drivenHours.toFixed(1)} ч</Text>
         <Text style={[styles.tachRow, result.breakNeeded && styles.tachWarn]}>
           {result.breakNeeded
             ? '⚠️ Нужна е задължителна 45 мин почивка!'
-            : result.remainingHours < 0.5
-            ? `⚠️ Само ${Math.round(result.remainingHours * 60)} мин до почивка!`
-            : `✅ Остават ${result.remainingHours.toFixed(1)} ч`}
+            : remainingHours < 0.5
+            ? `⚠️ Само ${Math.round(remainingHours * 60)} мин до почивка!`
+            : `✅ Остават ${remainingHours.toFixed(1)} ч`}
         </Text>
 
         {/* Daily / Weekly from persistent DB */}
         {tachoSummary && (
           <>
             <View style={styles.tachDivider} />
-            <Text style={styles.tachRow}>
-              📅 Дневно: {tachoSummary.daily_driven_h.toFixed(1)} / {tachoSummary.daily_limit_h} ч
-              {'  '}
-              <Text style={tachoSummary.daily_remaining_h < 1 ? styles.tachWarn : styles.tachOk}>
-                (остават {tachoSummary.daily_remaining_h.toFixed(1)} ч)
-              </Text>
-            </Text>
-            <Text style={styles.tachRow}>
-              📆 Седмично: {tachoSummary.weekly_driven_h.toFixed(1)} / {tachoSummary.weekly_limit_h} ч
-              {'  '}
-              <Text style={tachoSummary.weekly_remaining_h < 4 ? styles.tachWarn : styles.tachOk}>
-                (остават {tachoSummary.weekly_remaining_h.toFixed(1)} ч)
-              </Text>
-            </Text>
-            {tachoSummary.biweekly_driven_h !== undefined && (
+            {hasDailySummary && (
               <Text style={styles.tachRow}>
-                📊 2 седм.: {tachoSummary.biweekly_driven_h.toFixed(1)} / {tachoSummary.biweekly_limit_h} ч
+                📅 Дневно: {dailyDrivenH!.toFixed(1)} / {dailyLimitH} ч
                 {'  '}
-                <Text style={tachoSummary.biweekly_remaining_h < 5 ? styles.tachWarn : styles.tachOk}>
-                  (остават {tachoSummary.biweekly_remaining_h.toFixed(1)} ч)
+                <Text style={dailyRemainingH! < 1 ? styles.tachWarn : styles.tachOk}>
+                  (остават {dailyRemainingH!.toFixed(1)} ч)
+                </Text>
+              </Text>
+            )}
+            {hasWeeklySummary && (
+              <Text style={styles.tachRow}>
+                📆 Седмично: {weeklyDrivenH!.toFixed(1)} / {weeklyLimitH} ч
+                {'  '}
+                <Text style={weeklyRemainingH! < 4 ? styles.tachWarn : styles.tachOk}>
+                  (остават {weeklyRemainingH!.toFixed(1)} ч)
+                </Text>
+              </Text>
+            )}
+            {hasBiweeklySummary && (
+              <Text style={styles.tachRow}>
+                📊 2 седм.: {biweeklyDrivenH!.toFixed(1)} / {biweeklyLimitH} ч
+                {'  '}
+                <Text style={biweeklyRemainingH! < 5 ? styles.tachWarn : styles.tachOk}>
+                  (остават {biweeklyRemainingH!.toFixed(1)} ч)
                 </Text>
               </Text>
             )}
@@ -76,19 +104,19 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
             {/* Weekly daily-rest breakdown */}
             <Text style={styles.tachRow}>🌙 Дневни почивки седмицата:</Text>
             <Text style={styles.tachRow}>
-              {'  '}🌕 11ч (пълни): {tachoSummary.weekly_regular_rests}
+              {'  '}🌕 11ч (пълни): {weeklyRegularRests}
               {'   '}
-              <Text style={tachoSummary.weekly_reduced_rests > 0 ? styles.tachOk : undefined}>
-                🌗 9ч (намалени): {tachoSummary.weekly_reduced_rests}/3
+              <Text style={weeklyReducedRests > 0 ? styles.tachOk : undefined}>
+                🌗 9ч (намалени): {weeklyReducedRests}/3
               </Text>
             </Text>
-            {tachoSummary.reduced_rests_remaining === 0 ? (
+            {reducedRestsRemaining === 0 ? (
               <Text style={styles.tachWarn}>
                 ⚠️ Намалените почивки свършиха — следващата трябва да е 11ч!
               </Text>
             ) : (
               <Text style={styles.tachOk}>
-                Още {tachoSummary.reduced_rests_remaining}x 9ч почивки
+                Още {reducedRestsRemaining}x 9ч почивки
               </Text>
             )}
           </>

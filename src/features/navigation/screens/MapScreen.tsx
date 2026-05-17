@@ -371,7 +371,8 @@ const MapScreen: React.FC = () => {
   const {
     gptLoading, geminiLoading, sendGptText, sendGeminiText
   } = useChat({
-    userCoords, drivingSeconds, speed, profile, tachoSummary,
+    userCoords, drivingSeconds, speed, profile, tachoSummary, parkingResults,
+    route, destinationName,
     gptHistory, setGptHistory,
     geminiHistory, setGeminiHistory,
     googleUser,
@@ -764,6 +765,17 @@ const MapScreen: React.FC = () => {
       Linking.openURL(intent.url).catch(() => null);
       return;
     }
+    if (intent.app.toLowerCase() === 'transparking') {
+      const id = intent.transparking_id
+        ?? selectedParking?.transparking_id
+        ?? parkingResults[0]?.transparking_id;
+      if (id) {
+        getTransParkingUrl(id).then(url => navigation.navigate('TruckParking', { url }));
+      } else {
+        navigation.navigate('TruckParking', {});
+      }
+      return;
+    }
     const builder = APP_URL_MAP[intent.app.toLowerCase()];
     const url = builder ? builder(intent.query) : null;
     if (!url) return;
@@ -771,7 +783,7 @@ const MapScreen: React.FC = () => {
       const q = intent.query ?? intent.app;
       Linking.openURL(`https://www.google.com/search?q=${encodeURIComponent(q)}`).catch(() => null);
     });
-  }, []);
+  }, [navigation, parkingResults, selectedParking]);
 
   const puckScale = useMemo(() => {
     if (!navigating || distToTurn == null || distToTurn > 300) return 0.48;
@@ -935,6 +947,12 @@ const MapScreen: React.FC = () => {
     navigateTo(poi.coordinates, poi.name);
   }, [navigateTo, clearPOI]);
 
+  const handleBizMarkerPress = useCallback((business: POICard) => {
+    if (!Number.isFinite(business.lat) || !Number.isFinite(business.lng)) return;
+    setBusinessResults([]);
+    navigateTo([business.lng, business.lat], business.name || 'Място');
+  }, [navigateTo, setBusinessResults]);
+
   const handleRouteTimelinePOIPress = useCallback((poi: import('../hooks/useRouteInsights').RoutePOI) => {
     const samePlace = (p: POICard) =>
       Math.abs(p.lng - poi.lng) < 0.00001 &&
@@ -1090,6 +1108,7 @@ const MapScreen: React.FC = () => {
           selectedRouteIdx={selectedRouteIdx}
           setSelectedParking={setSelectedParking}
           setSelectedFuel={setSelectedFuel}
+          onBizMarkerPress={handleBizMarkerPress}
           handleSelectRouteOption={handleSelectRouteOption}
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}

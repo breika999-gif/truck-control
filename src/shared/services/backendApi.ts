@@ -100,6 +100,7 @@ export interface TruckRestrictionsResult {
   ok: boolean;
   safe: boolean;
   warnings: string[];
+  restrictions_checked?: boolean;
 }
 
 /** All possible map actions GPT-4o can return */
@@ -115,6 +116,7 @@ export interface AppIntent {
   app: string;    // 'youtube' | 'spotify' | 'whatsapp' | 'maps' | ...
   query?: string; // optional search/navigation query
   url?: string;   // optional direct deep-link or web URL
+  transparking_id?: string;
 }
 
 export interface ChatResponse {
@@ -133,12 +135,17 @@ export interface ChatContext {
   speed_kmh?: number;
   profile?: VehicleProfile;
   last_message?: string;
+  destination?: string;          // name, e.g. "Берлин"
+  route_distance_km?: number;    // route.distance / 1000
+  route_duration_min?: number;   // route.duration / 60
+  remaining_drive_min?: number;  // (HOS_LIMIT_S - drivingSeconds) / 60
   // WTD (Working Time Directive) — raw facts, Gemini does the math
   shift_start_iso?: string;         // когато е тръгнал (ISO timestamp)
   reduced_rests_remaining?: number; // оставащи намалени почивки
   daily_driving_limit_h?: number;   // 9 или 10 часа каране
   tacho_log?: object;               // daily activity log from TachoEventLog
   tacho_week?: object;              // weekly/biweekly EU HOS summary from TachoEventLog
+  parking_cards?: Array<{ name: string; transparking_id?: string }>;
   user_memory?: string[];           // driver preferences/facts remembered across conversations
   driver_habits?: object | null;    // last-14-days driving pattern stats
 }
@@ -300,7 +307,12 @@ export async function checkTruckRestrictions(
       body: JSON.stringify({ profile, coords }),
     });
   } catch {
-    return { ok: false, safe: true, warnings: [] };
+    return {
+      ok: false,
+      safe: false,
+      warnings: ['Проверката за ограничения по маршрута не успя. Не приемай маршрута като проверен за камион.'],
+      restrictions_checked: false,
+    };
   }
 }
 
@@ -370,7 +382,7 @@ export async function sendGeminiMessage(
 
 // ── Whisper transcription ─────────────────────────────────────────────────────
 
-/** Transcribe audio via Gemini 2.0 Flash multimodal (preferred — no Whisper quota needed). */
+/** Transcribe audio through the backend transcription endpoint. */
 export async function transcribeGemini(
   audioPath: string,
   userEmail?: string,
@@ -386,7 +398,7 @@ export async function transcribeGemini(
     } as unknown as Blob);
     if (userEmail)  form.append('user_email',  userEmail);
 
-    const res = await fetch(`${BACKEND_URL}/api/gemini/transcribe`, {
+    const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
       method: 'POST',
       body:   form,
       signal: controller.signal,
@@ -400,7 +412,7 @@ export async function transcribeGemini(
   }
 }
 
-/** Transcribe audio via Gemini multimodal (primary) with Whisper fallback. */
+/** Transcribe audio through the backend. */
 export async function transcribeAudio(audioPath: string): Promise<string | null> {
   const uri = audioPath.startsWith('file://') ? audioPath : `file://${audioPath}`;
 
@@ -420,7 +432,7 @@ export async function transcribeAudio(audioPath: string): Promise<string | null>
     }
   };
 
-  return (await tryEndpoint('/api/gemini/transcribe')) ?? (await tryEndpoint('/api/transcribe'));
+  return tryEndpoint('/api/transcribe');
 }
 
 // ── POI CRUD ─────────────────────────────────────────────────────────────────
@@ -450,9 +462,10 @@ export async function savePOI(poi: POIPayload): Promise<SavedPOI | null> {
   }
 }
 
-export async function deletePOI(id: number): Promise<boolean> {
+export async function deletePOI(id: number, userEmail?: string): Promise<boolean> {
   try {
-    const res = await apiRequest<{ ok: boolean }>(`/api/pois/${id}`, {
+    const qs = userEmail ? `?user_email=${encodeURIComponent(userEmail)}` : '';
+    const res = await apiRequest<{ ok: boolean }>(`/api/pois/${id}${qs}`, {
       method: 'DELETE',
     });
     return res.ok;

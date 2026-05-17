@@ -164,9 +164,10 @@ def get_truck_bans():
     except Exception as e:
         return jsonify({"bans": [], "error": "Request failed", "details": str(e)}), 502
 
-def _extract_route_restrictions(geometry: dict) -> list:
+def _extract_route_restrictions(geometry: dict, include_status: bool = False):
     coords = geometry.get("coordinates", [])
-    if len(coords) < 2: return []
+    if len(coords) < 2:
+        return ([], False) if include_status else []
 
     max_points = 48
     if len(coords) > max_points:
@@ -191,13 +192,17 @@ def _extract_route_restrictions(geometry: dict) -> list:
             segments.append(seg)
 
     results, seen = [], set()
+    successful_checks = 0
     for seg in segments[:max_segments]:
         lats, lngs = [c[1] for c in seg], [c[0] for c in seg]
         bbox = f"{min(lats)-0.006},{min(lngs)-0.006},{max(lats)+0.006},{max(lngs)+0.006}"
         try:
             r = requests.post("https://overpass-api.de/api/interpreter", data={"data": f'[out:json][timeout:4];(node["maxheight"]({bbox});node["maxweight"]({bbox});node["maxwidth"]({bbox});way["maxheight"]({bbox});way["maxweight"]({bbox});way["maxwidth"]({bbox}););out center 40;'}, timeout=5)
+            r.raise_for_status()
             elements = r.json().get("elements", [])
-        except:
+            successful_checks += 1
+        except Exception as e:
+            print(f"[OVERPASS] restriction check failed for bbox {bbox}: {e}", flush=True)
             continue
         for el in elements:
             tags = el.get("tags", {})
@@ -211,7 +216,55 @@ def _extract_route_restrictions(geometry: dict) -> list:
                 if (tag, round(lat, 3), round(lng, 3)) not in seen:
                     seen.add((tag, round(lat, 3), round(lng, 3)))
                     results.append({"lat": lat, "lng": lng, "type": tag, "value": raw, "value_num": val_num})
+    checked = successful_checks > 0
+    if include_status:
+        return results[:80], checked
     return results[:80]
+
+@misc_bp.post("/api/check-truck-restrictions")
+def check_truck_restrictions():
+    if _is_rate_limited(limit=10, window_s=60): return jsonify({"ok": False, "safe": False, "warnings": ["Проверката за ограничения е временно ограничена. Опитайте пак след малко."], "restrictions_checked": False, "error": "Rate limited"}), 429
+    body = _get_body()
+    profile, coords = body.get("profile") or {}, body.get("coords") or []
+    if not isinstance(coords, list) or len(coords) < 2:
+        return jsonify({"ok": False, "safe": False, "warnings": ["Няма достатъчно координати за проверка на ограничения."], "restrictions_checked": False, "error": "coords required"}), 400
+
+    def _num(value):
+        try:
+            return float(str(value).replace(",", ".").split()[0])
+        except Exception:
+            return None
+
+    checks = {
+        "maxheight": ("height_m", "височина", "м"),
+        "maxwidth":  ("width_m",  "ширина",  "м"),
+        "maxweight": ("weight_t", "тегло",   "т"),
+    }
+    restrictions, restrictions_checked = _extract_route_restrictions({"type": "LineString", "coordinates": coords}, include_status=True)
+    if not restrictions_checked:
+        return jsonify({
+            "ok": True,
+            "safe": False,
+            "warnings": ["Проверката за ограничения по маршрута не успя. Не приемай маршрута като проверен за камион."],
+            "restrictions_checked": False,
+        })
+
+    warnings, seen = [], set()
+    for restriction in restrictions:
+        field, label, unit = checks.get(restriction.get("type"), (None, None, None))
+        truck_value = _num(profile.get(field)) if field else None
+        limit_value = _num(restriction.get("value_num") or restriction.get("value"))
+        if truck_value is None or limit_value is None or truck_value <= limit_value:
+            continue
+        key = (field, round(restriction.get("lat", 0), 3), round(restriction.get("lng", 0), 3), limit_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        warnings.append(
+            f"Ограничение по {label}: {limit_value:g}{unit}; камионът е {truck_value:g}{unit} "
+            f"около {restriction.get('lat'):.4f},{restriction.get('lng'):.4f}."
+        )
+    return jsonify({"ok": True, "safe": len(warnings) == 0, "warnings": warnings, "restrictions_checked": True})
 
 def _decode_google_polyline(encoded: str) -> list:
     """Decode Google encoded polyline to [[lng, lat], ...] list."""
@@ -316,7 +369,8 @@ def calculate_route():
     if truck.get("max_weight"): params["vehicleWeight"] = int(truck["max_weight"] * 1000)
     if truck.get("max_length"): params["vehicleLength"] = truck["max_length"]
     if truck.get("axle_count"): params["vehicleNumberOfAxles"] = truck["axle_count"]
-    code = _adr_to_tunnel_code(truck.get("hazmat_class", "none"))
+    adr_tunnel = truck.get("adr_tunnel") or data.get("adr_tunnel_code")
+    code = adr_tunnel if adr_tunnel in {"B", "C", "D", "E"} else _adr_to_tunnel_code(truck.get("hazmat_class", "none"))
     if code: params["vehicleAdrTunnelRestrictionCode"] = code
     try:
         r = requests.get(f"https://api.tomtom.com/routing/1/calculateRoute/{locations}/json", params=params, timeout=15)

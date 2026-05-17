@@ -15,6 +15,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 import { listStarred, deletePOI, type SavedPOI } from '../../../shared/services/backendApi';
+import { loadSavedAccount } from '../../../shared/services/accountManager';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'POIList'>;
@@ -23,12 +24,19 @@ const POIListScreen = () => {
   const navigation = useNavigation<NavigationProp>();
   const [pois, setPois] = useState<SavedPOI[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   const fetchPois = async () => {
     setLoading(true);
     try {
-      // For now using undefined email as per current app logic where user might not be logged in
-      const data = await listStarred();
+      const account = await loadSavedAccount().catch(() => null);
+      const email = account?.email ?? null;
+      setUserEmail(email);
+      if (!email) {
+        setPois([]);
+        return;
+      }
+      const data = await listStarred(email);
       setPois(data);
     } catch (error) {
       console.error('Failed to fetch POIs:', error);
@@ -51,7 +59,7 @@ const POIListScreen = () => {
           text: 'Изтрий',
           style: 'destructive',
           onPress: async () => {
-            const success = await deletePOI(id);
+            const success = await deletePOI(id, userEmail ?? undefined);
             if (success) {
               setPois((prev) => prev.filter((p) => p.id !== id));
             } else {

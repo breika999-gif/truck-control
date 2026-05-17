@@ -12,8 +12,15 @@ _db_dir = os.path.dirname(DB_PATH)
 if _db_dir and not os.path.exists(_db_dir):
     os.makedirs(_db_dir, exist_ok=True)
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=3000")
@@ -150,8 +157,12 @@ def _transparking_cache_refresh() -> None:
         with get_db() as db:
             row = db.execute("SELECT refreshed_at FROM transparking_cache LIMIT 1").fetchone()
             if row:
+                stats = db.execute("SELECT MIN(lat) AS min_lat, MAX(lat) AS max_lat FROM transparking_cache").fetchone()
+                cache_has_swapped_columns = bool(stats and (
+                    abs(stats["min_lat"] or 0) > 90 or abs(stats["max_lat"] or 0) > 90
+                ))
                 last_refreshed = datetime.fromisoformat(row["refreshed_at"])
-                if (datetime.now(timezone.utc) - last_refreshed.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+                if not cache_has_swapped_columns and (datetime.now(timezone.utc) - last_refreshed.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
                     return
 
         url = "https://truckerapps.eu/transparking/points.php?action=list"
@@ -175,7 +186,8 @@ def _transparking_cache_refresh() -> None:
                 coords = f.get("geometry", {}).get("coordinates", [])
                 if not pid or len(coords) < 2:
                     continue
-                lng, lat = coords[0], coords[1]
+                # TransParking returns [lat, lng], unlike GeoJSON's usual [lng, lat].
+                lat, lng = coords[0], coords[1]
                 db.execute(
                     "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
                     (str(pid), name, float(lat), float(lng), now)
@@ -184,34 +196,42 @@ def _transparking_cache_refresh() -> None:
                 if inserted % 5000 == 0:
                     db.commit()
             db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[TRANSPARKING] cache refresh failed: {e}", flush=True)
 
 def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | None:
     from utils.helpers import _haversine_m
-    try:
+    def _find(swapped: bool = False) -> str | None:
         with get_db() as db:
-            rows = db.execute(
-                "SELECT pointid, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
-                (lat - 0.002, lat + 0.002, lng - 0.002, lng + 0.002)
-            ).fetchall()
-            
+            if swapped:
+                rows = db.execute(
+                    "SELECT pointid, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                    (lng - 0.002, lng + 0.002, lat - 0.002, lat + 0.002)
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT pointid, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?",
+                    (lat - 0.002, lat + 0.002, lng - 0.002, lng + 0.002)
+                ).fetchall()
             best_match = None
             min_dist = radius_m
-            
             for r in rows:
-                d = _haversine_m(lat, lng, r["lat"], r["lng"])
+                row_lat, row_lng = (r["lng"], r["lat"]) if swapped else (r["lat"], r["lng"])
+                d = _haversine_m(lat, lng, row_lat, row_lng)
                 if d < min_dist:
                     min_dist = d
                     best_match = r["pointid"]
-            
-            if best_match:
-                return {
-                    "pointid": best_match,
-                    "url": f"https://truckerapps.eu/transparking/en/poi/{best_match}"
-                }
-    except Exception:
-        pass
+            return best_match
+
+    try:
+        best_match = _find(False) or _find(True)
+        if best_match:
+            return {
+                "pointid": best_match,
+                "url": f"https://truckerapps.eu/transparking/en/poi/{best_match}"
+            }
+    except Exception as e:
+        print(f"[TRANSPARKING] match lookup failed: {e}", flush=True)
     return None
 
 def start_background_tasks():

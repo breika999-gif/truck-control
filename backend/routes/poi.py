@@ -151,19 +151,16 @@ def _transparking_along_route(coords: list, max_results: int = 20) -> list:
     with get_db() as db:
         for idx in sample_idxs:
             lng, lat = coords[idx][0], coords[idx][1]
-            # NOTE: transparking_cache schema has lat/lng columns swapped —
-            # the column named "lat" stores longitude values and vice versa.
             rows = db.execute(
                 "SELECT pointid, name, lat, lng FROM transparking_cache "
                 "WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 20",
-                (lng - PAD, lng + PAD, lat - PAD, lat + PAD)
+                (lat - PAD, lat + PAD, lng - PAD, lng + PAD)
             ).fetchall()
             for r in rows:
                 if r["pointid"] in seen:
                     continue
                 seen.add(r["pointid"])
-                # Swap back: real_lat = r["lng"], real_lng = r["lat"]
-                real_lat, real_lng = r["lng"], r["lat"]
+                real_lat, real_lng = r["lat"], r["lng"]
                 dist_m = int(math.sqrt((real_lat - lat)**2 + (real_lng - lng)**2) * 111000)
                 travel_s = int(dist_m / 22.2)
                 results.append({
@@ -201,12 +198,13 @@ def list_pois():
 @poi_bp.post("/api/pois")
 def save_poi():
     body = _get_body()
-    name, lat, lng, email = (body.get("name") or "").strip(), body.get("lat"), body.get("lng"), body.get("user_email", "")
+    name, lat, lng, email = (body.get("name") or "").strip(), body.get("lat"), body.get("lng"), (body.get("user_email") or "").strip()
     if not name or lat is None or lng is None: return jsonify({"ok": False, "error": "name, lat, lng required"}), 400
+    if not email: return jsonify({"ok": False, "error": "user_email required"}), 400
     with get_db() as conn:
         cur = conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (name, body.get("address", ""), body.get("category", "custom"), float(lat), float(lng), body.get("notes", ""), email, now_iso()))
         pid = cur.lastrowid
-    row = get_db().execute("SELECT * FROM pois WHERE id=?", (pid,)).fetchone()
+        row = conn.execute("SELECT * FROM pois WHERE id=?", (pid,)).fetchone()
     return jsonify({"ok": True, "poi": row_to_poi(row)}), 201
 
 @poi_bp.delete("/api/pois/<int:poi_id>")
@@ -220,15 +218,13 @@ def delete_poi(poi_id: int):
 
 @poi_bp.get("/api/parking/bbox")
 def get_parking_bbox():
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
-    if _is_rate_limited(ip, 60): return jsonify({"error": "rate limited"}), 429
+    if _is_rate_limited(limit=60, window_s=60): return jsonify({"error": "rate limited"}), 429
     try:
         sw_lat, sw_lng = float(request.args.get("swLat")), float(request.args.get("swLng"))
         ne_lat, ne_lng = float(request.args.get("neLat")), float(request.args.get("neLng"))
         with get_db() as db:
-            # lat/lng columns are swapped in schema: "lat" holds lng values, "lng" holds lat values
-            rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lng, ne_lng, sw_lat, ne_lat)).fetchall()
-            features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lat"], r["lng"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"}} for r in rows]
+            rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lat, ne_lat, sw_lng, ne_lng)).fetchall()
+            features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lng"], r["lat"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"}} for r in rows]
             return jsonify({"type": "FeatureCollection", "features": features})
     except: return jsonify({"error": "invalid params"}), 400
 

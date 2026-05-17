@@ -44,14 +44,25 @@ def _tacho_summary(user_email: str = "") -> dict:
             elif dur >= 900: first_split_done = True
 
     rests = _analyze_weekly_rests(user_email, week_start)
+    biweekly_s = weekly_s + prev_weekly_s
     return {
         "daily_driven_s": daily_s, "daily_remaining_s": max(0, effective_daily_limit_s - daily_s),
         "daily_driven_h": round(daily_s/3600, 2), "daily_remaining_h": round(max(0, effective_daily_limit_s - daily_s)/3600, 2),
         "weekly_driven_s": weekly_s, "weekly_remaining_s": max(0, WEEKLY_LIMIT - weekly_s),
         "weekly_driven_h": round(weekly_s/3600, 2), "weekly_remaining_h": round(max(0, WEEKLY_LIMIT - weekly_s)/3600, 2),
+        "continuous_driven_s": continuous_s, "continuous_remaining_s": max(0, CONTINUOUS_LIMIT - continuous_s),
         "continuous_driven_h": round(continuous_s/3600, 2), "continuous_remaining_h": round(max(0, CONTINUOUS_LIMIT - continuous_s)/3600, 2),
-        "break_needed": continuous_s >= CONTINUOUS_LIMIT, "biweekly_driven_h": round((weekly_s + prev_weekly_s)/3600, 2),
-        "reduced_rests_remaining": rests["reduced_rests_remaining"], "daily_limit_h": 10 if extended_days_used < 2 else 9, "weekly_limit_h": 56, "date": today
+        "break_needed": continuous_s >= CONTINUOUS_LIMIT,
+        "biweekly_driven_h": round(biweekly_s/3600, 2),
+        "biweekly_remaining_h": round(max(0, BIWEEKLY_LIMIT - biweekly_s)/3600, 2),
+        "biweekly_limit_h": round(BIWEEKLY_LIMIT / 3600, 2),
+        "weekly_regular_rests": rests["weekly_regular_rests"],
+        "weekly_reduced_rests": rests["weekly_reduced_rests"],
+        "reduced_rests_remaining": rests["reduced_rests_remaining"],
+        "daily_limit_h": 10 if extended_days_used < 2 else 9,
+        "weekly_limit_h": 56,
+        "date": today,
+        "week_start": week_start
     }
 
 def _tool_calculate_hos_reach(driven_seconds: int, speed_kmh: float, user_email: str = "") -> dict:

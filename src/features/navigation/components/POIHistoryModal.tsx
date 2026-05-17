@@ -29,8 +29,11 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
     let cancelled = false;
     setLoading(true);
     fetch(`${BACKEND_URL}/api/pois?user_email=${encodeURIComponent(googleUser.email)}`)
-      .then(r => r.ok ? r.json() : [])
-      .then(d => { if (!cancelled) setItems(Array.isArray(d) ? d : []); })
+      .then(r => r.ok ? r.json() : { pois: [] })
+      .then(d => {
+        const pois = Array.isArray(d) ? d : Array.isArray(d?.pois) ? d.pois : [];
+        if (!cancelled) setItems(pois);
+      })
       .catch(() => { if (!cancelled) setItems([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };

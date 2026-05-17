@@ -273,6 +273,7 @@ export function useRouteOrchestrator({
             max_weight: prof.weight_t,
             max_length: prof.length_m,
             exclude: adrToExclude(prof.hazmat_class ?? 'none'),
+            hazmat_class: prof.hazmat_class ?? 'none',
             avoidUnpaved: avoidUnpavedRef.current,
             adr_tunnel: prof.adr_tunnel ?? 'none',
           }

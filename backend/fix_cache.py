@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
-DB_PATH = 'truckai.db'
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "truckai.db"))
 
 def run():
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     db = sqlite3.connect(DB_PATH)
     print("Creating table transparking_cache if not exists...")
     db.execute(
@@ -47,7 +50,8 @@ def run():
             if not pid or not coords or len(coords) < 2:
                 continue
             
-            lng, lat = coords[0], coords[1]
+            # TransParking returns [lat, lng], unlike GeoJSON's usual [lng, lat].
+            lat, lng = coords[0], coords[1]
             db.execute(
                 "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
                 (str(pid), name, float(lat), float(lng), now)
