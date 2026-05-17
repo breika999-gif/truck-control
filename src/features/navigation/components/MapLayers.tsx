@@ -38,7 +38,7 @@ interface MapLayersProps {
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
-  restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'; value: string }>;
+  restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'|'no_trucks'|'hazmat'; value: string }>;
   poiResults?: TruckPOI[];
   handlePOINavigate?: (poi: TruckPOI) => void;
 }
@@ -268,9 +268,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
             minZoomLevel={9}
             style={{
               textField: [
-                'concat',
-                ['get', 'value'],
-                ['match', ['get', 'type'], 'maxheight', 'м', 'maxweight', 'т', 'maxwidth', 'м', ''],
+                'case',
+                ['==', ['get', 'type'], 'no_trucks'], 'HGV',
+                ['==', ['get', 'type'], 'hazmat'], 'ADR',
+                [
+                  'concat',
+                  ['get', 'value'],
+                  ['match', ['get', 'type'], 'maxheight', 'м', 'maxweight', 'т', 'maxwidth', 'м', ''],
+                ],
               ],
               textSize: 14,
               textColor: '#1A1A1A',

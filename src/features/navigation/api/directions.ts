@@ -58,9 +58,10 @@ export interface RouteStep {
 export interface RestrictionPoint {
   lat: number;
   lng: number;
-  type: 'maxheight' | 'maxweight' | 'maxwidth';
-  value: string;       // raw OSM value, e.g. "3.8"
+  type: 'maxheight' | 'maxweight' | 'maxwidth' | 'no_trucks' | 'hazmat';
+  value: string;       // raw OSM value, e.g. "3.8" or "no"
   value_num: number;   // parsed float
+  tag?: string;         // original OSM tag, e.g. maxweight:hgv
 }
 
 export interface RouteResult {
@@ -128,6 +129,7 @@ export interface TruckDimensions {
   max_weight?: number;  // metric tons (0вЂ"100)
   max_length?: number;  // meters вЂ" vehicle length restriction
   exclude?: string;     // 'tunnel' | 'tunnel,motorway' | undefined вЂ" ADR hazmat routing
+  hazmat_class?: string;
   avoidUnpaved?: boolean;
   adr_tunnel?: 'none' | 'B' | 'C' | 'D' | 'E';
 }

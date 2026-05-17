@@ -1330,7 +1330,7 @@ const MapScreen: React.FC = () => {
       {/* ── Road restriction sign popup ── */}
       <RestrictionSign
         restriction={activeRestriction}
-        vehicleProfile={profile ? { height_m: profile.height_m, weight_t: profile.weight_t, width_m: profile.width_m } : null}
+        vehicleProfile={profile ? { height_m: profile.height_m, weight_t: profile.weight_t, width_m: profile.width_m, hazmat_class: profile.hazmat_class } : null}
       />
 
 

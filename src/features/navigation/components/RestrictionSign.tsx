@@ -4,7 +4,7 @@ import type { RestrictionPoint } from '../api/directions';
 
 interface Props {
   restriction: RestrictionPoint | null;
-  vehicleProfile?: { height_m: number; weight_t: number; width_m: number } | null;
+  vehicleProfile?: { height_m: number; weight_t: number; width_m: number; hazmat_class?: string | null } | null;
 }
 
 const ICONS = {
@@ -28,7 +28,7 @@ const ICONS = {
     exceed: require('../../../../android/app/src/main/res/raw/restriction_no_trucks_violated.png'),
     unit: '',
   },
-  adr: {
+  hazmat: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_adr.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_adr_exceed.png'),
     unit: '',
@@ -37,12 +37,17 @@ const ICONS = {
 
 function isExceeded(
   restriction: RestrictionPoint | null,
-  profile?: { height_m: number; weight_t: number; width_m: number } | null,
+  profile?: { height_m: number; weight_t: number; width_m: number; hazmat_class?: string | null } | null,
 ): boolean {
   if (!restriction || !profile) return false;
   if (restriction.type === 'maxheight') return profile.height_m > restriction.value_num;
   if (restriction.type === 'maxweight') return profile.weight_t > restriction.value_num;
   if (restriction.type === 'maxwidth') return profile.width_m > restriction.value_num;
+  if (restriction.type === 'no_trucks') return true;
+  if (restriction.type === 'hazmat') {
+    const hazmat = String(profile.hazmat_class ?? 'none').toLowerCase();
+    return hazmat !== '' && hazmat !== 'none' && hazmat !== '0' && hazmat !== 'false';
+  }
   return false;
 }
 
@@ -67,13 +72,18 @@ const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
   const accent = exceeded ? '#FF6B00' : '#D0021B';
   const iconMeta = ICONS[restriction.type] ?? ICONS.no_trucks;
   const iconSource = exceeded ? iconMeta.exceed : iconMeta.normal;
+  const showNumericValue = restriction.type === 'maxheight' || restriction.type === 'maxweight' || restriction.type === 'maxwidth';
 
   return (
     <Animated.View style={[s.wrap, { opacity }]}>
       <View style={[s.sign, { borderColor: accent }]}>
         <Image source={iconSource} style={s.icon} resizeMode="contain" />
-        <Text style={s.value}>{restriction.value_num}</Text>
-        <Text style={s.unit}>{iconMeta.unit}</Text>
+        {showNumericValue && (
+          <>
+            <Text style={s.value}>{restriction.value_num}</Text>
+            <Text style={s.unit}>{iconMeta.unit}</Text>
+          </>
+        )}
       </View>
       <View style={[s.pin, { backgroundColor: accent }]} />
     </Animated.View>
