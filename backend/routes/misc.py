@@ -164,6 +164,49 @@ def get_truck_bans():
     except Exception as e:
         return jsonify({"bans": [], "error": "Request failed", "details": str(e)}), 502
 
+_NUMERIC_RESTRICTION_TAGS = (
+    "maxheight",
+    "maxweight",
+    "maxwidth",
+    "maxweight:hgv",
+    "maxweightrating",
+    "maxgcweight",
+)
+_ACCESS_RESTRICTION_TAGS = ("hgv", "goods", "hazmat")
+_RESTRICTION_TAGS = _NUMERIC_RESTRICTION_TAGS + _ACCESS_RESTRICTION_TAGS
+_DENY_VALUES = {"no", "private", "destination", "delivery"}
+
+def _restriction_query(bbox: str) -> str:
+    clauses = []
+    for tag in _RESTRICTION_TAGS:
+        clauses.append(f'node["{tag}"]({bbox});')
+        clauses.append(f'way["{tag}"]({bbox});')
+    return f'[out:json][timeout:10];({"".join(clauses)});out center 400;'
+
+def _restriction_value_num(raw: str) -> float | None:
+    try:
+        value = float(str(raw).replace(",", ".").split()[0])
+        # OSM weight limits are usually tonnes when decimal (3.5), but some
+        # data uses kilograms (3500). The app stores vehicle weight in tonnes.
+        return value / 1000 if value > 100 else value
+    except Exception:
+        return None
+
+def _normalize_restriction(tag: str, raw: str) -> dict | None:
+    raw_text = str(raw).strip()
+    if tag in ("maxweight:hgv", "maxweightrating", "maxgcweight"):
+        value_num = _restriction_value_num(raw_text)
+        return {"type": "maxweight", "value": raw_text, "value_num": value_num} if value_num is not None else None
+    if tag in ("maxheight", "maxweight", "maxwidth"):
+        value_num = _restriction_value_num(raw_text)
+        return {"type": tag, "value": raw_text, "value_num": value_num} if value_num is not None else None
+    deny_value = raw_text.lower().split("@", 1)[0].strip()
+    if tag in ("hgv", "goods") and deny_value in _DENY_VALUES:
+        return {"type": "no_trucks", "value": raw_text, "value_num": 0}
+    if tag == "hazmat" and deny_value in _DENY_VALUES:
+        return {"type": "hazmat", "value": raw_text, "value_num": 0}
+    return None
+
 def _extract_route_restrictions(geometry: dict, include_status: bool = False):
     coords = geometry.get("coordinates", [])
     if len(coords) < 2:
@@ -197,7 +240,7 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
         lats, lngs = [c[1] for c in seg], [c[0] for c in seg]
         bbox = f"{min(lats)-0.006},{min(lngs)-0.006},{max(lats)+0.006},{max(lngs)+0.006}"
         try:
-            r = requests.post("https://overpass-api.de/api/interpreter", data={"data": f'[out:json][timeout:4];(node["maxheight"]({bbox});node["maxweight"]({bbox});node["maxwidth"]({bbox});way["maxheight"]({bbox});way["maxweight"]({bbox});way["maxwidth"]({bbox}););out center 40;'}, timeout=5)
+            r = requests.post("https://overpass-api.de/api/interpreter", data={"data": _restriction_query(bbox)}, timeout=12)
             r.raise_for_status()
             elements = r.json().get("elements", [])
             successful_checks += 1
@@ -208,14 +251,15 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
             tags = el.get("tags", {})
             lat, lng = el.get("lat") or el.get("center", {}).get("lat"), el.get("lon") or el.get("center", {}).get("lon")
             if lat is None: continue
-            for tag in ("maxheight", "maxweight", "maxwidth"):
+            for tag in _RESTRICTION_TAGS:
                 raw = tags.get(tag)
                 if not raw: continue
-                try: val_num = float(raw.replace(",", ".").split()[0])
-                except: continue
-                if (tag, round(lat, 3), round(lng, 3)) not in seen:
-                    seen.add((tag, round(lat, 3), round(lng, 3)))
-                    results.append({"lat": lat, "lng": lng, "type": tag, "value": raw, "value_num": val_num})
+                normalized = _normalize_restriction(tag, raw)
+                if not normalized: continue
+                key = (normalized["type"], str(normalized["value"]), round(lat, 3), round(lng, 3))
+                if key not in seen:
+                    seen.add(key)
+                    results.append({"lat": lat, "lng": lng, "tag": tag, **normalized})
     checked = successful_checks > 0
     if include_status:
         return results[:80], checked
@@ -251,6 +295,27 @@ def check_truck_restrictions():
 
     warnings, seen = [], set()
     for restriction in restrictions:
+        if restriction.get("type") == "no_trucks":
+            truck_weight_t = _num(profile.get("weight_t"))
+            truck_length_m = _num(profile.get("length_m"))
+            is_truck = (
+                (truck_weight_t is not None and truck_weight_t > 3.5) or
+                (truck_length_m is not None and truck_length_m > 6.0)
+            )
+            if is_truck:
+                key = ("no_trucks", round(restriction.get("lat", 0), 3), round(restriction.get("lng", 0), 3))
+                if key not in seen:
+                    seen.add(key)
+                    warnings.append(f"Забрана за камиони около {restriction.get('lat'):.4f},{restriction.get('lng'):.4f}.")
+            continue
+        if restriction.get("type") == "hazmat":
+            hazmat_class = str(profile.get("hazmat_class") or "none").lower()
+            if hazmat_class not in ("", "none", "0", "false"):
+                key = ("hazmat", round(restriction.get("lat", 0), 3), round(restriction.get("lng", 0), 3))
+                if key not in seen:
+                    seen.add(key)
+                    warnings.append(f"ADR/hazmat забрана около {restriction.get('lat'):.4f},{restriction.get('lng'):.4f}.")
+            continue
         field, label, unit = checks.get(restriction.get("type"), (None, None, None))
         truck_value = _num(profile.get(field)) if field else None
         limit_value = _num(restriction.get("value_num") or restriction.get("value"))
@@ -264,7 +329,7 @@ def check_truck_restrictions():
             f"Ограничение по {label}: {limit_value:g}{unit}; камионът е {truck_value:g}{unit} "
             f"около {restriction.get('lat'):.4f},{restriction.get('lng'):.4f}."
         )
-    return jsonify({"ok": True, "safe": len(warnings) == 0, "warnings": warnings, "restrictions_checked": True})
+    return jsonify({"ok": True, "safe": len(warnings) == 0, "warnings": warnings, "restrictions": restrictions, "restrictions_checked": True})
 
 def _decode_google_polyline(encoded: str) -> list:
     """Decode Google encoded polyline to [[lng, lat], ...] list."""
@@ -465,9 +530,9 @@ def calculate_route():
             _tomtom_congestion_geojson(rt, raw_geom)
         )
         traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
-        # Keep route calculation responsive. Long-route restriction scanning uses
+        # Keep route calculation responsive. Very long-route restriction scanning uses
         # multiple Overpass calls and should move to a non-blocking endpoint.
-        restrictions = _extract_route_restrictions(geom) if total_m <= 80000 else []
+        restrictions = _extract_route_restrictions(geom) if total_m <= 250000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
