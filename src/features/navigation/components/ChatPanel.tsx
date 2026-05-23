@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   View,
   ScrollView,
@@ -7,6 +7,8 @@ import {
   ActivityIndicator,
   TextInput,
   Animated,
+  Dimensions,
+  Platform,
 } from 'react-native';
 import { colors } from '../../../shared/constants/theme';
 import { parseBubbleText } from '../utils/mapUtils';
@@ -61,7 +63,12 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
   const loading = gptChatOpen ? gptLoading : geminiLoading;
   const scrollRef = gptChatOpen ? gptScrollRef : geminiScrollRef;
   const inputRef = useRef<TextInput>(null);
+  const [inputFocused, setInputFocused] = useState(false);
   const placeholder = "Питай за маршрут, паркинг или кажи 'отвори YouTube'...";
+  const fallbackKbHeight = inputFocused && kbHeight === 0
+    ? Math.round(Dimensions.get('window').height * (Platform.OS === 'android' ? 0.42 : 0.34))
+    : 0;
+  const effectiveKbHeight = kbHeight > 0 ? kbHeight : fallbackKbHeight;
 
   // ── Pulsing Mic Animation ──
   const micScale = useRef(new Animated.Value(1)).current;
@@ -98,13 +105,23 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
     return () => clearTimeout(timer);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) setInputFocused(false);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !inputFocused) return;
+    const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 260);
+    return () => clearTimeout(timer);
+  }, [effectiveKbHeight, inputFocused, isOpen, scrollRef]);
+
   return (
     <BottomSheet
       visible={isOpen}
       initialHeight={300}
       snapHeight={400}
       onClose={onClose}
-      kbHeight={kbHeight}
+      kbHeight={effectiveKbHeight}
     >
       <View style={[styles.chatMessages, { flex: 1 }]}>
         <ScrollView
@@ -167,6 +184,8 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           style={styles.chatInput}
           value={chatInput}
           onChangeText={setChatInput}
+          onFocus={() => setInputFocused(true)}
+          onBlur={() => setInputFocused(false)}
           placeholder={gptChatOpen ? "Съобщение..." : "Питай Gemini..."}
           placeholderTextColor={colors.textMuted}
           onSubmitEditing={handleChat}

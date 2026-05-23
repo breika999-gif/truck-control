@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, Linking } from 'react-native';
+import { Platform, Linking, Dimensions } from 'react-native';
 import Tts from 'react-native-tts';
 import Mapbox, { UserTrackingMode } from '@rnmapbox/maps';
 
@@ -45,7 +45,9 @@ export const ARROW_UTURN         = require('../../../shared/assets/maneuver/arro
 export const ARROW_ROUNDABOUT    = require('../../../shared/assets/maneuver/arrow_roundabout.png') as number;
 
 // ── Camera padding constants ──────────────────────────────────────────────────
-export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: 350, paddingBottom: 0 };
+// paddingTop = 42% of screen height, capped at 380px — keeps truck in lower third on all screen sizes
+const _screenH = Dimensions.get('window').height;
+export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: Math.min(Math.round(_screenH * 0.42), 380), paddingBottom: 0 };
 export const ZERO_PADDING = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
 
 // ── App deep-link URL builders ────────────────────────────────────────────────
@@ -280,6 +282,54 @@ export function haversineMeters(a: [number, number], b: [number, number]): numbe
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 }
 
+export function pointToSegmentDistanceMeters(
+  point: [number, number],
+  start: [number, number],
+  end: [number, number],
+): number {
+  const [px, py] = point;
+  const [ax, ay] = start;
+  const [bx, by] = end;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return haversineMeters(point, [ax + t * dx, ay + t * dy]);
+}
+
+export function nearestRouteMatch(point: [number, number], coords: [number, number][]) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  for (let i = 0; i < coords.length; i += 1) {
+    const vertexDistance = haversineMeters(point, coords[i]);
+    if (vertexDistance < bestDistance) {
+      bestDistance = vertexDistance;
+      bestIndex = i;
+    }
+  }
+
+  const fromIdx = Math.max(0, bestIndex - 1);
+  const toIdx = Math.min(coords.length - 2, bestIndex + 6);
+  for (let i = fromIdx; i <= toIdx; i += 1) {
+    const segmentDistance = pointToSegmentDistanceMeters(point, coords[i], coords[i + 1]);
+    if (segmentDistance < bestDistance) {
+      bestDistance = segmentDistance;
+      bestIndex = i + 1;
+    }
+  }
+
+  return { bestIndex, bestDistance };
+}
+
+export function cumulativeRouteDistances(coords: [number, number][]) {
+  const cumulative = new Array<number>(coords.length).fill(0);
+  for (let i = 1; i < coords.length; i += 1) {
+    cumulative[i] = cumulative[i - 1] + haversineMeters(coords[i - 1], coords[i]);
+  }
+  return cumulative;
+}
+
 /** Open-Meteo WMO weather code → emoji string. */
 export function weatherEmoji(code: number): string {
   if (code === 0)  return '☀️';
@@ -356,7 +406,6 @@ interface StableCameraProps {
   speed?: number;
   isTracking?: boolean;
   userCoords?: [number, number] | null;
-  userHeading?: number | null;
 }
 
 function regionToZoom(latitudeDelta = 0.01, longitudeDelta = 0.01): number {
@@ -374,12 +423,13 @@ function paddingObjectToArray(padding?: { top?: number; right?: number; bottom?:
 }
 
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords, userHeading }: StableCameraProps) => {
+  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords }: StableCameraProps) => {
     const nativeCameraRef = React.useRef<any>(null);
     const followZoomLevel =
-      speed != null && speed > 80 ? 15.5 :
-      speed != null && speed > 40 ? 16.2 :
-      17;
+      speed != null && speed > 90 ? 15.0 :
+      speed != null && speed > 60 ? 15.5 :
+      speed != null && speed > 30 ? 16.2 :
+      16.8;
     const followPitch = speed != null && speed > 40 ? 45 : 35;
 
     React.useEffect(() => {
@@ -393,7 +443,7 @@ export const StableCamera = React.memo(
             pitch: camera?.pitch,
             zoomLevel: camera?.zoom,
             animationMode: 'easeTo',
-            animationDuration: options?.duration ?? 600,
+            animationDuration: options?.duration ?? 400,
           });
         },
         animateToRegion: (
@@ -404,7 +454,7 @@ export const StableCamera = React.memo(
             centerCoordinate: [region.longitude, region.latitude],
             zoomLevel: regionToZoom(region.latitudeDelta, region.longitudeDelta),
             animationMode: 'easeTo',
-            animationDuration: duration ?? 800,
+            animationDuration: duration ?? 600,
           });
         },
         fitToCoordinates: (
@@ -418,7 +468,7 @@ export const StableCamera = React.memo(
             [Math.max(...lngs), Math.max(...lats)],
             [Math.min(...lngs), Math.min(...lats)],
             paddingObjectToArray(options?.edgePadding),
-            options?.animated === false ? 0 : 800,
+            options?.animated === false ? 0 : 600,
           );
         },
       };
@@ -427,28 +477,8 @@ export const StableCamera = React.memo(
       };
     }, [cameraRef]);
 
-    React.useEffect(() => {
-      if (!navigating || !mapLoaded || !isTracking || !userCoords) return;
-
-      nativeCameraRef.current?.setCamera({
-        centerCoordinate: userCoords,
-        zoomLevel: followZoomLevel,
-        pitch: followPitch,
-        heading: speed != null && speed > 3 ? (userHeading ?? 0) : 0,
-        padding: NAV_PADDING,
-        animationMode: 'easeTo',
-        animationDuration: 600,
-      });
-    }, [
-      followPitch,
-      followZoomLevel,
-      isTracking,
-      mapLoaded,
-      navigating,
-      speed,
-      userCoords,
-      userHeading,
-    ]);
+    // Redundant useEffect with setCamera removed to prevent jitter/clashing with followUserLocation.
+    // The Mapbox.Camera below handles tracking natively and more smoothly when followUserLocation is true.
 
     return (
       <Mapbox.Camera
@@ -461,10 +491,9 @@ export const StableCamera = React.memo(
         followUserMode={speed != null && speed > 3 ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
         followZoomLevel={followZoomLevel}
         followPitch={followPitch}
-        followHeading={speed != null && speed > 3 ? (userHeading ?? 0) : undefined}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
-        animationDuration={600}
+        animationDuration={400}
       />
     );
   },

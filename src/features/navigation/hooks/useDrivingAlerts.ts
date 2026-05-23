@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Animated } from 'react-native';
 import type { MutableRefObject } from 'react';
-import { haversineMeters, ttsSpeak } from '../utils/mapUtils';
+import { cumulativeRouteDistances, haversineMeters, nearestRouteMatch, ttsSpeak } from '../utils/mapUtils';
 import type { POICard, ProximityAlerts } from '../../../shared/services/backendApi';
 import { useSoundAlerts } from './useSoundAlerts';
 import type { RouteResult } from '../api/directions';
@@ -16,54 +16,6 @@ interface UseDrivingAlertsArgs {
   cameraResults: POICard[];
   voiceMutedRef: MutableRefObject<boolean>;
   lanePulseOn: boolean;
-}
-
-function pointToSegmentDistanceMeters(
-  point: [number, number],
-  start: [number, number],
-  end: [number, number],
-): number {
-  const [px, py] = point;
-  const [ax, ay] = start;
-  const [bx, by] = end;
-  const dx = bx - ax;
-  const dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
-  return haversineMeters(point, [ax + t * dx, ay + t * dy]);
-}
-
-function nearestRouteMatch(point: [number, number], coords: [number, number][]) {
-  let bestIndex = 0;
-  let bestDistance = Infinity;
-
-  for (let i = 0; i < coords.length; i += 1) {
-    const vertexDistance = haversineMeters(point, coords[i]);
-    if (vertexDistance < bestDistance) {
-      bestDistance = vertexDistance;
-      bestIndex = i;
-    }
-  }
-
-  const fromIdx = Math.max(0, bestIndex - 1);
-  const toIdx = Math.min(coords.length - 2, bestIndex + 6);
-  for (let i = fromIdx; i <= toIdx; i += 1) {
-    const segmentDistance = pointToSegmentDistanceMeters(point, coords[i], coords[i + 1]);
-    if (segmentDistance < bestDistance) {
-      bestDistance = segmentDistance;
-      bestIndex = i + 1;
-    }
-  }
-
-  return { bestIndex, bestDistance };
-}
-
-function cumulativeRouteDistances(coords: [number, number][]) {
-  const cumulative = new Array<number>(coords.length).fill(0);
-  for (let i = 1; i < coords.length; i += 1) {
-    cumulative[i] = cumulative[i - 1] + haversineMeters(coords[i - 1], coords[i]);
-  }
-  return cumulative;
 }
 
 export function useDrivingAlerts({

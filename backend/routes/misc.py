@@ -175,6 +175,15 @@ _NUMERIC_RESTRICTION_TAGS = (
 _ACCESS_RESTRICTION_TAGS = ("hgv", "goods", "hazmat")
 _RESTRICTION_TAGS = _NUMERIC_RESTRICTION_TAGS + _ACCESS_RESTRICTION_TAGS
 _DENY_VALUES = {"no", "private", "destination", "delivery"}
+_OVERPASS_ENDPOINTS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+)
+_OVERPASS_HEADERS = {
+    "User-Agent": "TruckAI/1.0 route-restriction-checker",
+    "Accept": "application/json",
+}
 
 def _restriction_query(bbox: str) -> str:
     clauses = []
@@ -182,6 +191,25 @@ def _restriction_query(bbox: str) -> str:
         clauses.append(f'node["{tag}"]({bbox});')
         clauses.append(f'way["{tag}"]({bbox});')
     return f'[out:json][timeout:10];({"".join(clauses)});out center 400;'
+
+def _overpass_restrictions(query: str) -> list:
+    last_error = None
+    for endpoint in _OVERPASS_ENDPOINTS:
+        try:
+            r = requests.post(
+                endpoint,
+                data={"data": query},
+                headers=_OVERPASS_HEADERS,
+                timeout=12,
+            )
+            r.raise_for_status()
+            return r.json().get("elements", [])
+        except Exception as e:
+            last_error = e
+            print(f"[OVERPASS] restriction check failed via {endpoint}: {e}", flush=True)
+    if last_error:
+        raise last_error
+    return []
 
 def _restriction_value_num(raw: str) -> float | None:
     try:
@@ -240,9 +268,7 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
         lats, lngs = [c[1] for c in seg], [c[0] for c in seg]
         bbox = f"{min(lats)-0.006},{min(lngs)-0.006},{max(lats)+0.006},{max(lngs)+0.006}"
         try:
-            r = requests.post("https://overpass-api.de/api/interpreter", data={"data": _restriction_query(bbox)}, timeout=12)
-            r.raise_for_status()
-            elements = r.json().get("elements", [])
+            elements = _overpass_restrictions(_restriction_query(bbox))
             successful_checks += 1
         except Exception as e:
             print(f"[OVERPASS] restriction check failed for bbox {bbox}: {e}", flush=True)
@@ -299,7 +325,7 @@ def check_truck_restrictions():
             truck_weight_t = _num(profile.get("weight_t"))
             truck_length_m = _num(profile.get("length_m"))
             is_truck = (
-                (truck_weight_t is not None and truck_weight_t > 3.5) or
+                (truck_weight_t is not None and truck_weight_t >= 3.5) or
                 (truck_length_m is not None and truck_length_m > 6.0)
             )
             if is_truck:
@@ -410,6 +436,25 @@ def _simple_congestion_geojson(geometry: dict, delay_seconds: int = 0) -> dict:
         ],
     }
 
+def _tomtom_steps(route: dict, total_m: int) -> list:
+    instructions = route.get("guidance", {}).get("instructions", [])
+    steps = []
+    for i, instr in enumerate(instructions):
+        nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
+        steps.append({
+            "maneuver": {
+                "instruction": instr.get("message", ""),
+                "type": instr.get("maneuver", ""),
+                "modifier": None,
+            },
+            "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)),
+            "duration": instr.get("travelTimeInSeconds", 0),
+            "name": instr.get("street", ""),
+            "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [],
+            "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else [],
+        })
+    return steps
+
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
 def calculate_route():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
@@ -418,7 +463,11 @@ def calculate_route():
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
     o_lat, o_lng, d_lat, d_lng = round(origin[1], 6), round(origin[0], 6), round(destination[1], 6), round(destination[0], 6)
-    truck_key = f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:{truck.get('max_length')}"
+    truck_key = (
+        f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:"
+        f"{truck.get('max_length')}:{truck.get('hazmat_class')}:{truck.get('adr_tunnel')}:"
+        f"{truck.get('avoidUnpaved')}:{data.get('depart_at')}"
+    )
     cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}"
     if cache_key in _route_cache:
         res, exp = _route_cache[cache_key]
@@ -427,7 +476,7 @@ def calculate_route():
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
     # Base avoid list — low emission zones + unpaved
     avoid_list = ["lowEmissionZones", "unpavedRoads"] if truck.get("avoidUnpaved") else ["lowEmissionZones"]
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "locationReferencing": ["openlr"]}
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 2, "routeRepresentation": "polyline", "locationReferencing": ["openlr"]}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]
@@ -470,10 +519,7 @@ def calculate_route():
         print(f"[ROUTING] using {match_path} openlr={bool(openlr_code)} distance_m={total_m} coords={len(raw_geom.get('coordinates', []))}", flush=True)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
-        steps = []
-        for i, instr in enumerate(instructions):
-            nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
-            steps.append({"maneuver": {"instruction": instr.get("message", ""), "type": instr.get("maneuver", ""), "modifier": None}, "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)), "duration": instr.get("travelTimeInSeconds", 0), "name": instr.get("street", ""), "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [], "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else []})
+        steps = _tomtom_steps(rt, total_m)
 
         # If Mapbox matching refuses the geometry (common when TomTom returns many points),
         # restore the short-route Google polyline fallback that keeps urban routes snapped.
@@ -511,6 +557,8 @@ def calculate_route():
                 if snapped_alt else
                 _tomtom_congestion_geojson(ar, raw_alt_geom)
             )
+            alt_traffic_alerts = _tomtom_traffic_alerts(ar, raw_alt_geom)
+            alt_restrictions = _extract_route_restrictions(alt_geom) if alt_m <= 250000 else []
             alternatives.append({
                 "label": ["Алтернатива 1", "Алтернатива 2"][idx],
                 "color": ["#B922FF", "#08F384"][idx],
@@ -520,6 +568,10 @@ def calculate_route():
                 "geometry": alt_geom,
                 "dest_coords": destination,
                 "congestion_geojson": alt_congestion,
+                "traffic_alerts": alt_traffic_alerts,
+                "steps": _tomtom_steps(ar, alt_m),
+                "maxspeeds": _tomtom_speed_limits(ar),
+                "restrictions": alt_restrictions,
             })
 
         # Section indices match the raw TomTom polyline. If we replace the geometry with snapped

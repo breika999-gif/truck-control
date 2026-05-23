@@ -89,15 +89,13 @@ import { useNavigationState } from '../hooks/useNavigationState';
 import { useRouteInsights } from '../hooks/useRouteInsights';
 import { useRouteOrchestrator } from '../hooks/useRouteOrchestrator';
 import { useDrivingAlerts } from '../hooks/useDrivingAlerts';
-import { useLocationRuntime } from '../hooks/useLocationRuntime';
+import { STRUCTURE_WARNING_DISMISS_MS, useLocationRuntime } from '../hooks/useLocationRuntime';
 import { useSimulation } from '../hooks/useSimulation';
 import { useWakeWord } from '../hooks/useWakeWord';
 import { useChatPanelsState } from '../hooks/useChatPanelsState';
 import { useMapGeoJSON } from '../hooks/useMapGeoJSON';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
-
-const EMPTY_RESTRICTIONS: never[] = [];
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
 
@@ -120,6 +118,73 @@ function routeOptionAnalysisKey(option: RouteOption, profile: VehicleProfile): s
     profile.length_m,
     profile.hazmat_class ?? 'none',
   ].join('|');
+}
+
+function isRestrictionRelevantToProfile(restriction: RestrictionPoint, profile: VehicleProfile | null): boolean {
+  if (!profile) return true;
+
+  const limit = Number(restriction.value_num);
+  const hasLimit = Number.isFinite(limit);
+
+  if (restriction.type === 'maxheight') {
+    return hasLimit && profile.height_m + 0.2 >= limit;
+  }
+  if (restriction.type === 'maxwidth') {
+    return hasLimit && profile.width_m + 0.05 >= limit;
+  }
+  if (restriction.type === 'maxweight') {
+    return hasLimit && profile.weight_t + 0.05 >= limit;
+  }
+  if (restriction.type === 'no_trucks') {
+    return profile.weight_t >= 3.5 || profile.length_m > 6.0;
+  }
+  if (restriction.type === 'hazmat') {
+    const hazmat = String(profile.hazmat_class ?? 'none').toLowerCase();
+    return hazmat !== '' && hazmat !== 'none' && hazmat !== '0' && hazmat !== 'false';
+  }
+  return true;
+}
+
+function congestionGeoJSONForOption(option: RouteOption): GeoJSON.FeatureCollection {
+  if (option.congestion_geojson?.type === 'FeatureCollection') {
+    return option.congestion_geojson as GeoJSON.FeatureCollection;
+  }
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: { congestion: option.traffic === 'heavy' ? 'heavy' : option.traffic === 'moderate' ? 'moderate' : 'low' },
+      geometry: option.geometry,
+    }],
+  };
+}
+
+function routeFromOption(option: RouteOption): RouteResult {
+  return {
+    geometry: option.geometry,
+    distance: option.distance,
+    duration: option.duration,
+    maxspeeds: (option.maxspeeds ?? []) as RouteResult['maxspeeds'],
+    congestion: [],
+    congestionGeoJSON: congestionGeoJSONForOption(option),
+    steps: (option.steps ?? []) as RouteResult['steps'],
+    restrictions: (option.restrictions ?? []) as RouteResult['restrictions'],
+    traffic_alerts: option.traffic_alerts ?? [],
+    alternatives: [],
+    optimizedWaypointOrder: null,
+  };
+}
+
+function trafficAlertsToGeoJSON(alerts?: RouteOption['traffic_alerts']): GeoJSON.FeatureCollection | null {
+  if (!alerts?.length) return null;
+  return {
+    type: 'FeatureCollection',
+    features: alerts.map((a: any) => ({
+      type: 'Feature' as const,
+      properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
+      geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
+    })),
+  };
 }
 
 // ── Component ────────────────────────────────────────────────────────
@@ -177,6 +242,8 @@ const MapScreen: React.FC = () => {
   const profileRef         = useRef<VehicleProfile | null>(null);
   const stoppedSinceRef    = useRef<number | null>(null);
   const lastRestrictionRef = useRef<number>(0);
+  const activeStructureWarningKeyRef = useRef<string | null>(null);
+  const dismissedStructureWarningsRef = useRef<Map<string, number>>(new Map());
   const orchestratorUserCoordsRef = useRef<[number, number] | null>(null);
   const buildRoutePOIScanRef = useRef<(r: RouteResult) => void>(() => {});
   const setNavCongestionGeoJSONRef = useRef<(geojson: GeoJSON.FeatureCollection | null) => void>(() => {});
@@ -262,8 +329,12 @@ const MapScreen: React.FC = () => {
     lastRerouteRef,
     stoppedSinceRef,
     lastRestrictionRef,
+    dismissedStructureWarningsRef,
     avoidUnpavedRef,
-    setTunnelWarning: (msg) => setTunnelWarningRef.current(msg),
+    setTunnelWarning: (msg, key) => {
+      activeStructureWarningKeyRef.current = msg ? (key ?? null) : null;
+      setTunnelWarningRef.current(msg);
+    },
     setSpeedLimit,
     setCurrentStep,
     setDistToTurn,
@@ -693,6 +764,11 @@ const MapScreen: React.FC = () => {
     const coords = option?.geometry.coordinates;
     if (!option || !coords) return;
 
+    const selectedRoute = routeFromOption(option);
+    setRoute(selectedRoute);
+    setNavCongestionGeoJSON(selectedRoute.congestionGeoJSON);
+    setNavTrafficAlerts(trafficAlertsToGeoJSON(option.traffic_alerts));
+
     const cacheKey = routeOptionAnalysisKey(option, prof);
     const cachedWarnings = restrictionAnalysisCacheRef.current.get(cacheKey);
     if (cachedWarnings) {
@@ -714,7 +790,7 @@ const MapScreen: React.FC = () => {
     } finally {
       setRestrictionChecking(false);
     }
-  }, [routeOptions]);
+  }, [routeOptions, setNavCongestionGeoJSON, setNavTrafficAlerts, setRoute]);
 
   useEffect(() => {
     if (!mapIsLoaded || navigating || !isTracking || !userCoords) return;
@@ -832,8 +908,12 @@ const MapScreen: React.FC = () => {
   const nextStep   = route?.steps?.[currentStep + 1];
   const stepToShow = navigating ? activeStep : null;
 
+  const displayRestrictionPoints = useMemo<RestrictionPoint[]>(() => (
+    (route?.restrictions ?? []).filter(r => isRestrictionRelevantToProfile(r, profile))
+  ), [profile, route?.restrictions]);
+
   const activeRestriction = useMemo<RestrictionPoint | null>(() => {
-    if (!navigating || !userCoords || !route?.restrictions?.length) return null;
+    if (!navigating || !userCoords || !route || !displayRestrictionPoints.length) return null;
     const coords = route.geometry.coordinates;
     const ALERT_M = 600;
     let userIdx = 0;
@@ -844,7 +924,7 @@ const MapScreen: React.FC = () => {
     }
     let nearest: RestrictionPoint | null = null;
     let nearestDist = Infinity;
-    for (const r of route.restrictions) {
+    for (const r of displayRestrictionPoints) {
       let rIdx = 0;
       let rMinD = Infinity;
       for (let i = userIdx; i < coords.length; i++) {
@@ -860,7 +940,7 @@ const MapScreen: React.FC = () => {
       }
     }
     return nearest;
-  }, [navigating, userCoords, route?.restrictions, route?.geometry.coordinates]);
+  }, [displayRestrictionPoints, navigating, userCoords, route?.geometry.coordinates]);
 
   const routeLineColor = dominantCongestion === 'heavy' ? '#FF3B30'
     : dominantCongestion === 'moderate' ? '#FF9500'
@@ -916,6 +996,14 @@ const MapScreen: React.FC = () => {
     voiceMutedRef, lanePulseOn,
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
+  const handleTunnelWarningDismiss = useCallback(() => {
+    const key = activeStructureWarningKeyRef.current;
+    if (key) {
+      dismissedStructureWarningsRef.current.set(key, Date.now() + STRUCTURE_WARNING_DISMISS_MS);
+    }
+    activeStructureWarningKeyRef.current = null;
+    setTunnelWarning(null);
+  }, [setTunnelWarning]);
 
   // ── GeoJSON for all map layers ────────────────────────────────────────────
   const {
@@ -993,23 +1081,22 @@ const MapScreen: React.FC = () => {
     if (dest) navigateTo(dest, destinationNameRef.current);
   }, [navigateTo]);
 
-  const handleStartRoute = useCallback((cong: any, alerts: any) => {
-    setNavCongestionGeoJSON(cong ?? null);
-    setNavTrafficAlerts(alerts && alerts.length > 0 ? {
-      type: 'FeatureCollection',
-      features: alerts.map((a: any) => ({
-        type: 'Feature' as const,
-        properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
-        geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
-      })),
-    } : null);
-    if (routeOptDest) {
+  const handleStartRoute = useCallback((_cong: any, _alerts: any) => {
+    const selectedIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+    const selectedOption = selectedIdx == null ? null : routeOptions[selectedIdx];
+    if (selectedOption?.steps?.length) {
+      const selectedRoute = routeFromOption(selectedOption);
+      setRoute(selectedRoute);
+      setNavCongestionGeoJSON(selectedRoute.congestionGeoJSON);
+      setNavTrafficAlerts(trafficAlertsToGeoJSON(selectedOption.traffic_alerts));
+      handleStart();
+    } else if (routeOptDest) {
       navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);
     }
     setRouteOptions([]);
     setSelectedRouteIdx(null);
     setRestrictionWarnings([]);
-  }, [routeOptDest, navigateTo, setNavCongestionGeoJSON, setNavTrafficAlerts,
+  }, [handleStart, routeOptDest, routeOptions, selectedRouteIdx, navigateTo, setNavCongestionGeoJSON, setNavTrafficAlerts, setRoute,
       setRouteOptions, setSelectedRouteIdx, setRestrictionWarnings]);
 
   return (
@@ -1065,7 +1152,6 @@ const MapScreen: React.FC = () => {
           speed={speed}
           isTracking={isTracking}
           userCoords={userCoords}
-          userHeading={userHeading}
         />
 
         <Mapbox.UserLocation visible={false} />
@@ -1112,7 +1198,7 @@ const MapScreen: React.FC = () => {
           handleSelectRouteOption={handleSelectRouteOption}
           ttsSpeak={ttsSpeak}
           voiceMutedRef={voiceMutedRef}
-          restrictionPoints={route?.restrictions ?? EMPTY_RESTRICTIONS}
+          restrictionPoints={displayRestrictionPoints}
           poiResults={poiResults}
           handlePOINavigate={handlePOINavigate}
         />
@@ -1133,6 +1219,7 @@ const MapScreen: React.FC = () => {
         message={tunnelWarning}
         visible={!!tunnelWarning && navigating}
         topOffset={insets.top}
+        onDismiss={handleTunnelWarningDismiss}
       />
 
       {stepToShow && (

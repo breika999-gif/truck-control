@@ -4,13 +4,14 @@ import Geolocation from 'react-native-geolocation-service';
 import {
   fetchNearbyRestrictions,
   fetchSpeedLimitAtPoint,
+  type RoadStructureCandidate,
 } from '../api/tilequery';
 import {
   getSpeedLimitAtPosition,
   getCurrentStepIndex,
   type RouteResult,
 } from '../api/directions';
-import { haversineMeters } from '../utils/mapUtils';
+import { cumulativeRouteDistances, haversineMeters, nearestRouteMatch } from '../utils/mapUtils';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type * as GeoJSON from 'geojson';
 import type { NavPhase } from './useNavigationState';
@@ -26,9 +27,10 @@ interface UseLocationRuntimeProps {
   lastRerouteRef: MutableRefObject<number>;
   stoppedSinceRef: MutableRefObject<number | null>;
   lastRestrictionRef: MutableRefObject<number>;
+  dismissedStructureWarningsRef: MutableRefObject<Map<string, number>>;
   avoidUnpavedRef: MutableRefObject<boolean>;
 
-  setTunnelWarning: (msg: string | null) => void;
+  setTunnelWarning: (msg: string | null, key?: string | null) => void;
   setSpeedLimit: (limit: number | null) => void;
   setCurrentStep: (step: number) => void;
   setDistToTurn: (dist: number | null) => void;
@@ -37,6 +39,140 @@ interface UseLocationRuntimeProps {
   setNavCongestionGeoJSON: (geojson: GeoJSON.FeatureCollection | null) => void;
   setBackendOnline?: (online: boolean) => void;
   navigating: boolean;
+}
+
+const STRUCTURE_QUERY_RADIUS_M = 650;
+const STRUCTURE_ROUTE_TOLERANCE_M = 85;
+const STRUCTURE_LOOKAHEAD_M = 1500;
+const STRUCTURE_BEHIND_TOLERANCE_M = -50;
+export const STRUCTURE_WARNING_DISMISS_MS = 15 * 60_000;
+
+function hasAdrCargo(profile: VehicleProfile): boolean {
+  const hazmat = String(profile.hazmat_class ?? 'none').toLowerCase();
+  return hazmat !== '' && hazmat !== 'none' && hazmat !== '0' && hazmat !== 'false';
+}
+
+function profileNeedsStructureWarning(
+  candidate: RoadStructureCandidate,
+  profile: VehicleProfile,
+): boolean {
+  if (candidate.kind === 'tunnel') {
+    return profile.height_m > 3.5 || hasAdrCargo(profile);
+  }
+  return profile.weight_t >= 3.5;
+}
+
+function isWarningDismissed(
+  key: string,
+  dismissed: Map<string, number>,
+  now: number,
+): boolean {
+  const until = dismissed.get(key);
+  if (!until) return false;
+  if (until <= now) {
+    dismissed.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function formatStructureDistance(meters: number): string {
+  const rounded = Math.max(0, Math.round(meters / 10) * 10);
+  if (rounded >= 1000) return `${(rounded / 1000).toFixed(1)} км`;
+  return `${rounded} м`;
+}
+
+function routeMatchForStructure(
+  candidate: RoadStructureCandidate,
+  routeCoords: [number, number][],
+  routeMeters: number[],
+  userRouteIndex: number,
+) {
+  const coords = candidate.coordinates.length
+    ? candidate.coordinates
+    : [[candidate.lng, candidate.lat] as [number, number]];
+
+  let best: {
+    alongRouteM: number;
+    lateralRouteM: number;
+    routeIndex: number;
+    coord: [number, number];
+  } | null = null;
+
+  for (const coord of coords) {
+    const match = nearestRouteMatch(coord, routeCoords);
+    const alongRouteM = routeMeters[match.bestIndex] - routeMeters[userRouteIndex];
+    if (
+      alongRouteM < STRUCTURE_BEHIND_TOLERANCE_M ||
+      alongRouteM > STRUCTURE_LOOKAHEAD_M ||
+      match.bestDistance > STRUCTURE_ROUTE_TOLERANCE_M
+    ) {
+      continue;
+    }
+
+    if (
+      !best ||
+      Math.max(0, alongRouteM) < Math.max(0, best.alongRouteM) ||
+      (Math.abs(alongRouteM - best.alongRouteM) < 25 && match.bestDistance < best.lateralRouteM)
+    ) {
+      best = {
+        alongRouteM,
+        lateralRouteM: match.bestDistance,
+        routeIndex: match.bestIndex,
+        coord,
+      };
+    }
+  }
+
+  return best;
+}
+
+function chooseRouteStructureWarning(
+  candidates: RoadStructureCandidate[],
+  route: RouteResult,
+  userCoords: [number, number],
+  profile: VehicleProfile,
+  dismissed: Map<string, number>,
+  now: number,
+): { message: string; key: string } | null {
+  const routeCoords = route.geometry.coordinates;
+  if (routeCoords.length < 2) return null;
+
+  const userMatch = nearestRouteMatch(userCoords, routeCoords);
+  const routeMeters = cumulativeRouteDistances(routeCoords);
+
+  const nearest = candidates
+    .filter(candidate => profileNeedsStructureWarning(candidate, profile))
+    .map(candidate => {
+      const match = routeMatchForStructure(candidate, routeCoords, routeMeters, userMatch.bestIndex);
+      if (!match) return null;
+      const key = [
+        candidate.kind,
+        Math.round(routeMeters[match.routeIndex] / 200),
+      ].join(':');
+      return { candidate, match, key };
+    })
+    .filter((item): item is NonNullable<typeof item> => !!item)
+    .filter(item => !isWarningDismissed(item.key, dismissed, now))
+    .sort((a, b) => (
+      Math.max(0, a.match.alongRouteM) - Math.max(0, b.match.alongRouteM) ||
+      a.match.lateralRouteM - b.match.lateralRouteM
+    ))[0];
+
+  if (!nearest) return null;
+
+  const distance = formatStructureDistance(nearest.match.alongRouteM);
+  if (nearest.candidate.kind === 'tunnel') {
+    return {
+      key: nearest.key,
+      message: `⚠️ Тунел след ${distance} — провери клиренс!`,
+    };
+  }
+
+  return {
+    key: nearest.key,
+    message: `⚠️ Мост след ${distance} — провери носимост!`,
+  };
 }
 
 export const useLocationRuntime = ({
@@ -50,6 +186,7 @@ export const useLocationRuntime = ({
   lastRerouteRef: _lastRerouteRef,
   stoppedSinceRef,
   lastRestrictionRef,
+  dismissedStructureWarningsRef,
   avoidUnpavedRef: _avoidUnpavedRef,
   setTunnelWarning,
   setSpeedLimit,
@@ -139,24 +276,29 @@ export const useLocationRuntime = ({
 
           const profR = profileRef.current;
           const restrictInterval = kmh < 50 ? 60_000 : kmh < 100 ? 90_000 : 120_000;
-          if (profR && profR.height_m > 3.5 && tqNow - lastRestrictionRef.current >= restrictInterval) {
+          const shouldCheckNearbyRestrictions = !!profR && (
+            profR.height_m > 3.5 ||
+            profR.weight_t >= 3.5 ||
+            (profR.hazmat_class != null && profR.hazmat_class !== 'none')
+          );
+          if (shouldCheckNearbyRestrictions && tqNow - lastRestrictionRef.current >= restrictInterval) {
             const distMoved = lastRestrictionCoordsRef.current
               ? haversineMeters([tqLng, tqLat], lastRestrictionCoordsRef.current)
               : 999;
             if (distMoved >= 300) {
               lastRestrictionRef.current = tqNow;
               lastRestrictionCoordsRef.current = [tqLng, tqLat];
-              fetchNearbyRestrictions(tqLng, tqLat, 800).then(r => {
+              fetchNearbyRestrictions(tqLng, tqLat, STRUCTURE_QUERY_RADIUS_M).then(r => {
                 if (!isMountedRef.current) return;
-                if (r.hasTunnel) {
-                  const dist = r.tunnelDistance > 0 ? ` ${r.tunnelDistance} м` : '';
-                  setTunnelWarning(`⚠️ Тунел${dist} — провери клиренс!`);
-                } else if (r.hasBridge) {
-                  const dist = r.bridgeDistance > 0 ? ` ${r.bridgeDistance} м` : '';
-                  setTunnelWarning(`⚠️ Мост${dist} — провери носимост!`);
-                } else {
-                  setTunnelWarning(null);
-                }
+                const warning = chooseRouteStructureWarning(
+                  r.candidates,
+                  cur,
+                  coords,
+                  profR,
+                  dismissedStructureWarningsRef.current,
+                  Date.now(),
+                );
+                setTunnelWarning(warning?.message ?? null, warning?.key ?? null);
               });
             }
           }

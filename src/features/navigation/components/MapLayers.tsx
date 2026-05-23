@@ -170,6 +170,25 @@ const MapLayers: React.FC<MapLayersProps> = ({
     })),
   }), [restrictionPoints]);
 
+  const parkingGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: parkingResults
+      .map((p, idx) => ({ p, idx }))
+      .filter(({ p }) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+      .map(({ p, idx }) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+        properties: {
+          idx,
+          label: formatPOIDistance(p.distance_m) ?? '',
+          safe: p.safe === true,
+          paid: p.paid === true,
+          security: p.security === true,
+          showers: p.showers === true,
+        },
+      })),
+  }), [parkingResults]);
+
   const originCoords = customOriginRef.current ?? userCoords;
 
   return (
@@ -250,12 +269,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.CircleLayer
             id="restriction-circles"
             slot="top"
-            minZoomLevel={9}
+            minZoomLevel={7}
             style={{
-              circleRadius: 18,
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 7, 11, 9, 15, 13, 18] as any,
               circleColor: '#FFFFFF',
               circleOpacity: 1.0,
-              circleStrokeWidth: 3,
+              circleStrokeWidth: ['interpolate', ['linear'], ['zoom'], 7, 2, 12, 3] as any,
               circleStrokeColor: '#D0021B',
               circleStrokeOpacity: 1.0,
               circlePitchAlignment: 'viewport',
@@ -277,7 +296,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
                   ['match', ['get', 'type'], 'maxheight', 'м', 'maxweight', 'т', 'maxwidth', 'м', ''],
                 ],
               ],
-              textSize: 14,
+              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 9, 12, 13, 14],
               textColor: '#1A1A1A',
               textHaloColor: '#FFFFFF',
               textHaloWidth: 2.5,
@@ -480,30 +499,89 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* POI Pins (Parking) — MarkerView for custom React Native views */}
-      {mapIsLoaded && parkingResults.filter(p => p.lat && p.lng).map((p, i) => (
-        <Mapbox.MarkerView
-          key={`parking-pin-${i}`}
-          id={`parking-pin-${i}`}
-          coordinate={[p.lng, p.lat]}
-          allowOverlap
+      {/* POI Pins (Parking) — ShapeSource keeps taps reliable on Mapbox */}
+      {mapIsLoaded && parkingGeoJSON.features.length > 0 && (
+        <Mapbox.ShapeSource
+          id="parking-source"
+          shape={parkingGeoJSON}
+          onPress={e => {
+            const idx = e.features[0]?.properties?.idx as number | undefined;
+            if (idx != null) {
+              const p = parkingResults[idx];
+              if (p) {
+                setSelectedParking(p);
+                if (p.voice_desc && !voiceMutedRef.current) ttsSpeak(p.voice_desc);
+              }
+            }
+          }}
         >
-          <View
-            style={{ alignItems: 'center' }}
-            onTouchEnd={() => {
-              setSelectedParking(p);
-              if (p.voice_desc && !voiceMutedRef.current) ttsSpeak(p.voice_desc);
-            }}
-          >
-            <POIMarker
-              symbol="P"
-              accent="#13BDFF"
-              symbolColor="#13BDFF"
-              label={formatPOIDistance(p.distance_m)}
-            />
-          </View>
-        </Mapbox.MarkerView>
-      ))}
+          <Mapbox.CircleLayer
+            id="parking-halo"
+            slot="top"
+            style={{
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 9, 18, 14, 25, 17, 31] as any,
+              circleColor: '#061426',
+              circleStrokeColor: '#13BDFF',
+              circleStrokeWidth: ['interpolate', ['linear'], ['zoom'], 9, 2.5, 15, 4] as any,
+              circleOpacity: 0.92,
+              circleStrokeOpacity: 1,
+              circlePitchAlignment: 'viewport',
+              circleEmissiveStrength: lightMode ? 0 : 1,
+            } as any}
+          />
+          <Mapbox.CircleLayer
+            id="parking-quality-dot"
+            slot="top"
+            style={{
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 9, 4, 15, 6] as any,
+              circleTranslate: [14, -14],
+              circleColor: [
+                'case',
+                ['get', 'security'], '#00ff88',
+                ['get', 'showers'], '#62d9ff',
+                ['get', 'paid'], '#ffcc00',
+                '#8b93ff',
+              ] as any,
+              circleStrokeColor: '#07111f',
+              circleStrokeWidth: 1.5,
+              circlePitchAlignment: 'viewport',
+              circleEmissiveStrength: lightMode ? 0 : 1,
+            } as any}
+          />
+          <Mapbox.SymbolLayer
+            id="parking-letter"
+            slot="top"
+            style={{
+              textField: 'P',
+              textSize: ['interpolate', ['linear'], ['zoom'], 9, 18, 14, 25, 17, 29] as any,
+              textColor: '#13BDFF',
+              textHaloColor: '#061426',
+              textHaloWidth: 1.5,
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+              textPitchAlignment: 'viewport',
+              textEmissiveStrength: lightMode ? 0 : 1,
+            } as any}
+          />
+          <Mapbox.SymbolLayer
+            id="parking-distance-label"
+            slot="top"
+            minZoomLevel={10}
+            style={{
+              textField: ['get', 'label'],
+              textSize: 11,
+              textColor: '#ffffff',
+              textHaloColor: '#061426',
+              textHaloWidth: 3,
+              textOffset: [0, 2.15],
+              textAllowOverlap: true,
+              textIgnorePlacement: true,
+              textPitchAlignment: 'viewport',
+              textEmissiveStrength: lightMode ? 0 : 1,
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
 
       {/* Manual POI Search Results (poiResults) — PointAnnotation */}
       {mapIsLoaded && poiResults.map((p, i) => (
@@ -635,7 +713,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       {/* Route alternatives */}
       {mapIsLoaded && routeOptions.map((opt, i) => {
-        const isSelected = selectedRouteIdx === i;
+        const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+        const isSelected = effectiveSelectedRouteIdx === i;
         if (isSelected && route) return null;
         const coords = opt.geometry.coordinates;
         const midCoord = coords[Math.floor(coords.length / 2)] as [number, number];

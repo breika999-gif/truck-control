@@ -4,11 +4,10 @@ import {
   Animated,
   PanResponder,
   StyleSheet,
-  Dimensions,
   Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const HANDLE_H = 48;
 
 interface BottomSheetProps {
@@ -28,12 +27,13 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
   kbHeight = 0,
   onClose,
 }) => {
-  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const { height: screenHeight } = useWindowDimensions();
+  const translateY = useRef(new Animated.Value(screenHeight)).current;
   const bottomOffset = useRef(new Animated.Value(0)).current;
   
   // Dynamic maxHeight to stay within screen when keyboard is up
-  const maxHeight = SCREEN_HEIGHT * 0.5; // Changed from 0.85 to 0.5 for half-screen
-  const availableHeight = SCREEN_HEIGHT - (kbHeight > 0 ? kbHeight + 40 : 80);
+  const maxHeight = screenHeight * 0.56;
+  const availableHeight = screenHeight - (kbHeight > 0 ? kbHeight + 24 : 80);
   const actualMaxHeight = Math.min(maxHeight, availableHeight);
 
   const [currentHeight, setCurrentHeight] = useState(Math.min(initialHeight ?? snapHeight, actualMaxHeight));
@@ -65,7 +65,7 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       const nextHeight = Math.min(initialHeight ?? snapHeight, actualMaxHeight);
       setCurrentHeight(nextHeight);
       dragStartHeightRef.current = nextHeight;
-      translateY.setValue(SCREEN_HEIGHT);
+      translateY.setValue(screenHeight);
       Animated.spring(translateY, {
         toValue: 0,
         useNativeDriver: true,
@@ -76,12 +76,12 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       // Only dismiss keyboard when sheet is actually closing (true → false)
       if (wasVisible) Keyboard.dismiss();
       Animated.timing(translateY, {
-        toValue: SCREEN_HEIGHT,
+        toValue: screenHeight,
         duration: 220,
         useNativeDriver: true,
       }).start();
     }
-  }, [visible, translateY, initialHeight, snapHeight, actualMaxHeight]);
+  }, [visible, translateY, initialHeight, snapHeight, actualMaxHeight, screenHeight]);
 
   const currentHeightRef = useRef(currentHeight);
   useEffect(() => { currentHeightRef.current = currentHeight; }, [currentHeight]);

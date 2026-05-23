@@ -56,11 +56,35 @@ function routeOptionSignature(option: RouteOption): string {
   return `${Math.round(option.distance / 1000)}|${Math.round(option.duration / 60)}|${checkpoints}`;
 }
 
+function nearestPointDistanceMeters(point: Coords, coords: Coords[]): number {
+  let nearest = Infinity;
+  for (const coord of coords) {
+    const d = haversineMeters(point, coord);
+    if (d < nearest) nearest = d;
+  }
+  return nearest;
+}
+
+function routesAreVisuallySame(a: RouteOption, b: RouteOption): boolean {
+  const aCoords = a.geometry.coordinates as Coords[];
+  const bCoords = b.geometry.coordinates as Coords[];
+  if (aCoords.length < 2 || bCoords.length < 2) return false;
+
+  const sampleCount = Math.min(10, aCoords.length);
+  let total = 0;
+  let max = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    const idx = Math.round((i / Math.max(1, sampleCount - 1)) * (aCoords.length - 1));
+    const d = nearestPointDistanceMeters(aCoords[idx], bCoords);
+    total += d;
+    max = Math.max(max, d);
+  }
+  return total / sampleCount < 80 && max < 220;
+}
+
 function sameRouteOption(a: RouteOption, b: RouteOption): boolean {
   if (routeOptionSignature(a) === routeOptionSignature(b)) return true;
-  const distanceDelta = Math.abs(a.distance - b.distance);
-  const durationDelta = Math.abs(a.duration - b.duration);
-  return distanceDelta < 1000 && durationDelta < 120;
+  return routesAreVisuallySame(a, b) && routesAreVisuallySame(b, a);
 }
 
 function hasSubstantialRouteChange(
@@ -319,6 +343,10 @@ export function useRouteOrchestrator({
           traffic: 'low',
           geometry: result.geometry,
           dest_coords: dest,
+          steps: result.steps,
+          maxspeeds: result.maxspeeds,
+          restrictions: result.restrictions,
+          traffic_alerts: result.traffic_alerts,
           congestion_geojson: result.congestionGeoJSON as any,
         };
         const alternatives = (result.alternatives ?? [])

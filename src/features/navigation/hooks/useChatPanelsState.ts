@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Keyboard, ScrollView, Platform, PermissionsAndroid } from 'react-native';
+import { Keyboard, ScrollView, Platform, PermissionsAndroid, Dimensions } from 'react-native';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import type { ChatMessage, POICard } from '../../../shared/services/backendApi';
 
@@ -31,22 +31,41 @@ export const useChatPanelsState = () => {
   const gptScrollRef    = useRef<ScrollView>(null);
   const geminiScrollRef = useRef<ScrollView>(null);
 
+  const syncKeyboardHeight = useCallback((event?: { endCoordinates?: { height?: number } }) => {
+    const eventHeight = event?.endCoordinates?.height;
+    const metricsHeight = Keyboard.metrics()?.height;
+    const nextHeight = Number.isFinite(eventHeight) && Number(eventHeight) > 0
+      ? eventHeight
+      : Number.isFinite(metricsHeight) && Number(metricsHeight) > 0
+        ? metricsHeight
+        : Math.round(Dimensions.get('window').height * 0.42);
+    setKbHeight(Math.max(0, Math.round(nextHeight || 0)));
+  }, []);
+
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', e => setKbHeight(e.endCoordinates.height));
+    const willShow = Keyboard.addListener('keyboardWillShow', syncKeyboardHeight);
+    const show = Keyboard.addListener('keyboardDidShow', syncKeyboardHeight);
+    const willChange = Keyboard.addListener('keyboardWillChangeFrame', syncKeyboardHeight);
+    const didChange = Keyboard.addListener('keyboardDidChangeFrame', syncKeyboardHeight);
+    const willHide = Keyboard.addListener('keyboardWillHide', () => setKbHeight(0));
     const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
     return () => {
+      willShow.remove();
       show.remove();
+      willChange.remove();
+      didChange.remove();
+      willHide.remove();
       hide.remove();
       if (isRecordingRef.current) {
         AudioRecorderPlayer.stopRecorder().catch(() => {});
         AudioRecorderPlayer.removeRecordBackListener();
       }
     };
-  }, []);
+  }, [syncKeyboardHeight]);
 
   useEffect(() => {
     chatInputRef.current = chatInput;

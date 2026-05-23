@@ -89,6 +89,9 @@ export interface RouteOption {
   traffic?: 'low' | 'moderate' | 'heavy';
   geometry: { type: 'LineString'; coordinates: [number, number][] };
   dest_coords: [number, number];
+  steps?: any[];
+  maxspeeds?: any[];
+  restrictions?: TruckRestrictionPoint[];
   /** Per-segment FeatureCollection tagged with congestion level for line coloring */
   congestion_geojson?: { type: 'FeatureCollection'; features: unknown[] };
   /** Clusters of heavy/severe congestion with delay estimates */
@@ -96,10 +99,20 @@ export interface RouteOption {
 }
 
 /** Result from /api/check-truck-restrictions */
+export interface TruckRestrictionPoint {
+  lat: number;
+  lng: number;
+  type: 'maxheight' | 'maxweight' | 'maxwidth' | 'no_trucks' | 'hazmat';
+  value: string;
+  value_num: number;
+  tag?: string;
+}
+
 export interface TruckRestrictionsResult {
   ok: boolean;
   safe: boolean;
   warnings: string[];
+  restrictions?: TruckRestrictionPoint[];
   restrictions_checked?: boolean;
 }
 
@@ -311,6 +324,7 @@ export async function checkTruckRestrictions(
       ok: false,
       safe: false,
       warnings: ['Проверката за ограничения по маршрута не успя. Не приемай маршрута като проверен за камион.'],
+      restrictions: [],
       restrictions_checked: false,
     };
   }

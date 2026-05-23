@@ -10,7 +10,7 @@ import { getDaySummary, getWeeklySummary } from '../../tacho/TachoEventLog';
 import { getMemorySummary, addMemory } from '../utils/geminiMemory';
 import { getHabitsSummary } from '../utils/driverHabits';
 import type { RouteResult } from '../api/directions';
-import { HOS_LIMIT_S } from '../utils/mapUtils';
+import { HOS_LIMIT_S, parseBubbleText, voiceText } from '../utils/mapUtils';
 
 interface ChatProps {
   userCoords: [number, number] | null;
@@ -81,12 +81,18 @@ export function useChat({
     if (!voiceMutedRef.current) { Tts.stop(); try { Tts.speak(text); } catch {} }
   }, []);
 
+  const cleanAssistantText = useCallback((raw: unknown, fallback = 'Готово.'): string => {
+    const parsed = parseBubbleText(String(raw ?? ''));
+    return parsed.trim() || fallback;
+  }, []);
+
   // ── Action Processor ──────────────────────────────────────────────────────
   const processAction = useCallback((act: any, newHistory: ChatMessage[], setHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>, response?: any) => {
-    const displayText =
+    const rawDisplayText =
       act.action === 'message'
         ? (act.text ?? '')
         : (act.message || response?.reply || '');
+    const displayText = cleanAssistantText(rawDisplayText, voiceText(act));
     
     if (displayText) {
       setHistory([...newHistory, { role: 'model', text: displayText }]);
@@ -136,7 +142,7 @@ export function useChat({
     }
   }, [navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults,
       setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination,
-      setTachographResult, handleAppIntent, speak]);
+      setTachographResult, handleAppIntent, speak, cleanAssistantText]);
 
   // ── GPT-4o logic ──────────────────────────────────────────────────────────
   const sendGptText = useCallback(async (text: string) => {
@@ -169,7 +175,7 @@ export function useChat({
     if (response.action) {
       processAction(response.action, newHistory, setGptHistory, response);
     } else {
-      const replyText = (response.reply ?? '').trim();
+      const replyText = cleanAssistantText(response.reply, '');
       if (replyText) {
         setGptHistory([...newHistory, { role: 'model', text: replyText }]);
         speak(replyText);
@@ -177,7 +183,7 @@ export function useChat({
     }
 
     setGptLoading(false);
-  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, speak, processAction]);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, speak, processAction, cleanAssistantText]);
 
   // ── Gemini logic ──────────────────────────────────────────────────────────
   const sendGeminiText = useCallback(async (text: string) => {
@@ -248,11 +254,12 @@ export function useChat({
     if (response.action && response.action.action !== 'message') {
       processAction(response.action, newHistory, setGeminiHistory, response);
     } else {
-      const replyText = (
+      const replyText = cleanAssistantText(
         response.action?.action === 'message'
           ? (response.action.text ?? response.reply ?? '')
-          : (response.reply ?? '')
-      ).trim();
+          : (response.reply ?? ''),
+        '',
+      );
       if (replyText) {
         setGeminiHistory([...newHistory, { role: 'model', text: replyText }]);
         speak(replyText);
@@ -271,7 +278,7 @@ export function useChat({
 
     setGeminiLoading(false);
   }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, tachoSummary,
-      parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction]);
+      parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction, cleanAssistantText]);
 
   return {
     gptLoading,
