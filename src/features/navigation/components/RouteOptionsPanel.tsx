@@ -18,6 +18,17 @@ interface RouteOptionsPanelProps {
     congestionGeoJSON: any,
     trafficAlerts: any
   ) => void;
+  /** Current driven seconds this HOS session */
+  drivingSeconds?: number;
+  /** EU HOS continuous driving limit in seconds (default 16200 = 4.5h) */
+  hosLimitS?: number;
+  /** Called when user taps "Export GPX" */
+  onExportGPX?: () => void;
+}
+
+/** Returns how many minutes remain before the driver must take a break. */
+function remainingTachoMin(drivingSeconds: number, hosLimitS: number): number {
+  return Math.max(0, Math.floor((hosLimitS - drivingSeconds) / 60));
 }
 
 const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
@@ -30,8 +41,12 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   onSelectRoute,
   onDismiss,
   onStart,
+  drivingSeconds,
+  hosLimitS,
+  onExportGPX,
 }) => {
   const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+  const tachoEnabled = drivingSeconds !== undefined && hosLimitS !== undefined;
 
   return (
     <View style={[styles.routeOptionsPanel, { bottom: insets.bottom + 16 }]}>
@@ -39,12 +54,19 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
       <View style={styles.routeOptionsGlassHighlight} />
       <View style={styles.routeOptionsHeader}>
         <Text style={styles.routeOptionsTitle}>🗺️ Изберете маршрут</Text>
-        <TouchableOpacity
-          onPress={onDismiss}
-          style={styles.parkingDismissBtn}
-        >
-          <Text style={styles.parkingDismissTxt}>✕</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {onExportGPX && (
+            <TouchableOpacity onPress={onExportGPX} style={styles.parkingDismissBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={[styles.parkingDismissTxt, { fontSize: 16 }]}>📤</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={onDismiss}
+            style={styles.parkingDismissBtn}
+          >
+            <Text style={styles.parkingDismissTxt}>✕</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Cards row */}
@@ -60,6 +82,17 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
           const minDur = Math.min(...routeOptions.map(o => o.duration));
           const diffMin = Math.round((opt.duration - minDur) / 60);
           const diffBadge = diffMin === 0 ? '⚡ Най-бърз' : `+${diffMin} мин`;
+
+          // "Мога ли да стигна?" per-card tacho check
+          const tachoRemMin = tachoEnabled ? remainingTachoMin(drivingSeconds!, hosLimitS!) : null;
+          const routeDurMin = Math.ceil(opt.duration / 60);
+          const canMakeIt = tachoRemMin === null || routeDurMin <= tachoRemMin;
+          const shortageMin = tachoRemMin !== null ? routeDurMin - tachoRemMin : 0;
+          // Distance until forced break (proportional)
+          const breakDistKm = tachoRemMin !== null && !canMakeIt
+            ? Math.round((opt.distance / 1000) * (tachoRemMin / routeDurMin))
+            : null;
+
           return (
             <TouchableOpacity
               key={i}
@@ -85,6 +118,20 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                   {trafficEmoji} {opt.traffic === 'heavy' ? 'Задръстване' : opt.traffic === 'moderate' ? 'Умерено' : 'Свободно'}
                 </Text>
               )}
+
+              {/* Tacho feasibility badge */}
+              {tachoRemMin !== null && (
+                canMakeIt ? (
+                  <Text style={{ fontSize: 10, color: '#4cff91', fontWeight: '700', marginTop: 4 }}>
+                    ✅ Стигаш ({tachoRemMin - routeDurMin} мин резерв)
+                  </Text>
+                ) : (
+                  <Text style={{ fontSize: 10, color: '#FF3B30', fontWeight: '700', marginTop: 4 }}>
+                    ⏱ Пауза след ~{breakDistKm} км
+                  </Text>
+                )
+              )}
+
               {!isSelected && <Text style={styles.routeOptionTap}>Натисни →</Text>}
             </TouchableOpacity>
           );
@@ -100,12 +147,46 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
           {restrictionWarnings.map((w, i) => (
             <Text key={i} style={styles.routeRestrictionWarn}>{w}</Text>
           ))}
-          
-          {/* Traffic delay calculation for the badge */}
+
+          {/* "Мога ли да стигна?" summary for selected route */}
+          {(() => {
+            if (!tachoEnabled) return null;
+            const selOpt = routeOptions[effectiveSelectedRouteIdx];
+            if (!selOpt) return null;
+            const tachoRemMin = remainingTachoMin(drivingSeconds!, hosLimitS!);
+            const routeDurMin = Math.ceil(selOpt.duration / 60);
+            if (routeDurMin <= tachoRemMin) return null; // all good, no warning needed
+
+            const shortageMin = routeDurMin - tachoRemMin;
+            const breakDistKm = Math.round((selOpt.distance / 1000) * (tachoRemMin / routeDurMin));
+
+            return (
+              <View style={{
+                backgroundColor: 'rgba(255,59,48,0.15)',
+                borderRadius: 8,
+                padding: 8,
+                marginBottom: 4,
+                borderLeftWidth: 3,
+                borderLeftColor: '#FF3B30',
+              }}>
+                <Text style={{ color: '#FF3B30', fontWeight: '700', fontSize: 12 }}>
+                  ⏱ Не стигаш без пауза
+                </Text>
+                <Text style={{ color: '#ffccc0', fontSize: 11, marginTop: 2 }}>
+                  Остават ти {tachoRemMin} мин, маршрутът е {routeDurMin} мин (+{shortageMin} мин)
+                </Text>
+                <Text style={{ color: '#ffccc0', fontSize: 11 }}>
+                  Задължителна пауза след ~{breakDistKm} км
+                </Text>
+              </View>
+            );
+          })()}
+
+          {/* Traffic delay + Start button */}
           {(() => {
             const selOpt = routeOptions[effectiveSelectedRouteIdx];
             const totalDelay = selOpt?.traffic_alerts?.reduce((acc, a) => acc + (a.delay_min || 0), 0) || 0;
-            
+
             return (
               <View style={{ alignItems: 'center', gap: 4 }}>
                 <TouchableOpacity
@@ -117,7 +198,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                 >
                   <Text style={styles.routeStartBtnTxt}>🚀 Тръгни</Text>
                 </TouchableOpacity>
-                
+
                 {totalDelay > 0 && (
                   <Text style={{
                     fontSize: 11,

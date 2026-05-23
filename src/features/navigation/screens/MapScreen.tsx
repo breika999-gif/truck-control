@@ -3,7 +3,9 @@ import {
   View,
   Alert,
   Linking,
+  Share,
 } from 'react-native';
+import { buildGPX } from '../utils/gpxUtils';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Mapbox, { LocationPuck } from '@rnmapbox/maps';
@@ -1081,6 +1083,19 @@ const MapScreen: React.FC = () => {
     if (dest) navigateTo(dest, destinationNameRef.current);
   }, [navigateTo]);
 
+  const handleExportGPX = useCallback(() => {
+    const coords = route?.geometry?.coordinates as [number, number][] | undefined;
+    if (!coords?.length) {
+      Alert.alert('Няма маршрут', 'Изберете маршрут, преди да го експортирате.');
+      return;
+    }
+    const dest = destinationNameRef.current || 'Маршрут';
+    const wps = waypointsRef.current ?? [];
+    const wpNames = waypointNamesRef.current ?? [];
+    const gpx = buildGPX(coords, dest, wps, wpNames);
+    Share.share({ message: gpx, title: `${dest}.gpx` }).catch(() => {});
+  }, [route, destinationNameRef, waypointsRef, waypointNamesRef]);
+
   const handleStartRoute = useCallback((_cong: any, _alerts: any) => {
     const selectedIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
     const selectedOption = selectedIdx == null ? null : routeOptions[selectedIdx];
@@ -1387,6 +1402,9 @@ const MapScreen: React.FC = () => {
             setRestrictionWarnings([]);
           }}
           onStart={handleStartRoute}
+          drivingSeconds={drivingSeconds}
+          hosLimitS={HOS_LIMIT_S}
+          onExportGPX={handleExportGPX}
         />
       )}
 
