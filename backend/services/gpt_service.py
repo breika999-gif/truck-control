@@ -7,7 +7,7 @@ from config import (
 )
 from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc,
-    _deterministic_reach_reply,
+    _deterministic_reach_reply as maybe_reach_answer,
 )
 from database import _db_save_chat
 from services.tomtom_service import (
@@ -23,7 +23,30 @@ _gpt4o_ready = bool(OPENAI_API_KEY)
 _gpt_cache: dict[str, tuple[dict, float]] = {}
 _GPT_CACHE_TTL = 600
 
-ALL_TOOLS = _TOOLS
+FIND_PARKING_BREAK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "find_parking_break",
+        "description": (
+            "Find truck parking spots along the route before the driver's mandatory tacho break. "
+            "Use when driver asks about parking, rest stop, or where to stop before time runs out."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lat": {"type": "number", "description": "Driver current latitude"},
+                "lng": {"type": "number", "description": "Driver current longitude"},
+                "break_dist_km": {
+                    "type": "number",
+                    "description": "Distance in km until mandatory break required",
+                },
+            },
+            "required": ["lat", "lng"],
+        },
+    },
+}
+
+ALL_TOOLS = [*_TOOLS, FIND_PARKING_BREAK_TOOL]
 NAV_TOOL_NAMES = {
     "set_route", "navigate_to", "suggest_routes", "add_waypoint",
     "get_route_info", "check_traffic_route", "avoid_area", "clear_route",
@@ -31,7 +54,7 @@ NAV_TOOL_NAMES = {
 }
 SEARCH_TOOL_NAMES = {
     "search_pois", "search_business", "geocode_location",
-    "get_nearby_parking", "find_truck_parking",
+    "get_nearby_parking", "find_truck_parking", "find_parking_break",
     "get_nearby_fuel", "find_fuel_stations",
 }
 NAV_TOOLS = [
@@ -47,6 +70,7 @@ NAV_KEYWORDS_FOR_TOOLS = [
 ]
 SEARCH_KEYWORDS_FOR_TOOLS = [
     "намери", "търси", "близо", "parking", "гориво", "fuel", "паркинг",
+    "почивка", "спирка", "rest", "stop", "пауза",
 ]
 
 def pick_tools(msg: str) -> list:
@@ -99,13 +123,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
         cached = _gpt_cache_get(_cache_key)
         if cached: return cached
 
-    deterministic_reply = _deterministic_reach_reply(user_msg, context)
-    if deterministic_reply:
-        _db_save_chat(user_msg, deterministic_reply, user_email=user_email)
+    reach = maybe_reach_answer(user_msg, context)
+    if reach:
+        _db_save_chat(user_msg, reach, user_email=user_email)
         return {
             "ok": True,
-            "action": {"action": "message", "text": deterministic_reply},
-            "reply": deterministic_reply,
+            "text": reach,
+            "action": None,
+            "reply": reach,
         }
 
     _PROFILE_KEYWORDS = {"маршрут", "навигирай", "карай до", "стигни до", "route", "navigate",
@@ -178,6 +203,65 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
                               "opening_hours": p.get("opening_hours"), "phone": p.get("phone"),
                               "voice_desc": _build_voice_desc(p)} for p in raw[:5]]
                     tool_act = {"action": "show_pois", "category": "truck_stop", "cards": cards}
+                elif fn == "find_parking_break":
+                    from routes.misc import _search_parking_tomtom
+
+                    driver_lat = args.get("lat") if args.get("lat") is not None else context.get("lat")
+                    driver_lng = args.get("lng") if args.get("lng") is not None else context.get("lng")
+                    break_dist_arg = args.get("break_dist_km")
+                    try:
+                        break_dist_km = float(break_dist_arg) if break_dist_arg is not None else (
+                            float(context.get("remaining_drive_min") or 120)
+                            * float(context.get("speed_kmh") or 80)
+                            / 60
+                        )
+                    except (TypeError, ValueError):
+                        break_dist_km = 160.0
+
+                    if driver_lat is not None and driver_lng is not None:
+                        radius_m = int(min(max(break_dist_km, 1.0), 50.0) * 1000)
+                        spots = _search_parking_tomtom(float(driver_lat), float(driver_lng), radius_m=radius_m)
+                        cards = []
+                        for p in spots[:5]:
+                            if p.get("lat") is None or p.get("lng") is None:
+                                continue
+                            cards.append({
+                                "name": p.get("name", "Паркинг за камиони"),
+                                "lat": p["lat"],
+                                "lng": p["lng"],
+                                "distance_m": p.get("distance_m", 0),
+                                "paid": p.get("paid", False),
+                                "showers": p.get("showers", False),
+                                "toilets": p.get("toilets", False),
+                                "wifi": p.get("wifi", False),
+                                "security": p.get("security", False),
+                                "lighting": p.get("lighting", False),
+                                "capacity": p.get("capacity"),
+                                "website": p.get("website"),
+                                "transparking_id": p.get("transparking_id"),
+                                "opening_hours": p.get("opening_hours"),
+                                "phone": p.get("phone"),
+                                "voice_desc": _build_voice_desc(p),
+                            })
+                        res = {
+                            "found": len(spots),
+                            "spots": [s.get("name", "Паркинг за камиони") for s in spots[:5]],
+                            "break_dist_km": round(break_dist_km, 1),
+                        }
+                        if cards:
+                            tool_act = {
+                                "action": "show_pois",
+                                "category": "truck_stop",
+                                "cards": cards,
+                                "reason": "tacho_break",
+                                "break_dist_km": round(break_dist_km, 1),
+                                "message": (
+                                    f"Намерих {len(cards)} паркинга преди тахо паузата "
+                                    f"(~{round(break_dist_km, 1)} км)."
+                                ),
+                            }
+                    else:
+                        res = {"error": "missing driver coordinates"}
                 elif fn == "find_fuel_stations":
                     from services.poi_service import _tool_find_fuel
                     raw = _tool_find_fuel(args["dest_lat"], args["dest_lng"], args.get("radius_m", 50000))
@@ -297,3 +381,5 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
     result = {"ok": True, "action": final_action, "reply": display_text}
     if _cache_key and action is None: _gpt_cache_set(_cache_key, result)
     return result
+
+chat_with_gpt = _run_gpt4o_internal

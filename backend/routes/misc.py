@@ -32,6 +32,10 @@ class LRUCache(OrderedDict):
 _route_cache = LRUCache(maxsize=200)
 _ROUTE_CACHE_TTL = 300
 
+def _search_parking_tomtom(lat: float, lng: float, radius_m: int = 20000) -> list:
+    from services.poi_service import _tool_find_truck_parking
+    return _tool_find_truck_parking(lat, lng, radius_m)
+
 @misc_bp.get("/api/health")
 def health():
     return jsonify({

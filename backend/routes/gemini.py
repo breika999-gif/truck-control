@@ -15,7 +15,7 @@ from services.tacho_service import _tacho_summary
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
     _extract_nav_intent, _extract_app_intent, _strip_md_fence,
-    _deterministic_reach_reply,
+    _deterministic_reach_reply as maybe_reach_answer,
 )
 from database import _db_save_chat
 
@@ -77,10 +77,10 @@ def gemini_chat():
     if not user_msg: return jsonify({"ok": False, "error": "message is required"}), 400
 
     history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
-    deterministic_reply = _deterministic_reach_reply(user_msg, context)
-    if deterministic_reply:
-        _db_save_chat(user_msg, deterministic_reply, user_email=user_email)
-        return jsonify({"ok": True, "reply": deterministic_reply, "action": {"action": "message", "text": deterministic_reply}, "app_intent": None, "remember": []})
+    reach = maybe_reach_answer(user_msg, context)
+    if reach:
+        _db_save_chat(user_msg, reach, user_email=user_email)
+        return jsonify({"ok": True, "reply": reach, "action": None, "app_intent": None, "remember": []})
 
     is_simple = is_simple_message(user_msg)
     intent = "general" if is_simple else classify_intent(user_msg)
