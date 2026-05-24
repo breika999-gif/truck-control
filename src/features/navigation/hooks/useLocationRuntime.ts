@@ -3,7 +3,6 @@ import { Platform, PermissionsAndroid } from 'react-native';
 import Geolocation from 'react-native-geolocation-service';
 import {
   fetchNearbyRestrictions,
-  fetchSpeedLimitAtPoint,
   type RoadStructureCandidate,
 } from '../api/tilequery';
 import {
@@ -46,6 +45,42 @@ const STRUCTURE_ROUTE_TOLERANCE_M = 85;
 const STRUCTURE_LOOKAHEAD_M = 1500;
 const STRUCTURE_BEHIND_TOLERANCE_M = -50;
 export const STRUCTURE_WARNING_DISMISS_MS = 15 * 60_000;
+
+type RouteStepWithSpeedLimit = RouteResult['steps'][number] & {
+  speedLimitKmh?: unknown;
+  speed_limit_kmh?: unknown;
+  speedLimit?: unknown;
+};
+
+function normalizeSpeedLimitKmh(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value);
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const speed = value as { value?: unknown; unit?: unknown; speed?: unknown };
+    const raw = typeof speed.value === 'number' ? speed.value : speed.speed;
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return null;
+    const unit = typeof speed.unit === 'string' ? speed.unit.toLowerCase() : 'km/h';
+    return unit.includes('mph') ? Math.round(raw * 1.609) : Math.round(raw);
+  }
+
+  return null;
+}
+
+function getRouteSpeedLimit(
+  route: RouteResult,
+  stepIdx: number,
+  coords: [number, number],
+): number | null {
+  const step = route.steps[stepIdx] as RouteStepWithSpeedLimit | undefined;
+  return (
+    normalizeSpeedLimitKmh(step?.speedLimitKmh) ??
+    normalizeSpeedLimitKmh(step?.speed_limit_kmh) ??
+    normalizeSpeedLimitKmh(step?.speedLimit) ??
+    getSpeedLimitAtPosition(route.geometry.coordinates, route.maxspeeds, coords)
+  );
+}
 
 function hasAdrCargo(profile: VehicleProfile): boolean {
   const hazmat = String(profile.hazmat_class ?? 'none').toLowerCase();
@@ -196,7 +231,6 @@ export const useLocationRuntime = ({
   setRoute: _setRoute,
   setNavCongestionGeoJSON: _setNavCongestionGeoJSON,
   setBackendOnline: _setBackendOnline,
-  navigating,
 }: UseLocationRuntimeProps) => {
   const [userCoords, setUserCoords] = useState<[number, number] | null>(null);
   const [userHeading, setUserHeading] = useState<number | null>(null);
@@ -205,7 +239,6 @@ export const useLocationRuntime = ({
   const [speed, setSpeed] = useState(0);
   const isDrivingRef = useRef(false);
   const lastRestrictionCoordsRef = useRef<[number, number] | null>(null);
-  const lastSpeedLimitCoordsRef = useRef<[number, number] | null>(null);
   const smoothedHeadingRef = useRef<number | null>(null);
   const headingHistoryRef = useRef<number[]>([]);
 
@@ -272,7 +305,10 @@ export const useLocationRuntime = ({
 
           const isNav = navigatingRef.current;
           const cur = routeRef.current;
-          if (!isNav || !cur) return;
+          if (!isNav || !cur) {
+            setSpeedLimit(null);
+            return;
+          }
 
           const profR = profileRef.current;
           const restrictInterval = kmh < 50 ? 60_000 : kmh < 100 ? 90_000 : 120_000;
@@ -303,12 +339,9 @@ export const useLocationRuntime = ({
             }
           }
 
-          setSpeedLimit(
-            getSpeedLimitAtPosition(cur.geometry.coordinates, cur.maxspeeds, coords),
-          );
-
           const stepIdx = getCurrentStepIndex(cur.steps, coords);
           setCurrentStep(stepIdx);
+          setSpeedLimit(getRouteSpeedLimit(cur, stepIdx, coords));
 
           const nextLoc = cur.steps[stepIdx + 1]?.intersections?.[0]?.location;
           setDistToTurn(nextLoc ? haversineMeters(coords, nextLoc) : null);
@@ -348,25 +381,6 @@ export const useLocationRuntime = ({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ── Speed limit via tilequery when no active route ───────────────────────
-  const speedLimitFetchRef = useRef<number>(0);
-  useEffect(() => {
-    if (navigating || !userCoords) return;
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      if (now - speedLimitFetchRef.current < 60_000) return;
-      if (lastSpeedLimitCoordsRef.current) {
-        const dist = haversineMeters(userCoords, lastSpeedLimitCoordsRef.current);
-        if (dist < 100) return; // not moved enough — skip API call
-      }
-      speedLimitFetchRef.current = now;
-      lastSpeedLimitCoordsRef.current = userCoords;
-      const limit = await fetchSpeedLimitAtPoint(userCoords[0], userCoords[1]);
-      if (isMountedRef.current) setSpeedLimit(limit);
-    }, 60_000);
-    return () => clearInterval(interval);
-  }, [navigating, userCoords, setSpeedLimit, isMountedRef]);
 
   return {
     userCoords,
