@@ -429,7 +429,7 @@ export const StableCamera = React.memo(
       speed != null && speed > 90 ? 15.5 :
       speed != null && speed > 60 ? 16.0 :
       speed != null && speed > 30 ? 16.8 :
-      17.2;
+      16.8;
     const followPitch =
       speed != null && speed > 40 ? 60 :
       speed != null && speed > 5  ? 55 :
@@ -496,7 +496,7 @@ export const StableCamera = React.memo(
         followPitch={followPitch}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
-        animationDuration={300}
+        animationDuration={600}
       />
     );
   },
