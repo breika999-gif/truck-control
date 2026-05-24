@@ -229,6 +229,19 @@ def nearby_truck_parking():
     spots = _tool_find_truck_parking(lat, lng, max(1000, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
 
+@poi_bp.get("/api/fuel/nearby")
+def nearby_fuel():
+    if _is_rate_limited(limit=30, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
+    try:
+        lat = float(request.args.get("lat"))
+        lng = float(request.args.get("lng"))
+        radius_m = int(float(request.args.get("radius") or request.args.get("radius_m") or 2000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "lat, lng required"}), 400
+
+    spots = _tool_find_fuel(lat, lng, max(500, min(radius_m, 50000)))
+    return jsonify({"ok": True, "spots": spots, "pois": spots})
+
 @poi_bp.get("/api/parking/bbox")
 def get_parking_bbox():
     if _is_rate_limited(limit=60, window_s=60): return jsonify({"error": "rate limited"}), 429

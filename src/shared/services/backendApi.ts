@@ -177,6 +177,17 @@ interface NearbyParkingResponse {
   cards?: NearbyParkingCard[];
 }
 
+interface NearbyFuelCard extends POICard {
+  distance?: number;
+}
+
+interface NearbyFuelResponse {
+  ok?: boolean;
+  spots?: NearbyFuelCard[];
+  pois?: NearbyFuelCard[];
+  cards?: NearbyFuelCard[];
+}
+
 export interface SavedPOI {
   id: number;
   name: string;
@@ -642,6 +653,28 @@ export async function searchNearbyParking(
       radius: String(radiusM),
     });
     const data = await apiRequest<NearbyParkingResponse>(`/api/parking/nearby?${params.toString()}`);
+    const items = data.spots ?? data.pois ?? data.cards ?? [];
+    return items.map(({ distance, ...item }) => ({
+      ...item,
+      distance_m: item.distance_m ?? distance ?? 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function searchNearbyFuel(
+  lat: number,
+  lng: number,
+  radiusM: number = 2000,
+): Promise<POICard[]> {
+  try {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lng: String(lng),
+      radius: String(radiusM),
+    });
+    const data = await apiRequest<NearbyFuelResponse>(`/api/fuel/nearby?${params.toString()}`);
     const items = data.spots ?? data.pois ?? data.cards ?? [];
     return items.map(({ distance, ...item }) => ({
       ...item,
