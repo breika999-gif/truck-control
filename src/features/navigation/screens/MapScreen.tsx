@@ -1147,7 +1147,7 @@ const MapScreen: React.FC = () => {
       ? truckCappedRouteDurationS(route.distance, remainingSeconds > 0 ? remainingSeconds : route.duration)
       : undefined,
   });
-  const truckSituation = selectTruckSituation(aheadEvents);
+  const truckSituation = useMemo(() => selectTruckSituation(aheadEvents), [aheadEvents]);
 
   const useNavigationMapStyle = navigating || navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
   const mapStyleURL: string =
@@ -1382,15 +1382,6 @@ const MapScreen: React.FC = () => {
           pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
         />
-        <NavigationArrow
-          visible={showNavArrow}
-          situationKind={truckSituation.kind}
-          anyExceeded={
-            truckSituation.kind === 'composite_restriction'
-              ? truckSituation.anyExceeded
-              : false
-          }
-        />
 
         <MapLayers
           mapIsLoaded={mapIsLoaded}
@@ -1430,6 +1421,16 @@ const MapScreen: React.FC = () => {
         />
 
       </Mapbox.MapView>
+
+      <NavigationArrow
+        visible={showNavArrow}
+        situationKind={truckSituation.kind}
+        anyExceeded={
+          truckSituation.kind === 'composite_restriction'
+            ? truckSituation.anyExceeded
+            : false
+        }
+      />
 
       {/* ── Search bar (hidden during navigation) ── */}
       <SearchBarContainer
