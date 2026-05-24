@@ -6,6 +6,7 @@ import {
   Share,
 } from 'react-native';
 import { buildGPX } from '../utils/gpxUtils';
+import { useRouteAheadEvents } from '../hooks/useRouteAheadEvents';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Mapbox, { LocationPuck } from '@rnmapbox/maps';
@@ -948,6 +949,19 @@ const MapScreen: React.FC = () => {
     : dominantCongestion === 'moderate' ? '#FF9500'
     : '#13BDFF';
 
+  // ── Guidance events ahead (Garmin SID layer equivalent) ──────────────────
+  const aheadEvents = useRouteAheadEvents({
+    steps: route?.steps ?? [],
+    currentStepIdx: currentStep,
+    distToTurn,
+    restrictions: displayRestrictionPoints,
+    userCoords,
+    profile,
+    remainingTachoSec: navigating ? Math.max(0, HOS_LIMIT_S - drivingSeconds) : undefined,
+    totalRouteDistM: route?.distance,
+    routeDurationSec: remainingSeconds > 0 ? remainingSeconds : route?.duration,
+  });
+
   const useNavigationMapStyle = navigating || navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
   const mapStyleURL: string =
     mapMode === 'hybrid' ? 'mapbox://styles/mapbox/satellite-streets-v12' :
@@ -1245,6 +1259,7 @@ const MapScreen: React.FC = () => {
           distToTurn={distToTurn}
           lanes={currentLanes}
           topOffset={insets.top + spacing.xs}
+          aheadEvents={aheadEvents}
         />
       )}
 

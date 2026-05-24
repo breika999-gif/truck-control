@@ -13,6 +13,7 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import type { RouteStep, BannerInstruction, BannerComponent } from '../api/directions';
+import LaneArrow from './LaneArrow';
 
 // ── Public trigger constant (re-exported so MapScreen can use it) ────────────
 export const SIGN_TRIGGER_M = 800;
@@ -212,26 +213,23 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner
                       { backgroundColor: laneGlowBg, shadowOpacity: laneGlowShadow },
                     ]}
                   >
-                    <Text style={[styles.laneArrowTxt, styles.laneArrowActive]}>
-                      {laneArrow(lane.directions?.[0])}
-                    </Text>
+                    <LaneArrow
+                      direction={lane.directions?.[0]}
+                      active
+                      size={24}
+                    />
                   </Animated.View>
                 );
               }
 
               return (
                 <View key={i} style={styles.laneBox}>
-                  {isForbiddenTruck ? (
-                    <View style={styles.forbiddenTruckWrap}>
-                      <Text style={{ fontSize: 18 }}>🚛</Text>
-                      <View style={[styles.redX, { transform: [{ rotate: '45deg' }] }]} />
-                      <View style={[styles.redX, { transform: [{ rotate: '-45deg' }] }]} />
-                    </View>
-                  ) : (
-                    <Text style={styles.laneArrowTxt}>
-                      {laneArrow(lane.directions?.[0])}
-                    </Text>
-                  )}
+                  <LaneArrow
+                    direction={lane.directions?.[0]}
+                    active={false}
+                    forbidden={isForbiddenTruck}
+                    size={24}
+                  />
                 </View>
               );
             })}

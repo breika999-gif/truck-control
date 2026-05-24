@@ -1,7 +1,7 @@
 import React from 'react';
 import { Animated, Text, View } from 'react-native';
-import { laneDirectionEmoji } from '../utils/mapUtils';
 import { styles } from '../screens/MapScreen.styles';
+import LaneArrow from './LaneArrow';
 
 interface LaneGuidanceStripProps {
   visible: boolean;
@@ -32,15 +32,11 @@ const LaneGuidanceStrip: React.FC<LaneGuidanceStripProps> = ({
                 { backgroundColor: glowBg, shadowOpacity: glowShadow },
               ]}
             >
-              <Text style={styles.laneSCellArrowActive}>
-                {laneDirectionEmoji(lane.directions?.[0])}
-              </Text>
+              <LaneArrow direction={lane.directions?.[0]} active size={26} />
             </Animated.View>
           ) : (
             <View key={i} style={styles.laneSCell}>
-              <Text style={styles.laneSCellArrow}>
-                {laneDirectionEmoji(lane.directions?.[0])}
-              </Text>
+              <LaneArrow direction={lane.directions?.[0]} active={false} size={26} />
             </View>
           ),
         )}
