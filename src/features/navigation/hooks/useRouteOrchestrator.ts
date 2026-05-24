@@ -79,10 +79,13 @@ function routesAreVisuallySame(a: RouteOption, b: RouteOption): boolean {
     total += d;
     max = Math.max(max, d);
   }
-  return total / sampleCount < 80 && max < 220;
+  return total / sampleCount < 50 && max < 150;
 }
 
 function sameRouteOption(a: RouteOption, b: RouteOption): boolean {
+  const durDiff = Math.abs(a.duration - b.duration) / Math.max(a.duration, b.duration, 1);
+  const distDiff = Math.abs(a.distance - b.distance) / Math.max(a.distance, b.distance, 1);
+  if (durDiff < 0.05 && distDiff < 0.05) return true;
   if (routeOptionSignature(a) === routeOptionSignature(b)) return true;
   return routesAreVisuallySame(a, b) && routesAreVisuallySame(b, a);
 }
