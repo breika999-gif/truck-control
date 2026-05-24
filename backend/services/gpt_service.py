@@ -6,7 +6,8 @@ from config import (
     OPENAI_API_KEY, _SYSTEM_PROMPT, _TOOLS
 )
 from utils.helpers import (
-    _strip_md_fence, _extract_location_from_message, _build_voice_desc
+    _strip_md_fence, _extract_location_from_message, _build_voice_desc,
+    _deterministic_reach_reply,
 )
 from database import _db_save_chat
 from services.tomtom_service import (
@@ -97,6 +98,15 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
     if _cache_key:
         cached = _gpt_cache_get(_cache_key)
         if cached: return cached
+
+    deterministic_reply = _deterministic_reach_reply(user_msg, context)
+    if deterministic_reply:
+        _db_save_chat(user_msg, deterministic_reply, user_email=user_email)
+        return {
+            "ok": True,
+            "action": {"action": "message", "text": deterministic_reply},
+            "reply": deterministic_reply,
+        }
 
     _PROFILE_KEYWORDS = {"маршрут", "навигирай", "карай до", "стигни до", "route", "navigate",
                          "avoid", "restriction", "height", "weight", "adr", "hazmat",

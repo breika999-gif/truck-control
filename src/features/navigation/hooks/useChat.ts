@@ -160,6 +160,10 @@ export function useChat({
       speed_kmh:      speed,
       profile:        profile || undefined,
       last_message:   text,
+      destination:              destinationName ?? undefined,
+      route_distance_km:        route ? Math.round(route.distance / 100) / 10 : undefined,
+      route_duration_min:       route ? Math.round(route.duration / 60) : undefined,
+      remaining_drive_min:      Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60)),
     };
 
     const isGptNav = /карай до|маршрут|паркинг|гориво|навигир|route|navigate|до |в |около /.test(text.toLowerCase());
@@ -183,14 +187,14 @@ export function useChat({
     }
 
     setGptLoading(false);
-  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, speak, processAction, cleanAssistantText]);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, route, destinationName, speak, processAction, cleanAssistantText]);
 
   // ── Gemini logic ──────────────────────────────────────────────────────────
   const sendGeminiText = useCallback(async (text: string) => {
     if (!text || geminiLoading) return;
 
     const msg = text.toLowerCase();
-    const isTacho  = /тахограф|остава|стигам|до колко|почивка|пауза|смяна|лимит|седмично|driving|remain/.test(msg);
+    const isTacho  = /тахограф|остава|стигам|стигна|докъде|до къде|каране|шофиране|до колко|почивка|пауза|смяна|лимит|седмично|driving|drive|reach|remain/.test(msg);
     const isMemory = /обичам|помни|последно|камион|предпочит|навик/.test(msg);
     const isNav    = /карай до|маршрут|паркинг|гориво|навигир|route|navigate/.test(msg);
 

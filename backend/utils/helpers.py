@@ -82,6 +82,99 @@ def _build_tacho_context_block(user_email: str = "") -> str:
 Ако остават < 30 мин — предупреди проактивно и предложи да потърсиш паркинг.
 """
 
+def _fmt_reach_minutes(minutes: int) -> str:
+    hours = minutes // 60
+    mins = minutes % 60
+    if hours and mins:
+        return f"{hours}ч {mins}мин"
+    if hours:
+        return f"{hours}ч"
+    return f"{mins}мин"
+
+def _num_or_none(value) -> float | None:
+    try:
+        number = float(str(value).replace(",", "."))
+        return number if math.isfinite(number) else None
+    except Exception:
+        return None
+
+def _extract_requested_drive_minutes(text: str) -> int | None:
+    msg = (text or "").lower()
+    total = 0
+
+    for match in re.finditer(r"(\d+(?:[.,]\d+)?)\s*(?:ч|час|часа|часове|h|hr|hour|hours)\b", msg):
+        hours = _num_or_none(match.group(1))
+        if hours is not None:
+            total += round(hours * 60)
+
+    for match in re.finditer(r"(\d+(?:[.,]\d+)?)\s*(?:мин|минута|минути|min|mins|minutes)\b", msg):
+        mins = _num_or_none(match.group(1))
+        if mins is not None:
+            total += round(mins)
+
+    return total if total > 0 else None
+
+def _deterministic_reach_reply(user_msg: str, context: dict | None) -> str | None:
+    """Answer HOS reach questions deterministically before an LLM guesses."""
+    msg = (user_msg or "").lower()
+    if not msg:
+        return None
+
+    asks_reach = any(
+        hint in msg
+        for hint in (
+            "до къде", "докъде", "къде ще стиг", "ще стигна", "ще стигнем",
+            "мога ли да стиг", "стигам ли", "reach", "how far", "where can i",
+        )
+    )
+    mentions_driving_time = any(
+        hint in msg
+        for hint in ("каране", "шофиране", "карам", "шофирам", "driving", "drive")
+    )
+    requested_min = _extract_requested_drive_minutes(msg)
+    context = context or {}
+    remaining_min = _num_or_none(context.get("remaining_drive_min"))
+    if requested_min is None and remaining_min is not None:
+        requested_min = round(remaining_min)
+
+    if not asks_reach or (requested_min is None and not mentions_driving_time):
+        return None
+
+    available_min = max(0, int(requested_min or 0))
+    if available_min <= 0:
+        return "Колега, по текущите данни нямаш оставащо време за каране. Трябва почивка преди да продължиш."
+
+    dest = context.get("destination")
+    route_km = _num_or_none(context.get("route_distance_km"))
+    route_min = _num_or_none(context.get("route_duration_min"))
+
+    if dest and route_km is not None and route_min is not None and route_min > 0:
+        if available_min >= route_min:
+            buffer_min = available_min - round(route_min)
+            return (
+                f"Колега, стигаш до {dest}: ~{route_km:g}км/~{_fmt_reach_minutes(round(route_min))}. "
+                f"Имаш около {buffer_min}мин резерв."
+            )
+
+        reachable_km = max(0, route_km * (available_min / route_min))
+        remaining_after_min = max(0, round(route_min - available_min))
+        remaining_after_km = max(0, route_km - reachable_km)
+        return (
+            f"Колега, няма да стигнеш до {dest} с {_fmt_reach_minutes(available_min)}. "
+            f"Ще минеш около {reachable_km:.0f}км от {route_km:g}км; "
+            f"остават ~{remaining_after_km:.0f}км/~{_fmt_reach_minutes(remaining_after_min)}. "
+            "Търси почивка преди финала."
+        )
+
+    speed_kmh = _num_or_none(context.get("speed_kmh"))
+    if speed_kmh is None or speed_kmh < 10:
+        speed_kmh = 80
+    reach_km = round(speed_kmh * available_min / 60)
+    return (
+        f"Колега, за {_fmt_reach_minutes(available_min)} ще стигнеш приблизително {reach_km}км "
+        f"при {speed_kmh:g}км/ч. За точна точка ми трябва активен маршрут."
+    )
+
 from config import NAV_RE, APP_RE, NAV_KEYWORDS, LOCATION_STOP_WORDS
 
 def _extract_nav_intent(text: str):

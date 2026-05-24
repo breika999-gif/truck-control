@@ -86,7 +86,7 @@ import {
   ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_DESTINATION, ICON_BIZ, ICON_NO_OVERTAKING,
   APP_URL_MAP, HOS_LIMIT_S, type DepartLabel, departIso,
   ttsSpeak,
-  haversineMeters, openInBrowser, getTransParkingUrl,
+  haversineMeters, pointToSegmentDistanceMeters, openInBrowser, getTransParkingUrl,
   StableCamera,
 } from '../utils/mapUtils';
 import { useMapUIState } from '../hooks/useMapUIState';
@@ -103,6 +103,11 @@ import { useMapGeoJSON } from '../hooks/useMapGeoJSON';
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 
 // AudioRecorderPlayer is exported as a ready-made singleton — use directly
+
+const RESTRICTION_ROUTE_BUFFER_M = 90;
+const ACCESS_RESTRICTION_ROUTE_BUFFER_M = 130;
+const MAX_MAP_RESTRICTION_MARKERS = 14;
+const HGV_LEGAL_THRESHOLD_T = 3.5;
 
 function routeOptionAnalysisKey(option: RouteOption, profile: VehicleProfile): string {
   const coords = option.geometry.coordinates as [number, number][];
@@ -148,6 +153,82 @@ function isRestrictionRelevantToProfile(restriction: RestrictionPoint, profile: 
     return hazmat !== '' && hazmat !== 'none' && hazmat !== '0' && hazmat !== 'false';
   }
   return true;
+}
+
+function restrictionDistanceToRouteM(
+  restriction: RestrictionPoint,
+  coords: [number, number][],
+): number {
+  if (coords.length === 0) return Infinity;
+  const point: [number, number] = [restriction.lng, restriction.lat];
+  if (coords.length === 1) return haversineMeters(point, coords[0]);
+
+  let best = Infinity;
+  for (let i = 1; i < coords.length; i += 1) {
+    const distance = pointToSegmentDistanceMeters(point, coords[i - 1], coords[i]);
+    if (distance < best) best = distance;
+  }
+  return best;
+}
+
+function isRestrictionCloseToRoute(
+  restriction: RestrictionPoint,
+  coords: [number, number][],
+): boolean {
+  const bufferM =
+    restriction.type === 'no_trucks' || restriction.type === 'hazmat'
+      ? ACCESS_RESTRICTION_ROUTE_BUFFER_M
+      : RESTRICTION_ROUTE_BUFFER_M;
+  return restrictionDistanceToRouteM(restriction, coords) <= bufferM;
+}
+
+function isHighSignalMapRestriction(
+  restriction: RestrictionPoint,
+  profile: VehicleProfile | null,
+): boolean {
+  if (restriction.type === 'no_trucks' || restriction.type === 'hazmat') return true;
+  if (restriction.type === 'maxheight' || restriction.type === 'maxwidth') return true;
+
+  if (restriction.type === 'maxweight') {
+    const limit = Number(restriction.value_num);
+    if (!Number.isFinite(limit)) return false;
+    if (limit <= HGV_LEGAL_THRESHOLD_T) return true;
+
+    const truckWeight = profile?.weight_t;
+    return (
+      typeof truckWeight === 'number' &&
+      Number.isFinite(truckWeight) &&
+      truckWeight > limit &&
+      limit >= truckWeight - 2
+    );
+  }
+
+  return true;
+}
+
+function restrictionDisplayRank(
+  restriction: RestrictionPoint,
+  profile: VehicleProfile | null,
+): number {
+  if (restriction.type === 'no_trucks') return 0;
+  if (restriction.type === 'hazmat') return 1;
+  if (restriction.type === 'maxheight') return 2;
+  if (restriction.type === 'maxwidth') return 3;
+  if (restriction.type === 'maxweight') {
+    const limit = Number(restriction.value_num);
+    if (Number.isFinite(limit) && limit <= HGV_LEGAL_THRESHOLD_T) return 4;
+    const truckWeight = profile?.weight_t;
+    if (
+      typeof truckWeight === 'number' &&
+      Number.isFinite(truckWeight) &&
+      truckWeight > limit &&
+      limit >= truckWeight - 2
+    ) {
+      return 5;
+    }
+    return 9;
+  }
+  return 10;
 }
 
 function congestionGeoJSONForOption(option: RouteOption): GeoJSON.FeatureCollection {
@@ -913,12 +994,28 @@ const MapScreen: React.FC = () => {
   const nextStep   = route?.steps?.[currentStep + 1];
   const stepToShow = navigating ? activeStep : null;
 
-  const displayRestrictionPoints = useMemo<RestrictionPoint[]>(() => (
-    (route?.restrictions ?? []).filter(r => isRestrictionRelevantToProfile(r, profile))
-  ), [profile, route?.restrictions]);
+  const routeRestrictionPoints = useMemo<RestrictionPoint[]>(() => {
+    const coords = route?.geometry.coordinates ?? [];
+    return (route?.restrictions ?? []).filter(
+      r => isRestrictionRelevantToProfile(r, profile) && isRestrictionCloseToRoute(r, coords),
+    );
+  }, [profile, route?.geometry.coordinates, route?.restrictions]);
+
+  const displayRestrictionPoints = useMemo<RestrictionPoint[]>(() => {
+    const coords = route?.geometry.coordinates ?? [];
+    return routeRestrictionPoints
+      .filter(r => isHighSignalMapRestriction(r, profile))
+      .slice()
+      .sort((a, b) => {
+        const rankDiff = restrictionDisplayRank(a, profile) - restrictionDisplayRank(b, profile);
+        if (rankDiff !== 0) return rankDiff;
+        return restrictionDistanceToRouteM(a, coords) - restrictionDistanceToRouteM(b, coords);
+      })
+      .slice(0, MAX_MAP_RESTRICTION_MARKERS);
+  }, [profile, route?.geometry.coordinates, routeRestrictionPoints]);
 
   const activeRestriction = useMemo<RestrictionPoint | null>(() => {
-    if (!navigating || !userCoords || !route || !displayRestrictionPoints.length) return null;
+    if (!navigating || !userCoords || !route || !routeRestrictionPoints.length) return null;
     const coords = route.geometry.coordinates;
     const ALERT_M = 600;
     let userIdx = 0;
@@ -929,7 +1026,7 @@ const MapScreen: React.FC = () => {
     }
     let nearest: RestrictionPoint | null = null;
     let nearestDist = Infinity;
-    for (const r of displayRestrictionPoints) {
+    for (const r of routeRestrictionPoints) {
       let rIdx = 0;
       let rMinD = Infinity;
       for (let i = userIdx; i < coords.length; i++) {
@@ -945,7 +1042,7 @@ const MapScreen: React.FC = () => {
       }
     }
     return nearest;
-  }, [displayRestrictionPoints, navigating, userCoords, route?.geometry.coordinates]);
+  }, [navigating, userCoords, route?.geometry.coordinates, routeRestrictionPoints]);
 
   const routeLineColor = dominantCongestion === 'heavy' ? '#FF3B30'
     : dominantCongestion === 'moderate' ? '#FF9500'
@@ -956,7 +1053,7 @@ const MapScreen: React.FC = () => {
     steps: route?.steps ?? [],
     currentStepIdx: currentStep,
     distToTurn,
-    restrictions: displayRestrictionPoints,
+    restrictions: routeRestrictionPoints,
     maxspeeds: route?.maxspeeds,
     userCoords,
     profile,
