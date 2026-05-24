@@ -166,6 +166,17 @@ export interface ChatContext {
 /** Backward-compat alias — parking cards now use POICard */
 export type TruckParking = POICard;
 
+interface NearbyParkingCard extends POICard {
+  distance?: number;
+}
+
+interface NearbyParkingResponse {
+  ok?: boolean;
+  spots?: NearbyParkingCard[];
+  pois?: NearbyParkingCard[];
+  cards?: NearbyParkingCard[];
+}
+
 export interface SavedPOI {
   id: number;
   name: string;
@@ -615,6 +626,28 @@ export async function fetchPOIsAlongRoute(
     return (data.pois ?? []) as POICard[];
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err;
+    return [];
+  }
+}
+
+export async function searchNearbyParking(
+  lat: number,
+  lng: number,
+  radiusM: number = 20000,
+): Promise<POICard[]> {
+  try {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lng: String(lng),
+      radius: String(radiusM),
+    });
+    const data = await apiRequest<NearbyParkingResponse>(`/api/parking/nearby?${params.toString()}`);
+    const items = data.spots ?? data.pois ?? data.cards ?? [];
+    return items.map(({ distance, ...item }) => ({
+      ...item,
+      distance_m: item.distance_m ?? distance ?? 0,
+    }));
+  } catch {
     return [];
   }
 }

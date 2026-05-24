@@ -64,13 +64,11 @@ import {
   type RouteResult,
 } from '../api/directions';
 import {
-  fetchNearbyParking,
-} from '../api/tilequery';
-import {
   sendGeminiMessage,
   listStarred,
   checkTruckRestrictions,
   pingBackend,
+  searchNearbyParking,
   type POICard,
   type RouteOption,
   type AppIntent,
@@ -273,6 +271,61 @@ function trafficAlertsToGeoJSON(alerts?: RouteOption['traffic_alerts']): GeoJSON
   };
 }
 
+function extractRequestedDriveMinutes(text: string): number | null {
+  const msg = text.toLowerCase();
+  let total = 0;
+
+  for (const match of msg.matchAll(/(\d+(?:[.,]\d+)?)\s*(?:ч|час|часа|часове|h|hr|hour|hours)\b/g)) {
+    const hours = Number(match[1].replace(',', '.'));
+    if (Number.isFinite(hours)) total += Math.round(hours * 60);
+  }
+  for (const match of msg.matchAll(/(\d+(?:[.,]\d+)?)\s*(?:мин|минута|минути|min|mins|minutes)\b/g)) {
+    const mins = Number(match[1].replace(',', '.'));
+    if (Number.isFinite(mins)) total += Math.round(mins);
+  }
+
+  return total > 0 ? total : null;
+}
+
+function isReachQuestion(text: string): boolean {
+  const msg = text.toLowerCase();
+  return (
+    /до\s*къде|докъде|до\s*каде|докаде|къде ще стиг|каде ще стиг|къде мога да стиг|каде мога да стиг|ще стигна|ще стигнем|мога ли да стиг|стигам ли/.test(msg) ||
+    /where can i|how far|reach/.test(msg)
+  );
+}
+
+const TRUCK_SPEED_CAP_KMH = 90;
+
+function truckCappedRouteDurationS(distanceM: number, durationS: number): number {
+  return Math.max(durationS, (distanceM / 1000 / TRUCK_SPEED_CAP_KMH) * 3600);
+}
+
+function coordinateAtRouteDistance(
+  coords: [number, number][],
+  targetM: number,
+): [number, number] | null {
+  if (coords.length === 0) return null;
+  if (coords.length === 1 || targetM <= 0) return coords[0];
+
+  let travelled = 0;
+  for (let i = 1; i < coords.length; i += 1) {
+    const prev = coords[i - 1];
+    const next = coords[i];
+    const segM = haversineMeters(prev, next);
+    if (travelled + segM >= targetM) {
+      const t = segM > 0 ? (targetM - travelled) / segM : 0;
+      return [
+        prev[0] + (next[0] - prev[0]) * t,
+        prev[1] + (next[1] - prev[1]) * t,
+      ];
+    }
+    travelled += segM;
+  }
+
+  return coords[coords.length - 1];
+}
+
 // ── Component ────────────────────────────────────────────────────────
 
 const MapScreen: React.FC = () => {
@@ -317,6 +370,7 @@ const MapScreen: React.FC = () => {
     avoidUnpaved, setAvoidUnpaved,
   } = useNavigationState();
 
+  const [reachMarker, setReachMarker] = useState<{ coords: [number, number]; label: string } | null>(null);
   const navigatingRef = useRef(false);
   useEffect(() => { navigatingRef.current = navigating; }, [navigating]);
   const routeRef = useRef<RouteResult | null>(null);
@@ -392,6 +446,7 @@ const MapScreen: React.FC = () => {
 
   const destination = destinationRef.current;
   const destinationName = destinationNameRef.current;
+  useEffect(() => { setReachMarker(null); }, [destinationName, route?.distance, route?.duration]);
 
   // ── States & Refs from useLocationRuntime ──────────────────────────
   const {
@@ -492,8 +547,8 @@ const MapScreen: React.FC = () => {
     (remMin) => {
       ttsSpeak(`Колега, остават ${remMin} минути каране. Търся паркинг...`);
       if (userCoords) {
-        fetchNearbyParking(userCoords[1], userCoords[0], 20000)
-          .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5).map(s => ({ ...s, distance_m: s.distance }))); })
+        searchNearbyParking(userCoords[1], userCoords[0], 20000)
+          .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5)); })
           .catch(() => {});
       }
     }
@@ -506,6 +561,31 @@ const MapScreen: React.FC = () => {
   } = usePOI(userCoordsRef, routeRef, MAP_CENTER);
 
   // 4. AI Chat (GPT-4o + Gemini)
+  const showReachMarkerForText = useCallback((text: string) => {
+    if (!route || !isReachQuestion(text)) return;
+
+    const requestedMin = extractRequestedDriveMinutes(text)
+      ?? Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60));
+    if (requestedMin <= 0 || route.duration <= 0 || route.distance <= 0) return;
+
+    const truckCappedDurationS = truckCappedRouteDurationS(route.distance, route.duration);
+    const targetM = Math.min(route.distance, route.distance * ((requestedMin * 60) / truckCappedDurationS));
+    const coords = route.geometry.coordinates as [number, number][];
+    const point = coordinateAtRouteDistance(coords, targetM);
+    if (!point) return;
+
+    const label = targetM >= route.distance
+      ? 'Стигаш'
+      : `Дотук ${Math.round(targetM / 1000)}км`;
+    setReachMarker({ coords: point, label });
+    cameraRef.current?.animateToRegion({
+      latitude: point[1],
+      longitude: point[0],
+      latitudeDelta: 0.35,
+      longitudeDelta: 0.35,
+    }, 700);
+  }, [drivingSeconds, route]);
+
   const {
     gptHistory, setGptHistory,
     geminiHistory, setGeminiHistory,
@@ -539,7 +619,8 @@ const MapScreen: React.FC = () => {
     setParkingResults, setFuelResults, setCameraResults, setBusinessResults,
     setRouteOptions, setRouteOptDest, setRoute, setDestination,
     setTachographResult,
-    handleAppIntent: (intent) => handleAppIntent(intent)
+    handleAppIntent: (intent) => handleAppIntent(intent),
+    onReachQuestion: showReachMarkerForText,
   });
 
   const handleChat = useCallback(() => handleChatState(sendGptText, sendGeminiText, gptChatOpen), [handleChatState, sendGptText, sendGeminiText, gptChatOpen]);
@@ -804,6 +885,7 @@ const MapScreen: React.FC = () => {
     setFuelResults([]);
     setCameraResults([]);
     setBusinessResults([]);
+    setReachMarker(null);
     setRouteOptions([]);
     setRouteOptDest(null);
     setSelectedRouteIdx(null);
@@ -1059,7 +1141,9 @@ const MapScreen: React.FC = () => {
     profile,
     remainingTachoSec: navigating ? Math.max(0, HOS_LIMIT_S - drivingSeconds) : undefined,
     totalRouteDistM: route?.distance,
-    routeDurationSec: remainingSeconds > 0 ? remainingSeconds : route?.duration,
+    routeDurationSec: route
+      ? truckCappedRouteDurationS(route.distance, remainingSeconds > 0 ? remainingSeconds : route.duration)
+      : undefined,
   });
   const truckSituation = selectTruckSituation(aheadEvents);
 
@@ -1314,6 +1398,7 @@ const MapScreen: React.FC = () => {
           userCoords={userCoords}
           destination={destination}
           parkingResults={parkingResults}
+          reachMarker={reachMarker}
           fuelResults={fuelResults}
           starredPOIs={starredPOIs}
           businessResults={businessResults}
@@ -1628,11 +1713,15 @@ const MapScreen: React.FC = () => {
       />
 
       <ChatFABs
-        visible={!route}
+        visible={!navigating}
         backendOnline={backendOnline}
         geminiChatOpen={geminiChatOpen}
         gptChatOpen={gptChatOpen}
-        bottomOffset={insets.bottom + spacing.xl}
+        bottomOffset={
+          routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW'
+            ? insets.bottom + spacing.xxl
+            : insets.bottom + spacing.xl
+        }
         onToggleGemini={() => {
           setGeminiChatOpen(v => !v);
           setGptChatOpen(false);
