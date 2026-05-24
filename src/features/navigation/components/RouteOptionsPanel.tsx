@@ -1,9 +1,10 @@
 import React, { memo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { fmtDistance, fmtDuration } from '../api/directions';
 import { styles, NEON } from '../screens/MapScreen.styles';
 import type { RouteOption } from '../../../shared/services/backendApi';
+import { buildRouteExplanation, type ExplanationBullet } from '../utils/routeExplanation';
 
 interface RouteOptionsPanelProps {
   routeOptions: RouteOption[];
@@ -31,6 +32,12 @@ function remainingTachoMin(drivingSeconds: number, hosLimitS: number): number {
   return Math.max(0, Math.floor((hosLimitS - drivingSeconds) / 60));
 }
 
+function whyBulletTextStyle(bullet: ExplanationBullet) {
+  if (bullet.positive) return routePanelStyles.whyBulletPositive;
+  if (bullet.icon === '🔴' || bullet.icon === '🚫') return routePanelStyles.whyBulletCritical;
+  return routePanelStyles.whyBulletWarning;
+}
+
 const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   routeOptions,
   selectedRouteIdx,
@@ -46,7 +53,19 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   onExportGPX,
 }) => {
   const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+  const [whyOpen, setWhyOpen] = React.useState(false);
+  const selectedOption = effectiveSelectedRouteIdx !== null
+    ? routeOptions[effectiveSelectedRouteIdx]
+    : undefined;
+  const whyBullets = React.useMemo(
+    () => selectedOption ? buildRouteExplanation(selectedOption, routeOptions) : [],
+    [routeOptions, selectedOption],
+  );
   const tachoEnabled = drivingSeconds !== undefined && hosLimitS !== undefined;
+
+  React.useEffect(() => {
+    setWhyOpen(false);
+  }, [effectiveSelectedRouteIdx]);
 
   return (
     <View style={[styles.routeOptionsPanel, { bottom: insets.bottom + 16 }]}>
@@ -141,6 +160,34 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
       {/* Restrictions + Start button */}
       {effectiveSelectedRouteIdx !== null && (
         <View style={styles.routeSelectedSummary}>
+          {selectedOption && (
+            <View style={routePanelStyles.whyWrap}>
+              <TouchableOpacity
+                style={routePanelStyles.whyButton}
+                activeOpacity={0.8}
+                onPress={() => setWhyOpen(open => !open)}
+              >
+                <Text style={routePanelStyles.whyButtonText}>
+                  ℹ️ Защо този маршрут?
+                </Text>
+              </TouchableOpacity>
+
+              {whyOpen && (
+                <View style={routePanelStyles.whyPanel}>
+                  {whyBullets.map((bullet, index) => (
+                    <Text
+                      key={`${bullet.icon}-${bullet.text}-${index}`}
+                      style={[routePanelStyles.whyBulletText, whyBulletTextStyle(bullet)]}
+                      numberOfLines={1}
+                    >
+                      {bullet.icon} {bullet.text}
+                    </Text>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
+
           {restrictionChecking && (
             <ActivityIndicator size="small" color={NEON} style={{ alignSelf: 'center' }} />
           )}
@@ -219,5 +266,42 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
     </View>
   );
 };
+
+const routePanelStyles = StyleSheet.create({
+  whyWrap: {
+    marginBottom: 6,
+  },
+  whyButton: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  whyButtonText: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  whyPanel: {
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 2,
+    gap: 4,
+  },
+  whyBulletText: {
+    fontSize: 11,
+    fontWeight: '800',
+    lineHeight: 15,
+  },
+  whyBulletPositive: {
+    color: '#4cff91',
+  },
+  whyBulletWarning: {
+    color: '#FF9500',
+  },
+  whyBulletCritical: {
+    color: '#FF3B30',
+  },
+});
 
 export default memo(RouteOptionsPanel);
