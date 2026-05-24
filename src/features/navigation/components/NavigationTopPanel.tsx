@@ -3,6 +3,7 @@ import { Text, View, StyleSheet } from 'react-native';
 import type { RouteStep } from '../api/directions';
 import { fmtDistance, maneuverEmoji } from '../api/directions';
 import SignRenderer, { SIGN_TRIGGER_M } from './SignRenderer';
+import AheadPreviewQueue from './AheadPreviewQueue';
 import { styles } from '../screens/MapScreen.styles';
 import type { RouteAheadEvent, RestrictionEventPayload, TunnelEventPayload, ParkingBreakPayload } from '../utils/routeAheadEvents';
 
@@ -15,6 +16,10 @@ interface NavigationTopPanelProps {
   topOffset: number;
   /** Upcoming guidance events sorted by priority+distance. First non-lane event shown as "ahead" chip. */
   aheadEvents?: RouteAheadEvent[];
+  /** Full queue for compact upcoming-event chips below the banner. */
+  aheadQueue?: RouteAheadEvent[];
+  /** Distance of the situation already rendered elsewhere, so the queue can skip it. */
+  activeSituationDistanceM?: number;
 }
 
 // ── Ahead chip: one-liner preview of the next important event ─────────────────
@@ -73,6 +78,8 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
   lanes,
   topOffset,
   aheadEvents = [],
+  aheadQueue = [],
+  activeSituationDistanceM,
 }) => {
   if (!visible) return null;
 
@@ -91,6 +98,12 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
             banner={step.bannerInstructions?.[0]}
           />
           {aheadEvent && <AheadChip event={aheadEvent} />}
+          {aheadQueue.length > 0 && (
+            <AheadPreviewQueue
+              events={aheadQueue}
+              activeSituationDistanceM={activeSituationDistanceM}
+            />
+          )}
         </>
       ) : (
         <>
@@ -123,6 +136,12 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
             </View>
           </View>
           {aheadEvent && <AheadChip event={aheadEvent} />}
+          {aheadQueue.length > 0 && (
+            <AheadPreviewQueue
+              events={aheadQueue}
+              activeSituationDistanceM={activeSituationDistanceM}
+            />
+          )}
         </>
       )}
     </View>

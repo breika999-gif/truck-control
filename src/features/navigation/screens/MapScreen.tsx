@@ -1263,6 +1263,8 @@ const MapScreen: React.FC = () => {
           lanes={currentLanes}
           topOffset={insets.top + spacing.xs}
           aheadEvents={aheadEvents}
+          aheadQueue={aheadEvents}
+          activeSituationDistanceM={truckSituation.kind !== 'none' ? truckSituation.distanceM : undefined}
         />
       )}
 
