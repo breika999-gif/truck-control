@@ -1117,7 +1117,7 @@ const MapScreen: React.FC = () => {
   const handleStartRoute = useCallback((_cong: any, _alerts: any) => {
     const selectedIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
     const selectedOption = selectedIdx == null ? null : routeOptions[selectedIdx];
-    if (selectedOption?.steps?.length) {
+    if (selectedOption?.geometry?.coordinates?.length) {
       const selectedRoute = routeFromOption(selectedOption);
       setRoute(selectedRoute);
       setNavCongestionGeoJSON(selectedRoute.congestionGeoJSON);
