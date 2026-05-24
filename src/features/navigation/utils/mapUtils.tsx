@@ -45,9 +45,9 @@ export const ARROW_UTURN         = require('../../../shared/assets/maneuver/arro
 export const ARROW_ROUNDABOUT    = require('../../../shared/assets/maneuver/arrow_roundabout.png') as number;
 
 // ── Camera padding constants ──────────────────────────────────────────────────
-// paddingTop = 42% of screen height, capped at 380px — keeps truck in lower third on all screen sizes
+// paddingTop = 52% of screen height, capped at 440px — keeps truck low with more road ahead
 const _screenH = Dimensions.get('window').height;
-export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: Math.min(Math.round(_screenH * 0.42), 380), paddingBottom: 0 };
+export const NAV_PADDING  = { paddingLeft: 0, paddingRight: 0, paddingTop: Math.min(Math.round(_screenH * 0.52), 440), paddingBottom: 0 };
 export const ZERO_PADDING = { paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 };
 
 // ── App deep-link URL builders ────────────────────────────────────────────────
@@ -426,11 +426,14 @@ export const StableCamera = React.memo(
   ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords }: StableCameraProps) => {
     const nativeCameraRef = React.useRef<any>(null);
     const followZoomLevel =
-      speed != null && speed > 90 ? 15.0 :
-      speed != null && speed > 60 ? 15.5 :
-      speed != null && speed > 30 ? 16.2 :
-      16.8;
-    const followPitch = speed != null && speed > 40 ? 45 : 35;
+      speed != null && speed > 90 ? 15.5 :
+      speed != null && speed > 60 ? 16.0 :
+      speed != null && speed > 30 ? 16.8 :
+      17.2;
+    const followPitch =
+      speed != null && speed > 40 ? 60 :
+      speed != null && speed > 5  ? 55 :
+      navigating ? 45 : 0;
 
     React.useEffect(() => {
       cameraRef.current = {
@@ -488,12 +491,12 @@ export const StableCamera = React.memo(
           zoomLevel: MAP_CENTER.zoomLevel,
         }}
         followUserLocation={Boolean(navigating && mapLoaded && isTracking && userCoords)}
-        followUserMode={speed != null && speed > 3 ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
+        followUserMode={speed != null && speed > 1 ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
         followZoomLevel={followZoomLevel}
         followPitch={followPitch}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
-        animationDuration={400}
+        animationDuration={300}
       />
     );
   },
