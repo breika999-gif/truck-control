@@ -957,6 +957,7 @@ const MapScreen: React.FC = () => {
     currentStepIdx: currentStep,
     distToTurn,
     restrictions: displayRestrictionPoints,
+    maxspeeds: route?.maxspeeds,
     userCoords,
     profile,
     remainingTachoSec: navigating ? Math.max(0, HOS_LIMIT_S - drivingSeconds) : undefined,

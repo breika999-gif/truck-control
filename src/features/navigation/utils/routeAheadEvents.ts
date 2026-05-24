@@ -13,7 +13,7 @@
  *   const top = events[0]; // highest priority event ahead
  */
 
-import type { RouteStep, BannerComponent, RestrictionPoint } from '../api/directions';
+import type { RouteStep, BannerComponent, RestrictionPoint, MaxspeedEntry } from '../api/directions';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 
 // ── Event types ───────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ export interface BuildEventsInput {
   currentStepIdx: number;
   distToTurn: number | null;        // metres to current maneuver
   restrictions?: RestrictionPoint[] | null;
-  maxspeeds?: Array<{ speed?: number; unknown?: boolean }> | null;
+  maxspeeds?: MaxspeedEntry[] | null;
   userCoords?: [number, number] | null;
   profile?: VehicleProfile | null;
   /** Remaining continuous driving seconds before HOS break (hosLimit - driven) */
@@ -148,6 +148,7 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
     remainingTachoSec,
     totalRouteDistM,
     routeDurationSec,
+    maxspeeds,
   } = input;
 
   const events: RouteAheadEvent[] = [];
@@ -239,6 +240,49 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
     }
   }
 
+  // ── 5. Speed zone changes ahead ────────────────────────────────────────────
+  if (maxspeeds?.length && totalRouteDistM != null && totalRouteDistM > 0) {
+    const currentSpeed = speedAtDistance(maxspeeds, totalRouteDistM, 0);
+    let emitted = 0;
+    let lastSeenSpeed = currentSpeed;
+    let cumulativeDistM = 0;
+
+    if (currentSpeed != null) {
+      for (let i = currentStepIdx; i < steps.length; i++) {
+        const step = steps[i];
+        if (!step) break;
+
+        const stepDistance = i === currentStepIdx && distToTurn != null
+          ? Math.max(0, distToTurn)
+          : Math.max(0, step.distance ?? 0);
+        cumulativeDistM += stepDistance;
+
+        if (cumulativeDistM <= 0) continue;
+        if (cumulativeDistM > LOOKAHEAD_M) break;
+
+        const speedAtBoundary = speedAtDistance(maxspeeds, totalRouteDistM, cumulativeDistM);
+        if (speedAtBoundary == null) continue;
+        if (speedAtBoundary === lastSeenSpeed) continue;
+        lastSeenSpeed = speedAtBoundary;
+        if (currentSpeed - speedAtBoundary < 10) continue;
+
+        events.push({
+          type: 'hgv_speed',
+          distanceM: cumulativeDistM,
+          priority: speedAtBoundary <= 50 ? 2 : 3,
+          payload: {
+            speedKmh: speedAtBoundary,
+            isHgvLimit: false,
+            roadName: step.name ?? '',
+          } satisfies SpeedEventPayload,
+        });
+
+        emitted += 1;
+        if (emitted >= 3) break;
+      }
+    }
+  }
+
   // ── Sort: priority first, then distance ───────────────────────────────────
   events.sort((a, b) => {
     if (a.priority !== b.priority) return a.priority - b.priority;
@@ -246,6 +290,23 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
   });
 
   return events;
+}
+
+function speedAtDistance(
+  maxspeeds: MaxspeedEntry[],
+  totalRouteDistM: number,
+  distanceM: number,
+): number | null {
+  if (!maxspeeds.length || totalRouteDistM <= 0) return null;
+  const ratio = Math.max(0, Math.min(1, distanceM / totalRouteDistM));
+  const pointIdx = Math.min(
+    maxspeeds.length - 1,
+    Math.max(0, Math.round(ratio * maxspeeds.length)),
+  );
+  const entry = maxspeeds[pointIdx];
+  if (!entry || entry.unknown || entry.none || entry.speed == null) return null;
+  const speed = entry.unit === 'mph' ? entry.speed * 1.609344 : entry.speed;
+  return Math.round(speed);
 }
 
 // ── Simple Haversine distance (metres) ────────────────────────────────────────

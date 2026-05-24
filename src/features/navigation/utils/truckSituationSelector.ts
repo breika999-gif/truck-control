@@ -8,17 +8,25 @@
  *  1. Critical restriction exceeded within 600 m → composite_restriction
  *  2. Tacho break required within 5 km → tacho_break
  *  3. Tunnel with ADR profile within 2 km → tunnel_ahead
- *  4. Warning restriction (not exceeded) within 1 km → composite_restriction
- *  5. Tacho break within 15 km → tacho_break (info)
- *  6. Lane guidance (closest, any distance) → lane_guidance
- *  7. Tunnel without ADR → tunnel_ahead (info)
- *  8. Nothing → null
+ *  4. Speed zone change within 800 m → speed_zone
+ *  5. Warning restriction (not exceeded) within 1 km → composite_restriction
+ *  6. Tacho break within 15 km → tacho_break (info)
+ *  7. Lane guidance (closest, any distance) → lane_guidance
+ *  8. Tunnel without ADR → tunnel_ahead (info)
+ *  9. Nothing → null
  *
  * Composite restriction: all restriction events at the same location
  * (within GROUP_DIST_M metres) are merged into one situation.
  */
 
-import type { RouteAheadEvent, RestrictionEventPayload, LaneEventPayload, TunnelEventPayload, ParkingBreakPayload } from './routeAheadEvents';
+import type {
+  RouteAheadEvent,
+  RestrictionEventPayload,
+  LaneEventPayload,
+  TunnelEventPayload,
+  ParkingBreakPayload,
+  SpeedEventPayload,
+} from './routeAheadEvents';
 import type { BannerComponent } from '../api/directions';
 
 // ── TruckSituation output model ───────────────────────────────────────────────
@@ -64,11 +72,20 @@ export interface TachoBreakSituation {
   breakDistKm: number;
 }
 
+export interface SpeedZoneSituation {
+  kind: 'speed_zone';
+  distanceM: number;
+  priority: 1 | 2 | 3;
+  speedKmh: number;
+  isCurrent: boolean;
+}
+
 export type TruckSituation =
   | CompositeRestrictionSituation
   | LaneGuidanceSituation
   | TunnelAheadSituation
   | TachoBreakSituation
+  | SpeedZoneSituation
   | { kind: 'none' };
 
 // ── Grouping constants ────────────────────────────────────────────────────────
@@ -161,7 +178,22 @@ export function selectTruckSituation(events: RouteAheadEvent[]): TruckSituation 
     };
   }
 
-  // 4. Warning restriction (not exceeded) ≤ 1 km
+  // 4. Speed zone change ≤ 800 m, warning priority or higher.
+  const speedZone = events.find(
+    e => e.type === 'hgv_speed' && e.distanceM <= 800 && e.priority <= 2,
+  );
+  if (speedZone) {
+    const p = speedZone.payload as SpeedEventPayload;
+    return {
+      kind: 'speed_zone',
+      distanceM: speedZone.distanceM,
+      priority: speedZone.priority,
+      speedKmh: p.speedKmh,
+      isCurrent: speedZone.distanceM <= 20,
+    };
+  }
+
+  // 5. Warning restriction (not exceeded) ≤ 1 km
   for (const group of restrictionGroups) {
     const event = events.find(
       e => e.type === 'restriction' && e.distanceM <= 1000,
@@ -176,7 +208,7 @@ export function selectTruckSituation(events: RouteAheadEvent[]): TruckSituation 
     };
   }
 
-  // 5. Tacho break warning (any)
+  // 6. Tacho break warning (any)
   const warnTacho = events.find(e => e.type === 'parking_break');
   if (warnTacho) {
     const p = warnTacho.payload as ParkingBreakPayload;
@@ -189,7 +221,7 @@ export function selectTruckSituation(events: RouteAheadEvent[]): TruckSituation 
     };
   }
 
-  // 6. Lane guidance (closest)
+  // 7. Lane guidance (closest)
   const laneEv = events.find(e => e.type === 'lane');
   if (laneEv) {
     const p = laneEv.payload as LaneEventPayload;
@@ -203,7 +235,7 @@ export function selectTruckSituation(events: RouteAheadEvent[]): TruckSituation 
     };
   }
 
-  // 7. Tunnel (no ADR)
+  // 8. Tunnel (no ADR)
   const tunnel = events.find(e => e.type === 'tunnel');
   if (tunnel) {
     const p = tunnel.payload as TunnelEventPayload;

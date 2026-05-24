@@ -8,13 +8,21 @@
  *   composite_restriction → CompositeRestrictionSign
  *   tunnel_ahead          → TunnelWarningBanner (existing) or inline chip
  *   tacho_break           → inline tacho chip (future: ParkingPanel trigger)
+ *   speed_zone            → HGVSpeedSign
  *   lane_guidance         → delegated to NavigationTopPanel / SignRenderer
  *   none                  → null
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import CompositeRestrictionSign from './CompositeRestrictionSign';
-import type { TruckSituation, CompositeRestrictionSituation, TunnelAheadSituation, TachoBreakSituation } from '../utils/truckSituationSelector';
+import HGVSpeedSign from './HGVSpeedSign';
+import type {
+  TruckSituation,
+  CompositeRestrictionSituation,
+  TunnelAheadSituation,
+  TachoBreakSituation,
+  SpeedZoneSituation,
+} from '../utils/truckSituationSelector';
 
 interface Props {
   situation: TruckSituation;
@@ -104,6 +112,15 @@ const TruckSituationRenderer: React.FC<Props> = ({ situation }) => {
 
     case 'tacho_break':
       return <TachoChip s={situation as TachoBreakSituation} />;
+
+    case 'speed_zone':
+      return (
+        <HGVSpeedSign
+          speedKmh={(situation as SpeedZoneSituation).speedKmh}
+          distanceM={situation.distanceM}
+          isCurrent={(situation as SpeedZoneSituation).isCurrent}
+        />
+      );
 
     case 'lane_guidance':
     case 'none':
