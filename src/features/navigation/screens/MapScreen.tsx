@@ -7,6 +7,8 @@ import {
 } from 'react-native';
 import { buildGPX } from '../utils/gpxUtils';
 import { useRouteAheadEvents } from '../hooks/useRouteAheadEvents';
+import { selectTruckSituation } from '../utils/truckSituationSelector';
+import TruckSituationRenderer from '../components/TruckSituationRenderer';
 import Tts from 'react-native-tts';
 import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import Mapbox, { LocationPuck } from '@rnmapbox/maps';
@@ -949,7 +951,7 @@ const MapScreen: React.FC = () => {
     : dominantCongestion === 'moderate' ? '#FF9500'
     : '#13BDFF';
 
-  // ── Guidance events ahead (Garmin SID layer equivalent) ──────────────────
+  // ── Guidance engine (Garmin SID + SQLite + JCV equivalent) ──────────────
   const aheadEvents = useRouteAheadEvents({
     steps: route?.steps ?? [],
     currentStepIdx: currentStep,
@@ -961,6 +963,7 @@ const MapScreen: React.FC = () => {
     totalRouteDistM: route?.distance,
     routeDurationSec: remainingSeconds > 0 ? remainingSeconds : route?.duration,
   });
+  const truckSituation = selectTruckSituation(aheadEvents);
 
   const useNavigationMapStyle = navigating || navPhase === 'NAVIGATING' || navPhase === 'REROUTING';
   const mapStyleURL: string =
@@ -1447,11 +1450,8 @@ const MapScreen: React.FC = () => {
         />
       )}
 
-      {/* ── Road restriction sign popup ── */}
-      <RestrictionSign
-        restriction={activeRestriction}
-        vehicleProfile={profile ? { height_m: profile.height_m, weight_t: profile.weight_t, width_m: profile.width_m, hazmat_class: profile.hazmat_class } : null}
-      />
+      {/* ── Truck Situation Renderer (composite restrictions / tunnel / tacho) ── */}
+      {navigating && <TruckSituationRenderer situation={truckSituation} />}
 
 
       <WakeWordIndicator navigating={navigating} wakeWordHeard={wakeWordHeard} topInset={insets.top} />
