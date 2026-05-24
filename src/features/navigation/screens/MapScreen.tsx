@@ -31,6 +31,7 @@ import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import ChatPanel from '../components/ChatPanel';
 import NavigationHUD from '../components/NavigationHUD';
+import NavigationArrow from '../components/NavigationArrow';
 import RouteOptionsPanel from '../components/RouteOptionsPanel';
 import RestrictionSign from '../components/RestrictionSign';
 import FuelPanel from '../components/FuelPanel';
@@ -1035,6 +1036,7 @@ const MapScreen: React.FC = () => {
     if (distToTurn < 150) return 0.62;
     return 0.56;
   }, [navigating, distToTurn]);
+  const showNavArrow = navigating && isTracking;
 
   useEffect(() => {
     if (navigating) return;
@@ -1376,9 +1378,18 @@ const MapScreen: React.FC = () => {
           topImage="nav-arrow"
           bearingImage="nav-arrow"
           shadowImage="nav-arrow"
-          scale={puckScale}
+          scale={showNavArrow ? (['literal', 0] as const) : puckScale}
           pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
           visible
+        />
+        <NavigationArrow
+          visible={showNavArrow}
+          situationKind={truckSituation.kind}
+          anyExceeded={
+            truckSituation.kind === 'composite_restriction'
+              ? truckSituation.anyExceeded
+              : false
+          }
         />
 
         <MapLayers
