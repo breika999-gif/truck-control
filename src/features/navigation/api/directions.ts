@@ -16,10 +16,11 @@ export interface VoiceInstruction {
 }
 
 export interface BannerComponent {
-  type: 'text' | 'lane' | 'icon' | 'exit-number' | 'exit' | 'delimiter';
+  type: 'text' | 'lane' | 'icon' | 'exit-number' | 'exit' | 'delimiter' | 'guidance-view';
   text: string;
   active?: boolean;
   directions?: string[];
+  imageBaseURL?: string;
 }
 
 /** Structured lane-guidance and turn instruction from Mapbox banner_instructions. */

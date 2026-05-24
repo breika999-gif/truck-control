@@ -4,7 +4,9 @@ import type { RouteStep } from '../api/directions';
 import { fmtDistance, maneuverEmoji } from '../api/directions';
 import SignRenderer, { SIGN_TRIGGER_M } from './SignRenderer';
 import AheadPreviewQueue from './AheadPreviewQueue';
+import JunctionViewImage from './JunctionViewImage';
 import { styles } from '../screens/MapScreen.styles';
+import { MAPBOX_PUBLIC_TOKEN } from '../../../shared/constants/config';
 import type { RouteAheadEvent, RestrictionEventPayload, TunnelEventPayload, ParkingBreakPayload } from '../utils/routeAheadEvents';
 
 interface NavigationTopPanelProps {
@@ -81,15 +83,27 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
   aheadQueue = [],
   activeSituationDistanceM,
 }) => {
-  if (!visible) return null;
+  const junctionViewURL = React.useMemo(() => {
+    const comps = step.bannerInstructions?.[0]?.primary?.components ?? [];
+    const guidanceView = comps.find(c => c.type === 'guidance-view' && c.imageBaseURL);
+    return guidanceView?.imageBaseURL ?? null;
+  }, [step]);
 
   // Top non-lane event for the "ahead" chip
   const aheadEvent = aheadEvents.find(e => e.type !== 'lane') ?? null;
+
+  if (!visible) return null;
 
   return (
     <View style={[styles.signWrap, { top: topOffset }]}>
       {distToTurn != null && distToTurn < SIGN_TRIGGER_M ? (
         <>
+          {junctionViewURL && (
+            <JunctionViewImage
+              imageBaseURL={junctionViewURL}
+              accessToken={MAPBOX_PUBLIC_TOKEN}
+            />
+          )}
           <SignRenderer
             step={step}
             nextStep={nextStep ?? undefined}
