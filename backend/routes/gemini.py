@@ -15,7 +15,7 @@ from services.tacho_service import _tacho_summary
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
     _extract_nav_intent, _extract_app_intent, _strip_md_fence,
-    _deterministic_reach_reply as maybe_reach_answer,
+    maybe_reach_answer,
 )
 from database import _db_save_chat
 

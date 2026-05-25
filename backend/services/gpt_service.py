@@ -7,7 +7,7 @@ from config import (
 )
 from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc,
-    _deterministic_reach_reply as maybe_reach_answer,
+    maybe_reach_answer,
 )
 from database import _db_save_chat
 from services.tomtom_service import (

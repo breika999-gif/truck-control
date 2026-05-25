@@ -1,4 +1,6 @@
 import math
+import os
+from hmac import compare_digest
 import requests
 from flask import Blueprint, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
@@ -181,8 +183,26 @@ def _transparking_along_route(coords: list, max_results: int = 20) -> list:
 
 poi_bp = Blueprint('poi', __name__)
 
+def _require_app_token():
+    expected = os.environ.get("APP_INTERNAL_TOKEN", "truck-internal-2024")
+    provided = request.headers.get("X-App-Token", "")
+    if not compare_digest(provided, expected):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    return None
+
+def _parse_coordinate(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("invalid coordinates")
+    if not math.isfinite(parsed):
+        raise ValueError("invalid coordinates")
+    return parsed
+
 @poi_bp.get("/api/pois")
 def list_pois():
+    auth_error = _require_app_token()
+    if auth_error: return auth_error
     email = (request.args.get("user_email") or "").strip()
     if not email: return jsonify({"error": "user_email required"}), 400
     cat = request.args.get("category")
@@ -197,18 +217,26 @@ def list_pois():
 
 @poi_bp.post("/api/pois")
 def save_poi():
+    auth_error = _require_app_token()
+    if auth_error: return auth_error
     body = _get_body()
     name, lat, lng, email = (body.get("name") or "").strip(), body.get("lat"), body.get("lng"), (body.get("user_email") or "").strip()
     if not name or lat is None or lng is None: return jsonify({"ok": False, "error": "name, lat, lng required"}), 400
     if not email: return jsonify({"ok": False, "error": "user_email required"}), 400
+    try:
+        lat_f, lng_f = _parse_coordinate(lat), _parse_coordinate(lng)
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
     with get_db() as conn:
-        cur = conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (name, body.get("address", ""), body.get("category", "custom"), float(lat), float(lng), body.get("notes", ""), email, now_iso()))
+        cur = conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (name, body.get("address", ""), body.get("category", "custom"), lat_f, lng_f, body.get("notes", ""), email, now_iso()))
         pid = cur.lastrowid
         row = conn.execute("SELECT * FROM pois WHERE id=?", (pid,)).fetchone()
     return jsonify({"ok": True, "poi": row_to_poi(row)}), 201
 
 @poi_bp.delete("/api/pois/<int:poi_id>")
 def delete_poi(poi_id: int):
+    auth_error = _require_app_token()
+    if auth_error: return auth_error
     email = (request.args.get("user_email") or _get_body().get("user_email") or "").strip()
     if not email: return jsonify({"ok": False, "error": "email required"}), 400
     with get_db() as conn: 
@@ -220,11 +248,11 @@ def delete_poi(poi_id: int):
 def nearby_truck_parking():
     if _is_rate_limited(limit=30, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
     try:
-        lat = float(request.args.get("lat"))
-        lng = float(request.args.get("lng"))
+        lat = _parse_coordinate(request.args.get("lat"))
+        lng = _parse_coordinate(request.args.get("lng"))
         radius_m = int(float(request.args.get("radius") or request.args.get("radius_m") or 20000))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "lat, lng required"}), 400
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
 
     spots = _tool_find_truck_parking(lat, lng, max(1000, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
@@ -233,11 +261,11 @@ def nearby_truck_parking():
 def nearby_fuel():
     if _is_rate_limited(limit=30, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
     try:
-        lat = float(request.args.get("lat"))
-        lng = float(request.args.get("lng"))
+        lat = _parse_coordinate(request.args.get("lat"))
+        lng = _parse_coordinate(request.args.get("lng"))
         radius_m = int(float(request.args.get("radius") or request.args.get("radius_m") or 2000))
     except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "lat, lng required"}), 400
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
 
     spots = _tool_find_fuel(lat, lng, max(500, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
@@ -246,18 +274,23 @@ def nearby_fuel():
 def get_parking_bbox():
     if _is_rate_limited(limit=60, window_s=60): return jsonify({"error": "rate limited"}), 429
     try:
-        sw_lat, sw_lng = float(request.args.get("swLat")), float(request.args.get("swLng"))
-        ne_lat, ne_lng = float(request.args.get("neLat")), float(request.args.get("neLng"))
+        sw_lat, sw_lng = _parse_coordinate(request.args.get("swLat")), _parse_coordinate(request.args.get("swLng"))
+        ne_lat, ne_lng = _parse_coordinate(request.args.get("neLat")), _parse_coordinate(request.args.get("neLng"))
         with get_db() as db:
             rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lat, ne_lat, sw_lng, ne_lng)).fetchall()
             features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lng"], r["lat"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": f"https://truckerapps.eu/transparking/en/poi/{r['pointid']}"}} for r in rows]
             return jsonify({"type": "FeatureCollection", "features": features})
+    except ValueError: return jsonify({"error": "invalid coordinates"}), 400
     except: return jsonify({"error": "invalid params"}), 400
 
 @poi_bp.post("/api/poi-along-route")
 def poi_along_route_v2():
+    auth_error = _require_app_token()
+    if auth_error: return auth_error
     data = _get_body()
-    coords, category = data.get("coords", []), data.get("category", "truck_stop")
+    coords, category = data.get("coords", []) or [], data.get("category", "truck_stop")
+    if not isinstance(coords, list): return jsonify({"ok": False, "error": "Invalid coords"}), 400
+    if len(coords) > 500: return jsonify({"ok": False, "error": "too many coordinates"}), 400
     if not coords or len(coords) < 2: return jsonify({"pois": []})
     debug = {} if data.get("debug") else None
     if category == "truck_stop":
@@ -330,17 +363,27 @@ def proximity_alerts():
 
 @poi_bp.post("/api/cameras/report")
 def report_camera():
+    auth_error = _require_app_token()
+    if auth_error: return auth_error
     body = _get_body()
     lat, lng, email = body.get("lat"), body.get("lng"), body.get("user_email", "")
     if lat is None or lng is None: return jsonify({"ok": False, "error": "lat, lng required"}), 400
+    try:
+        lat_f, lng_f = _parse_coordinate(lat), _parse_coordinate(lng)
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
     with get_db() as conn:
-        conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", ("📷 Докладвана камера", "Добавена от потребител", "speed_camera", float(lat), float(lng), "User reported", email, now_iso()))
+        conn.execute("INSERT INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", ("📷 Докладвана камера", "Добавена от потребител", "speed_camera", lat_f, lng_f, "User reported", email, now_iso()))
         conn.commit()
     return jsonify({"ok": True})
 
 @poi_bp.get("/api/places/search")
 def places_search():
     from services.poi_service import _google_places_fallback
-    q, lat, lng = request.args.get("q", "").strip(), float(request.args.get("lat", 0)), float(request.args.get("lng", 0))
+    q = request.args.get("q", "").strip()
+    try:
+        lat, lng = _parse_coordinate(request.args.get("lat", 0)), _parse_coordinate(request.args.get("lng", 0))
+    except ValueError:
+        return jsonify({"error": "invalid coordinates"}), 400
     if len(q) < 2: return jsonify({"results": []})
     return jsonify({"results": _google_places_fallback(q, lat, lng)})

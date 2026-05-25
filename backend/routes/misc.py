@@ -466,6 +466,7 @@ def calculate_route():
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
+    include_restrictions = bool(data.get("include_restrictions"))
     o_lat, o_lng, d_lat, d_lng = round(origin[1], 6), round(origin[0], 6), round(destination[1], 6), round(destination[0], 6)
     truck_key = (
         f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:"
@@ -562,7 +563,7 @@ def calculate_route():
                 _tomtom_congestion_geojson(ar, raw_alt_geom)
             )
             alt_traffic_alerts = _tomtom_traffic_alerts(ar, raw_alt_geom)
-            alt_restrictions = _extract_route_restrictions(alt_geom) if alt_m <= 250000 else []
+            alt_restrictions = _extract_route_restrictions(alt_geom) if include_restrictions and alt_m <= 250000 else []
             alternatives.append({
                 "label": ["Алтернатива 1", "Алтернатива 2"][idx],
                 "color": ["#B922FF", "#08F384"][idx],
@@ -588,7 +589,7 @@ def calculate_route():
         traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
         # Keep route calculation responsive. Very long-route restriction scanning uses
         # multiple Overpass calls and should move to a non-blocking endpoint.
-        restrictions = _extract_route_restrictions(geom) if total_m <= 250000 else []
+        restrictions = _extract_route_restrictions(geom) if include_restrictions and total_m <= 250000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)

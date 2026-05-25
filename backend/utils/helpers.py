@@ -91,6 +91,8 @@ def _fmt_reach_minutes(minutes: int) -> str:
         return f"{hours}ч"
     return f"{mins}мин"
 
+TRUCK_SPEED_CAP_KMH = 90
+
 def _num_or_none(value) -> float | None:
     try:
         number = float(str(value).replace(",", "."))
@@ -124,6 +126,7 @@ def _deterministic_reach_reply(user_msg: str, context: dict | None) -> str | Non
         hint in msg
         for hint in (
             "до къде", "докъде", "къде ще стиг", "ще стигна", "ще стигнем",
+            "до каде", "докаде", "каде ще стиг", "къде мога да стиг", "каде мога да стиг",
             "мога ли да стиг", "стигам ли", "reach", "how far", "where can i",
         )
     )
@@ -149,15 +152,17 @@ def _deterministic_reach_reply(user_msg: str, context: dict | None) -> str | Non
     route_min = _num_or_none(context.get("route_duration_min"))
 
     if dest and route_km is not None and route_min is not None and route_min > 0:
-        if available_min >= route_min:
-            buffer_min = available_min - round(route_min)
+        truck_capped_route_min = max(route_min, (route_km / TRUCK_SPEED_CAP_KMH) * 60)
+
+        if available_min >= truck_capped_route_min:
+            buffer_min = available_min - round(truck_capped_route_min)
             return (
-                f"Колега, стигаш до {dest}: ~{route_km:g}км/~{_fmt_reach_minutes(round(route_min))}. "
+                f"Колега, стигаш до {dest}: ~{route_km:g}км/~{_fmt_reach_minutes(round(truck_capped_route_min))}. "
                 f"Имаш около {buffer_min}мин резерв."
             )
 
-        reachable_km = max(0, route_km * (available_min / route_min))
-        remaining_after_min = max(0, round(route_min - available_min))
+        reachable_km = min(route_km, TRUCK_SPEED_CAP_KMH * available_min / 60)
+        remaining_after_min = max(0, round(truck_capped_route_min - available_min))
         remaining_after_km = max(0, route_km - reachable_km)
         return (
             f"Колега, няма да стигнеш до {dest} с {_fmt_reach_minutes(available_min)}. "
@@ -169,11 +174,15 @@ def _deterministic_reach_reply(user_msg: str, context: dict | None) -> str | Non
     speed_kmh = _num_or_none(context.get("speed_kmh"))
     if speed_kmh is None or speed_kmh < 10:
         speed_kmh = 80
+    speed_kmh = min(speed_kmh, TRUCK_SPEED_CAP_KMH)
     reach_km = round(speed_kmh * available_min / 60)
     return (
         f"Колега, за {_fmt_reach_minutes(available_min)} ще стигнеш приблизително {reach_km}км "
         f"при {speed_kmh:g}км/ч. За точна точка ми трябва активен маршрут."
     )
+
+def maybe_reach_answer(user_msg: str, context: dict | None) -> str | None:
+    return _deterministic_reach_reply(user_msg, context)
 
 from config import NAV_RE, APP_RE, NAV_KEYWORDS, LOCATION_STOP_WORDS
 
