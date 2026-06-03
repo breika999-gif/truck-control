@@ -4,15 +4,51 @@ import { GoogleAccount } from '../../../shared/services/accountManager';
 import {
   saveTachoSession,
   fetchTachoSummary,
+  logRestStop,
+  RestType,
   TachoSummary,
   TachoSessionPayload,
 } from '../../../shared/services/backendApi';
 import { checkHosViolations, HosViolation } from '../../tacho/TachoEventLog';
 import { recordDailyStats } from '../utils/driverHabits';
+import { useTachoBluetooth } from '../../tacho/hooks/useTachoBluetooth';
 
 const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
 const DAILY_LIMIT_9H = 32400; // 9h
 const PENDING_TACHO_SESSIONS_KEY = '@truckai/pending_tacho_sessions_v1';
+
+export interface WeeklyStatus {
+  drivenH: number;
+  remainingH: number;
+  canExtendToday: boolean;
+  mustRecuperateBy: string;
+  recommendedStartTomorrow: string | null;
+}
+
+export function calcWeeklyStatus(
+  tachoSummary: TachoSummary,
+  now = new Date(),
+): WeeklyStatus {
+  const drivenH = Math.max(0, tachoSummary.weekly_driven_h);
+  const remainingH = Math.max(0, tachoSummary.weekly_remaining_h);
+  const canExtendToday = tachoSummary.daily_limit_h === 10;
+  const weekStartMs = Date.parse(`${tachoSummary.week_start}T00:00:00.000Z`);
+  const weekEndMs = Number.isFinite(weekStartMs)
+    ? weekStartMs + 7 * 24 * 3600 * 1000
+    : now.getTime() + 7 * 24 * 3600 * 1000;
+  const mustRecuperateByMs = remainingH < 9
+    ? Math.min(weekEndMs, now.getTime() + remainingH * 3600 * 1000)
+    : weekEndMs;
+  const dailyRestH = tachoSummary.reduced_rests_remaining > 0 ? 9 : 11;
+
+  return {
+    drivenH,
+    remainingH,
+    canExtendToday,
+    mustRecuperateBy: new Date(mustRecuperateByMs).toISOString(),
+    recommendedStartTomorrow: new Date(now.getTime() + dailyRestH * 3600 * 1000).toISOString(),
+  };
+}
 
 async function loadPendingTachoSessions(): Promise<TachoSessionPayload[]> {
   try {
@@ -33,17 +69,27 @@ async function savePendingTachoSessions(queue: TachoSessionPayload[]): Promise<v
   await AsyncStorage.setItem(PENDING_TACHO_SESSIONS_KEY, JSON.stringify(queue));
 }
 
+function restTypeForDuration(durationMin: number): RestType {
+  if (durationMin >= 11 * 60) return 'daily_11h';
+  if (durationMin >= 9 * 60) return 'reduced_9h';
+  return 'break_45min';
+}
+
 export function useTacho(
   navigating: boolean,
   isDrivingRef: React.MutableRefObject<boolean>,
   googleUserRef: React.MutableRefObject<GoogleAccount | null>,
+  userCoordsRef: React.MutableRefObject<[number, number] | null>,
   speak: (text: string) => void,
   onEndOfDay?: () => void,
   onApproachingLimit?: (remainingMinutes: number) => void,
 ) {
-  const [drivingSeconds, setDrivingSeconds] = useState(0);
+  const bluetoothTacho = useTachoBluetooth();
+  const [localDrivingSeconds, setDrivingSeconds] = useState(0);
   const [tachoSummary, setTachoSummary] = useState<TachoSummary | null>(null);
   const [hosViolations, setHosViolations] = useState<HosViolation[]>([]);
+  const bluetoothData = bluetoothTacho.connected ? bluetoothTacho.data : null;
+  const drivingSeconds = bluetoothData?.continuousDrivenS ?? localDrivingSeconds;
 
   const drivingSecondsRef = useRef(0);
   const sessionStartRef = useRef<string | null>(null);
@@ -61,6 +107,9 @@ export function useTacho(
   const warned10Ref = useRef(false);
   const isMountedRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const localBreakLoggedForSessionRef = useRef(false);
+  const bleRestStartedAtRef = useRef<string | null>(null);
+  const previousBluetoothActivityRef = useRef<'driving' | 'rest' | 'work' | 'available' | null>(null);
   // WTD shift start: timestamp (ms) when the shift began (first activity after rest)
   const shiftStartRef = useRef<number | null>(null);
 
@@ -115,8 +164,45 @@ export function useTacho(
   }, []);
 
   useEffect(() => {
-    void flushPendingSessions();
+    flushPendingSessions().catch(e => console.error('[tacho] flush failed', e));
   }, [flushPendingSessions]);
+
+  const submitRestLog = useCallback((
+    restType: RestType,
+    durationMin: number,
+    startedAt: string,
+  ) => {
+    const coords = userCoordsRef.current;
+    if (!coords || durationMin <= 0) return;
+    void logRestStop({
+      userEmail: googleUserRef.current?.email,
+      lat: coords[1],
+      lng: coords[0],
+      restType,
+      durationMin,
+      startedAt,
+    });
+  }, [googleUserRef, userCoordsRef]);
+
+  useEffect(() => {
+    const activity = bluetoothData?.activity ?? null;
+    const previousActivity = previousBluetoothActivityRef.current;
+    previousBluetoothActivityRef.current = activity;
+
+    if (activity === 'rest' && previousActivity !== 'rest') {
+      bleRestStartedAtRef.current = new Date().toISOString();
+      return;
+    }
+    if (previousActivity !== 'rest' || activity === 'rest') return;
+
+    const startedAt = bleRestStartedAtRef.current;
+    bleRestStartedAtRef.current = null;
+    if (!startedAt) return;
+    const durationMin = Math.floor((Date.now() - Date.parse(startedAt)) / 60000);
+    if (durationMin >= 45) {
+      submitRestLog(restTypeForDuration(durationMin), durationMin, startedAt);
+    }
+  }, [bluetoothData?.activity, submitRestLog]);
 
   // ── HOS timer ──
   useEffect(() => {
@@ -229,7 +315,8 @@ export function useTacho(
     }
     
     // 2. Daily limits (9h / 10h)
-    const dailyTotal = (tachoSummary.daily_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0));
+    const dailyTotal = bluetoothData?.dailyDrivenS ??
+      ((tachoSummary.daily_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0)));
     if (dailyTotal >= DAILY_LIMIT_9H && !hosWarningRef.current.daily9h) {
       hosWarningRef.current.daily9h = true;
       const can10h = tachoSummary.daily_limit_h === 10;
@@ -241,7 +328,9 @@ export function useTacho(
     }
 
     // 3. Weekly 56h limit
-    const weeklyTotal = (tachoSummary.weekly_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0));
+    const weeklyTotal = bluetoothData && Number.isFinite(bluetoothData.weeklyDrivenS)
+      ? bluetoothData.weeklyDrivenS
+      : ((tachoSummary.weekly_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0)));
     if (weeklyTotal >= 194400 && !hosWarningRef.current.weekly56h) {
       hosWarningRef.current.weekly56h = true;
       speak('Внимание, наближаваш 56-часовия седмичен лимит.');
@@ -254,11 +343,12 @@ export function useTacho(
       }
     }
 
-  }, [drivingSeconds, navigating, speak, tachoSummary, onApproachingLimit]);
+  }, [bluetoothData, drivingSeconds, navigating, speak, tachoSummary, onApproachingLimit]);
 
   const resetSession = useCallback(() => {
     setDrivingSeconds(0);
     sessionStartRef.current = new Date().toISOString();
+    localBreakLoggedForSessionRef.current = false;
     // Record shift start if not already set
     if (shiftStartRef.current === null) {
       shiftStartRef.current = Date.now();
@@ -273,6 +363,10 @@ export function useTacho(
 
   const saveSession = useCallback(() => {
     const driven = drivingSecondsRef.current;
+    if (!bluetoothData && driven >= HOS_LIMIT_S && !localBreakLoggedForSessionRef.current) {
+      localBreakLoggedForSessionRef.current = true;
+      submitRestLog('break_45min', 45, new Date().toISOString());
+    }
     if (driven >= 60 && sessionStartRef.current) {
       const payload = {
         user_email:     googleUserRef.current?.email,
@@ -301,7 +395,7 @@ export function useTacho(
       });
       sessionStartRef.current = null;
     }
-  }, [flushPendingSessions, googleUserRef]);
+  }, [bluetoothData, flushPendingSessions, googleUserRef, submitRestLog]);
 
   // ── Attach shift_start_iso (raw fact) to tachoSummary ──
   const shiftStartIso = shiftStartRef.current
@@ -309,7 +403,31 @@ export function useTacho(
     : undefined;
 
   const tachoSummaryWithShift: TachoSummary | null = tachoSummary
-    ? { ...tachoSummary, shift_start_iso: shiftStartIso }
+    ? {
+      ...tachoSummary,
+      ...(bluetoothData
+        ? {
+          continuous_driven_s: bluetoothData.continuousDrivenS,
+          continuous_remaining_s: Math.max(0, HOS_LIMIT_S - bluetoothData.continuousDrivenS),
+          continuous_driven_h: bluetoothData.continuousDrivenS / 3600,
+          continuous_remaining_h: Math.max(0, HOS_LIMIT_S - bluetoothData.continuousDrivenS) / 3600,
+          daily_driven_s: bluetoothData.dailyDrivenS,
+          daily_remaining_s: Math.max(0, tachoSummary.daily_limit_h * 3600 - bluetoothData.dailyDrivenS),
+          daily_driven_h: bluetoothData.dailyDrivenS / 3600,
+          daily_remaining_h: Math.max(0, tachoSummary.daily_limit_h * 3600 - bluetoothData.dailyDrivenS) / 3600,
+          break_needed: bluetoothData.continuousDrivenS >= HOS_LIMIT_S,
+        }
+        : {}),
+      ...(bluetoothData && Number.isFinite(bluetoothData.weeklyDrivenS)
+        ? {
+          weekly_driven_s: bluetoothData.weeklyDrivenS,
+          weekly_remaining_s: Math.max(0, tachoSummary.weekly_limit_h * 3600 - bluetoothData.weeklyDrivenS),
+          weekly_driven_h: bluetoothData.weeklyDrivenS / 3600,
+          weekly_remaining_h: Math.max(0, tachoSummary.weekly_limit_h * 3600 - bluetoothData.weeklyDrivenS) / 3600,
+        }
+        : {}),
+      shift_start_iso: shiftStartIso,
+    }
     : null;
 
   return {
@@ -320,5 +438,6 @@ export function useTacho(
     saveSession,
     HOS_LIMIT_S,
     hosViolations,
+    bluetoothTacho,
   };
 }

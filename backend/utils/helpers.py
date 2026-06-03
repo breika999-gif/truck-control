@@ -1,10 +1,13 @@
 import re
 import json
 import math
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from flask import request
+from functools import wraps
+from hmac import compare_digest
+from flask import jsonify, request
 
 # ── Global State ────────────────────────────────────────────────────────────
 _rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
@@ -36,6 +39,36 @@ def _get_body() -> dict:
         return request.get_json(silent=True) or {}
     except Exception:
         return {}
+
+def _require_app_token():
+    """Reject protected requests unless the configured shared app token matches."""
+    expected = os.environ.get("APP_INTERNAL_TOKEN", "")
+    provided = request.headers.get("X-App-Token", "")
+    if not expected or not compare_digest(provided, expected):
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    return None
+
+def require_app_token(fn):
+    """Flask decorator for endpoints guarded by the temporary shared app token."""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        auth_error = _require_app_token()
+        if auth_error:
+            return auth_error
+        return fn(*args, **kwargs)
+    return wrapped
+
+def validate_coords(lat, lng):
+    """Return finite latitude/longitude values inside valid WGS84 ranges."""
+    try:
+        lat_f, lng_f = float(lat), float(lng)
+    except (TypeError, ValueError):
+        return None, None
+    if not math.isfinite(lat_f) or not math.isfinite(lng_f):
+        return None, None
+    if not (-90 <= lat_f <= 90) or not (-180 <= lng_f <= 180):
+        return None, None
+    return lat_f, lng_f
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

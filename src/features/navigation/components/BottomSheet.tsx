@@ -7,6 +7,7 @@ import {
   Keyboard,
   useWindowDimensions,
 } from 'react-native';
+import { isTablet } from '../../../shared/utils/screen';
 
 const HANDLE_H = 48;
 
@@ -137,8 +138,9 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
 const styles = StyleSheet.create({
   outer: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: isTablet ? undefined : 0,
+    right: isTablet ? 16 : 0,
+    width: isTablet ? 420 : undefined,
     bottom: 0,
     zIndex: 100,
     elevation: 20,

@@ -31,6 +31,8 @@ type RouteInsightsOptions = {
   setFuelResults?: (pois: POICard[]) => void;
 };
 
+const TIMELINE_POIS_PER_TYPE = 3;
+
 function dedupePOICards(cards: POICard[]): POICard[] {
   const seen = new Set<string>();
   return cards.filter(card => {
@@ -40,6 +42,21 @@ function dedupePOICards(cards: POICard[]): POICard[] {
     seen.add(key);
     return true;
   });
+}
+
+function selectNearestTimelinePOIs(pois: RoutePOI[]): RoutePOI[] {
+  const selectedCount: Record<RoutePOI['type'], number> = {
+    parking: 0,
+    fuel: 0,
+  };
+
+  return [...pois]
+    .sort((a, b) => (a.distFromUserKm ?? a.distKm) - (b.distFromUserKm ?? b.distKm))
+    .filter(poi => {
+      if (selectedCount[poi.type] >= TIMELINE_POIS_PER_TYPE) return false;
+      selectedCount[poi.type] += 1;
+      return true;
+    });
 }
 
 export const useRouteInsights = (
@@ -192,18 +209,16 @@ export const useRouteInsights = (
     return (cumDist[nearestIdx] ?? 0) / 1000;
   }, []);
 
-  // Filter the cached allPOIsRef to the next 4 POIs ahead — zero network calls
+  // Filter the cache to the nearest parking and fuel stops ahead — zero network calls.
   const filterAndSetVisible = useCallback((uPos: [number, number]) => {
     const progressKm = getUserProgressKm(uPos);
     const ahead = allPOIsRef.current
       .filter(p => p.distKm > progressKm)
-      .sort((a, b) => a.distKm - b.distKm)
       .map(p => ({
         ...p,
         distFromUserKm: Math.round(p.distKm - progressKm),
-      }))
-      .slice(0, 4);
-    setRouteAheadPOIs(ahead);
+      }));
+    setRouteAheadPOIs(selectNearestTimelinePOIs(ahead));
   }, [getUserProgressKm]);
 
   // Fetch ALL POIs for the whole route at once and fill the cache
@@ -261,8 +276,8 @@ export const useRouteInsights = (
       if (uPos) {
         filterAndSetVisible(uPos);
       } else {
-        // No user position yet — show all sorted by route distance
-        setRouteAheadPOIs(all.sort((a, b) => a.distKm - b.distKm).slice(0, 4));
+        // No user position yet — show the nearest stops from the route start.
+        setRouteAheadPOIs(selectNearestTimelinePOIs(all));
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;

@@ -103,6 +103,40 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS routes (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email       TEXT,
+                origin_name      TEXT,
+                destination_name TEXT,
+                origin_lat       REAL,
+                origin_lng       REAL,
+                dest_lat         REAL,
+                dest_lng         REAL,
+                waypoints_json   TEXT,
+                distance_m       REAL,
+                duration_s       REAL,
+                started_at       TEXT,
+                completed_at     TEXT,
+                created_at       TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rest_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email   TEXT,
+                lat          REAL,
+                lng          REAL,
+                rest_type    TEXT,
+                duration_min INTEGER,
+                started_at   TEXT,
+                created_at   TEXT
+            )
+            """
+        )
         conn.commit()
     
     # Migration
@@ -228,7 +262,7 @@ def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | N
         if best_match:
             return {
                 "pointid": best_match,
-                "url": f"https://truckerapps.eu/transparking/en/poi/{best_match}"
+                "url": "https://truckerapps.eu/transparking/bg/map/"
             }
     except Exception as e:
         print(f"[TRANSPARKING] match lookup failed: {e}", flush=True)

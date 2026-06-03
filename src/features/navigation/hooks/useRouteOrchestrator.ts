@@ -131,6 +131,7 @@ type UseRouteOrchestratorProps = {
 export function useRouteOrchestrator({
   isMountedRef,
   navigatingRef,
+  routeRef,
   profileRef,
   userCoordsRef,
   cameraRef,
@@ -278,6 +279,7 @@ export function useRouteOrchestrator({
 
     setDestination(dest);
     setDestinationName(name);
+    routeRef.current = null;
     setRoute(null);
     setCurrentStep(0);
     setSpeedLimit(null);
@@ -332,6 +334,7 @@ export function useRouteOrchestrator({
         waypointsRef.current = reorderedWps;
       }
 
+      routeRef.current = result;
       setRoute(result);
       // Sync congestion colors for direct navigation (fixes missing traffic colors bug)
       setNavCongestionGeoJSON(result?.congestionGeoJSON ?? null);

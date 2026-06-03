@@ -15,263 +15,58 @@
  *   DELETE /api/pois/:id     — delete a POI
  */
 
-import { BACKEND_URL } from '../constants/config';
-import type { VehicleProfile } from '../types/vehicle';
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../constants/config';
+import type {
+  POICard as _POICard,
+  BackendHealth,
+  TruckRestrictionsResult,
+  ChatMessage,
+  ChatContext,
+  ChatResponse,
+  SavedPOI,
+  POIPayload,
+  RouteHistoryItem,
+  RestType,
+  RestHistoryItem,
+  TachoSessionPayload,
+  TachoSummary,
+  ProximityAlerts,
+  POICard,
+} from './backendApi.types';
+
+// All types live in backendApi.types.ts — re-exported here for backward compat
+export type {
+  ChatMessage,
+  POICard,
+  TrafficAlert,
+  RouteOption,
+  TruckRestrictionPoint,
+  TruckRestrictionsResult,
+  MapAction,
+  AppIntent,
+  ChatResponse,
+  ChatContext,
+  TruckParking,
+  SavedPOI,
+  POIPayload,
+  BackendHealth,
+  TachoSummary,
+  ProximityAlerts,
+  TachoSessionPayload,
+  RouteHistoryItem,
+  RestType,
+  RestHistoryItem,
+} from './backendApi.types';
 
 /** Global flag to track backend availability for UI banners */
 export let backendReachable = true;
 
 const updateReachable = (ok: boolean) => { backendReachable = ok; };
 
-// ── Types ────────────────────────────────────────────────────────────────────
-
-export interface ChatMessage {
-  role: 'user' | 'model';
-  text: string;
-}
-
-/** Universal POI card — covers truck stops, fuel stations, speed cameras */
-export interface POICard {
-  name: string;
-  lat: number;
-  lng: number;
-  distance_m: number;
-  travel_time?: number; // seconds from current location
-  detour_time?: number; // detour seconds
-  transparking_id?: string;
-  // truck_stop fields
-  paid?: boolean;
-  showers?: boolean;
-  toilets?: boolean;
-  wifi?: boolean;
-  security?: boolean;
-  lighting?: boolean;
-  capacity?: number;
-  website?: string;
-  safe?: boolean;
-  info?: string;
-  opening_hours?: string;
-  phone?: string;
-  /** Bulgarian TTS voice description of parking pros/cons */
-  voice_desc?: string;
-  // fuel fields
-  price?: string;
-  truck_lane?: boolean;
-  brand?: string;
-  // camera fields
-  maxspeed?: number;
-  // business / Google Places enrichment fields
-  photo_url?: string;
-  review_summary?: string;
-  business_status?: string;
-  open_now?: boolean | null;
-  needs_confirm?: boolean;
-  source?: 'google' | 'tomtom' | 'osm';
-  transparking_url?: string;
-}
-
-/** One traffic alert bubble on the route map */
-export interface TrafficAlert {
-  lat: number;
-  lng: number;
-  delay_min: number;
-  severity: 'moderate' | 'heavy' | 'severe';
-  label?: string;    // pre-formatted Bulgarian label, e.g. "🛑 +12 мин"
-  length_km?: number; // estimated congestion zone length in km
-}
-
-/** One route option inside show_routes action */
-export interface RouteOption {
-  label: string;
-  color: string;
-  duration: number;
-  distance: number;
-  traffic?: 'low' | 'moderate' | 'heavy';
-  geometry: { type: 'LineString'; coordinates: [number, number][] };
-  dest_coords: [number, number];
-  steps?: any[];
-  maxspeeds?: any[];
-  restrictions?: TruckRestrictionPoint[];
-  /** Per-segment FeatureCollection tagged with congestion level for line coloring */
-  congestion_geojson?: { type: 'FeatureCollection'; features: unknown[] };
-  /** Clusters of heavy/severe congestion with delay estimates */
-  traffic_alerts?: TrafficAlert[];
-}
-
-/** Result from /api/check-truck-restrictions */
-export interface TruckRestrictionPoint {
-  lat: number;
-  lng: number;
-  type: 'maxheight' | 'maxweight' | 'maxwidth' | 'no_trucks' | 'hazmat';
-  value: string;
-  value_num: number;
-  tag?: string;
-}
-
-export interface TruckRestrictionsResult {
-  ok: boolean;
-  safe: boolean;
-  warnings: string[];
-  restrictions?: TruckRestrictionPoint[];
-  restrictions_checked?: boolean;
-}
-
-/** All possible map actions GPT-4o can return */
-export type MapAction =
-  | { action: 'route'; destination: string; coords: [number, number]; waypoints?: [number, number][]; message?: string }
-  | { action: 'show_pois'; category: 'truck_stop' | 'fuel' | 'speed_camera' | 'business'; center?: [number, number]; cards: POICard[]; message?: string; nearest_m?: number }
-  | { action: 'show_routes'; destination: string; dest_coords: [number, number]; options: RouteOption[]; waypoints?: [number, number][]; message?: string }
-  | { action: 'tachograph'; driven_hours: number; remaining_hours: number; break_needed?: boolean; suggested_stop?: { lat: number; lng: number; name: string }; message?: string }
-  | { action: 'add_waypoint'; name: string; coords: [number, number]; message?: string }
-  | { action: 'message'; text: string };
-
-export interface AppIntent {
-  app: string;    // 'youtube' | 'spotify' | 'whatsapp' | 'maps' | ...
-  query?: string; // optional search/navigation query
-  url?: string;   // optional direct deep-link or web URL
-  transparking_id?: string;
-}
-
-export interface ChatResponse {
-  ok: boolean;
-  error?: string;
-  action?: MapAction;
-  reply?: string; // kept for backward compat — use action.message instead
-  app_intent?: AppIntent;
-  remember?: Array<{ category: string; text: string }>;
-}
-
-export interface ChatContext {
-  lat?: number;
-  lng?: number;
-  driven_seconds?: number;
-  speed_kmh?: number;
-  profile?: VehicleProfile;
-  last_message?: string;
-  destination?: string;          // name, e.g. "Берлин"
-  route_distance_km?: number;    // route.distance / 1000
-  route_duration_min?: number;   // route.duration / 60
-  remaining_drive_min?: number;  // (HOS_LIMIT_S - drivingSeconds) / 60
-  // WTD (Working Time Directive) — raw facts, Gemini does the math
-  shift_start_iso?: string;         // когато е тръгнал (ISO timestamp)
-  reduced_rests_remaining?: number; // оставащи намалени почивки
-  daily_driving_limit_h?: number;   // 9 или 10 часа каране
-  tacho_log?: object;               // daily activity log from TachoEventLog
-  tacho_week?: object;              // weekly/biweekly EU HOS summary from TachoEventLog
-  parking_cards?: Array<{ name: string; transparking_id?: string }>;
-  user_memory?: string[];           // driver preferences/facts remembered across conversations
-  driver_habits?: object | null;    // last-14-days driving pattern stats
-}
-
-/** Backward-compat alias — parking cards now use POICard */
-export type TruckParking = POICard;
-
-interface NearbyParkingCard extends POICard {
-  distance?: number;
-}
-
-interface NearbyParkingResponse {
-  ok?: boolean;
-  spots?: NearbyParkingCard[];
-  pois?: NearbyParkingCard[];
-  cards?: NearbyParkingCard[];
-}
-
-interface NearbyFuelCard extends POICard {
-  distance?: number;
-}
-
-interface NearbyFuelResponse {
-  ok?: boolean;
-  spots?: NearbyFuelCard[];
-  pois?: NearbyFuelCard[];
-  cards?: NearbyFuelCard[];
-}
-
-export interface SavedPOI {
-  id: number;
-  name: string;
-  address: string;
-  category: string;
-  lat: number;
-  lng: number;
-  notes: string;
-  created_at: string;
-  starred?: boolean;
-}
-
-export interface POIPayload {
-  name: string;
-  address?: string;
-  category?: string;
-  lat: number;
-  lng: number;
-  notes?: string;
-  user_email?: string;
-}
-
-export interface BackendHealth {
-  status: string;
-  gpt4o_ready: boolean;
-  db: string;
-  timestamp: string;
-}
-
-/** EU HOS 561/2006 daily + weekly summary */
-export interface TachoSummary {
-  ok: boolean;
-  daily_driven_s: number;
-  daily_remaining_s: number;
-  daily_driven_h: number;
-  daily_remaining_h: number;
-  weekly_driven_s: number;
-  weekly_remaining_s: number;
-  weekly_driven_h: number;
-  weekly_remaining_h: number;
-  /** Continuous driving since last 45-min break (EU 4.5 h rule) */
-  continuous_driven_s: number;
-  continuous_remaining_s: number;
-  continuous_driven_h: number;
-  continuous_remaining_h: number;
-  /** true when continuous_driven_s >= 16200 (4.5 h) */
-  break_needed: boolean;
-  /** Weekly daily-rest counts (EU 561/2006: max 3 reduced rests per week) */
-  weekly_regular_rests: number;    // gaps >= 11 h
-  weekly_reduced_rests: number;    // gaps >= 9 h but < 11 h
-  reduced_rests_remaining: number; // how many 9h rests are still allowed (3 - used)
-  /** Bi-weekly totals (EU 561/2006: max 90 h in any two consecutive weeks) */
-  biweekly_driven_h: number;
-  biweekly_remaining_h: number;
-  biweekly_limit_h: number;
-  daily_limit_h: number;
-  weekly_limit_h: number;
-  date: string;
-  week_start: string;
-  /** WTD (Working Time Directive) shift tracking — raw fact only, Gemini computes the rest */
-  shift_start_iso?: string;   // ISO timestamp of first activity after 9h+ rest
-}
-
-export interface ProximityAlerts {
-  ok: boolean;
-  cameras: POICard[];
-  overtaking: Array<{
-    lat: number;
-    lng: number;
-    type: 'overtaking_no';
-    hgv_only: boolean;
-    distance_m: number;
-  }>;
-  nearest_camera_m: number;
-}
-
-export interface TachoSessionPayload {
-  user_email?: string;
-  driven_seconds: number;
-  date?: string;       // YYYY-MM-DD, defaults to today on backend
-  start_time?: string; // ISO string
-  end_time?: string;   // ISO string
-  type?: 'driving' | 'break' | 'rest'; // defaults to 'driving' on backend
-}
+interface NearbyParkingCard extends _POICard { distance?: number; }
+interface NearbyParkingResponse { ok?: boolean; spots?: NearbyParkingCard[]; pois?: NearbyParkingCard[]; cards?: NearbyParkingCard[]; }
+interface NearbyFuelCard extends _POICard { distance?: number; }
+interface NearbyFuelResponse { ok?: boolean; spots?: NearbyFuelCard[]; pois?: NearbyFuelCard[]; cards?: NearbyFuelCard[]; }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -285,10 +80,14 @@ async function apiRequest<T>(
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
+    const headers = new Headers(options.headers);
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    headers.set('X-App-Token', APP_INTERNAL_TOKEN);
+
     const res = await fetch(`${BACKEND_URL}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       ...options,
+      headers,
     });
 
     if (!res.ok) {
@@ -400,6 +199,7 @@ export async function sendGeminiMessage(
   history: ChatMessage[] = [],
   context?: ChatContext,
   userEmail?: string,
+  role?: string,
 ): Promise<ChatResponse> {
   try {
     return await apiRequest<ChatResponse>('/api/gemini/chat', {
@@ -409,6 +209,7 @@ export async function sendGeminiMessage(
         history,
         context,
         user_email: userEmail,
+        role,
       }),
     });
   } catch (err) {
@@ -436,6 +237,7 @@ export async function transcribeGemini(
 
     const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
       method: 'POST',
+      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
       body:   form,
       signal: controller.signal,
     });
@@ -458,7 +260,12 @@ export async function transcribeAudio(audioPath: string): Promise<string | null>
     try {
       const form = new FormData();
       form.append('audio', { uri, type: 'audio/m4a', name: 'recording.m4a' } as unknown as Blob);
-      const res = await fetch(`${BACKEND_URL}${endpoint}`, { method: 'POST', body: form, signal: controller.signal });
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+        body: form,
+        signal: controller.signal,
+      });
       const data = (await res.json()) as { ok: boolean; text?: string; error?: string };
       return data.ok && data.text ? data.text : null;
     } catch {
@@ -507,6 +314,134 @@ export async function deletePOI(id: number, userEmail?: string): Promise<boolean
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+// ── Route / rest history ─────────────────────────────────────────────────────
+
+export async function startRouteLog(data: {
+  userEmail?: string;
+  originName: string;
+  destinationName: string;
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  waypointsJson: string;
+  distanceM: number;
+  durationS: number;
+}): Promise<number | null> {
+  try {
+    const res = await apiRequest<{ ok: boolean; route_id?: number }>('/api/routes/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_email: data.userEmail,
+        origin_name: data.originName,
+        destination_name: data.destinationName,
+        origin_lat: data.originLat,
+        origin_lng: data.originLng,
+        dest_lat: data.destLat,
+        dest_lng: data.destLng,
+        waypoints_json: data.waypointsJson,
+        distance_m: data.distanceM,
+        duration_s: data.durationS,
+      }),
+    });
+    return res.ok && Number.isFinite(res.route_id) ? res.route_id! : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function completeRouteLog(routeId: number): Promise<void> {
+  try {
+    await apiRequest<{ ok: boolean }>('/api/routes/complete', {
+      method: 'POST',
+      body: JSON.stringify({ route_id: routeId }),
+    });
+  } catch {
+    // Route history is best-effort and must never interrupt navigation.
+  }
+}
+
+export async function fetchRouteHistory(userEmail?: string, limit = 20): Promise<RouteHistoryItem[]> {
+  try {
+    const params = new URLSearchParams({
+      user_email: userEmail ?? '',
+      limit: String(limit),
+    });
+    const res = await apiRequest<{ ok: boolean; routes: Array<{
+      id: number;
+      origin_name: string;
+      destination_name: string;
+      distance_m: number;
+      duration_s: number;
+      started_at: string;
+      completed_at: string | null;
+    }> }>(`/api/routes?${params}`);
+    return (res.routes ?? []).map(item => ({
+      id: item.id,
+      originName: item.origin_name,
+      destinationName: item.destination_name,
+      distanceM: item.distance_m,
+      durationS: item.duration_s,
+      startedAt: item.started_at,
+      completedAt: item.completed_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function logRestStop(data: {
+  userEmail?: string;
+  lat: number;
+  lng: number;
+  restType: RestType;
+  durationMin: number;
+  startedAt: string;
+}): Promise<void> {
+  try {
+    await apiRequest<{ ok: boolean }>('/api/rest/log', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_email: data.userEmail,
+        lat: data.lat,
+        lng: data.lng,
+        rest_type: data.restType,
+        duration_min: data.durationMin,
+        started_at: data.startedAt,
+      }),
+    });
+  } catch {
+    // Rest history is best-effort and must never interrupt tachograph state.
+  }
+}
+
+export async function fetchRestHistory(userEmail?: string, limit = 30): Promise<RestHistoryItem[]> {
+  try {
+    const params = new URLSearchParams({
+      user_email: userEmail ?? '',
+      limit: String(limit),
+    });
+    const res = await apiRequest<{ ok: boolean; rests: Array<{
+      id: number;
+      lat: number;
+      lng: number;
+      rest_type: RestType;
+      duration_min: number;
+      started_at: string;
+    }> }>(`/api/rest/history?${params}`);
+    return (res.rests ?? []).map(item => ({
+      id: item.id,
+      lat: item.lat,
+      lng: item.lng,
+      restType: item.rest_type,
+      durationMin: item.duration_min,
+      startedAt: item.started_at,
+    }));
+  } catch {
+    return [];
   }
 }
 
@@ -574,6 +509,18 @@ export async function fetchProximityAlerts(
   }
 }
 
+/** Fetch all user-reported speed cameras from the POI store. */
+export async function fetchReportedCameras(): Promise<POICard[]> {
+  const pois = await listPOIs('speed_camera');
+  return pois.map(p => ({
+    name: p.name,
+    lat: p.lat,
+    lng: p.lng,
+    distance_m: 0,
+    category: 'speed_camera' as const,
+  }));
+}
+
 /** Report a new speed camera. */
 export async function reportCamera(
   lat: number,
@@ -599,7 +546,7 @@ export async function fetchCamerasAlongRoute(
     const { BACKEND_URL } = await import('../constants/config');
     const res = await fetch(`${BACKEND_URL}/api/cameras-along-route`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
       body: JSON.stringify({ coords }),
       signal,
     });
@@ -626,10 +573,9 @@ export async function fetchPOIsAlongRoute(
         coords[coords.length - 1],
       ];
   try {
-    const { BACKEND_URL } = await import('../constants/config');
     const res = await fetch(`${BACKEND_URL}/api/poi-along-route`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
       body: JSON.stringify({ coords: sampled, category }),
       signal,
     });

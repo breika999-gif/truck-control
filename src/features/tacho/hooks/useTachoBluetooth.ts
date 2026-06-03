@@ -10,7 +10,7 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
-import { BACKEND_URL } from '../../../shared/constants/config';
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { loadSavedAccount } from '../../../shared/services/accountManager';
 
 async function requestBlePermissions(): Promise<boolean> {
@@ -32,9 +32,25 @@ export interface TachoBleState {
   liveData: TachoLiveData | null;
   foundDevices: Device[];
   isConnected: boolean;
+  deviceName: string | null;
+}
+
+export interface BluetoothTachoState {
+  connected: boolean;
+  deviceName: string | null;
+  data: {
+    continuousDrivenS: number;
+    dailyDrivenS: number;
+    weeklyDrivenS: number;
+    activity: 'driving' | 'rest' | 'work' | 'available';
+    cardInserted: boolean;
+  } | null;
+  startScan: () => void;
+  disconnect: () => void;
 }
 
 const REST_THROTTLE_MS = 30_000;
+const CONTINUOUS_DRIVE_LIMIT_S = 16200;
 const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
 const INITIAL_STATE: TachoBleState = {
   status: 'idle',
@@ -42,6 +58,7 @@ const INITIAL_STATE: TachoBleState = {
   liveData: null,
   foundDevices: [],
   isConnected: false,
+  deviceName: null,
 };
 
 let sharedState: TachoBleState = INITIAL_STATE;
@@ -105,6 +122,7 @@ function handleData(data: TachoLiveData) {
 }
 
 function connectToKnownOrSelectedDevice(device: Device) {
+  patchState({ deviceName: device.name ?? device.localName ?? device.id });
   ensureService().connectToTacho(device, handleData, handleStatus);
 }
 
@@ -147,7 +165,7 @@ export function useTachoBluetooth() {
       return;
     }
 
-    patchState({ foundDevices: [] });
+    patchState({ foundDevices: [], deviceName: null });
     sharedService?.scanForTacho(handleDeviceFound, handleStatus);
   };
 
@@ -162,22 +180,48 @@ export function useTachoBluetooth() {
       statusMsg: 'Прекъснато',
       isConnected: false,
       liveData: null,
+      deviceName: null,
     });
   };
 
+  const hasHosPayload = Boolean(
+    state.liveData &&
+    (state.liveData.drivingTimeLeftMin > 0 || state.liveData.dailyDrivenMin > 0),
+  );
+  const data = state.liveData && hasHosPayload
+    ? {
+      continuousDrivenS: Math.max(0, CONTINUOUS_DRIVE_LIMIT_S - state.liveData.drivingTimeLeftMin * 60),
+      dailyDrivenS: Math.max(0, state.liveData.dailyDrivenMin * 60),
+      // The current VDO ITS parser does not expose a weekly characteristic yet.
+      // Keep this non-finite so useTacho preserves its backend weekly summary.
+      weeklyDrivenS: Number.NaN,
+      activity: activityFromCode(state.liveData.activityCode),
+      cardInserted: true,
+    }
+    : null;
+
   return {
     ...state,
+    connected: state.isConnected,
+    data,
     startScan,
     connectToDevice,
     disconnect,
   };
 }
 
+function activityFromCode(activityCode: number): 'driving' | 'rest' | 'work' | 'available' {
+  if (activityCode === 3) return 'driving';
+  if (activityCode === 2) return 'work';
+  if (activityCode === 1) return 'available';
+  return 'rest';
+}
+
 async function sendToBackend(data: TachoLiveData): Promise<void> {
   const userEmail = await resolveUserEmail();
   await fetch(`${BACKEND_URL}/api/tacho/live_update`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
     body: JSON.stringify({
       user_email: userEmail,
       tacho_live_context: {

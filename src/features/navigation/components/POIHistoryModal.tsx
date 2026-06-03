@@ -9,7 +9,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { BACKEND_URL } from '../../../shared/constants/config';
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 import type { SavedPOI } from '../../../shared/services/backendApi';
 
@@ -28,7 +28,9 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
     if (!visible || !googleUser?.email) { setItems([]); return; }
     let cancelled = false;
     setLoading(true);
-    fetch(`${BACKEND_URL}/api/pois?user_email=${encodeURIComponent(googleUser.email)}`)
+    fetch(`${BACKEND_URL}/api/pois?user_email=${encodeURIComponent(googleUser.email)}`, {
+      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+    })
       .then(r => r.ok ? r.json() : { pois: [] })
       .then(d => {
         const pois = Array.isArray(d) ? d : Array.isArray(d?.pois) ? d.pois : [];

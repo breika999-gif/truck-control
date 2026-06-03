@@ -10,6 +10,7 @@ import {
   Dimensions,
   Platform,
 } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { colors } from '../../../shared/constants/theme';
 import { parseBubbleText } from '../utils/mapUtils';
 import { styles } from '../screens/MapScreen.styles';
@@ -69,13 +70,18 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
     ? Math.round(Dimensions.get('window').height * (Platform.OS === 'android' ? 0.42 : 0.34))
     : 0;
   const effectiveKbHeight = kbHeight > 0 ? kbHeight : fallbackKbHeight;
+  const keyboardClearance = effectiveKbHeight > 0 ? (Platform.OS === 'android' ? 76 : 18) : 0;
 
   // ── Pulsing Mic Animation ──
   const micScale = useRef(new Animated.Value(1)).current;
+  const micAnimRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
+    micAnimRef.current?.stop();
+    micAnimRef.current = null;
+
     if (isRecording) {
-      Animated.loop(
+      micAnimRef.current = Animated.loop(
         Animated.sequence([
           Animated.timing(micScale, {
             toValue: 1.25,
@@ -88,7 +94,8 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
             useNativeDriver: true,
           }),
         ]),
-      ).start();
+      );
+      micAnimRef.current.start();
     } else {
       micScale.stopAnimation();
       Animated.spring(micScale, {
@@ -97,6 +104,10 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
         friction: 4,
       }).start();
     }
+    return () => {
+      micAnimRef.current?.stop();
+      micAnimRef.current = null;
+    };
   }, [isRecording, micScale]);
 
   useEffect(() => {
@@ -121,7 +132,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
       initialHeight={300}
       snapHeight={400}
       onClose={onClose}
-      kbHeight={effectiveKbHeight}
+      kbHeight={effectiveKbHeight + keyboardClearance}
     >
       <View style={[styles.chatMessages, { flex: 1 }]}>
         <ScrollView
@@ -175,7 +186,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
             {micLoading ? (
               <ActivityIndicator size="small" color="#ff3b3b" />
             ) : (
-              <Text style={styles.chatMicText}>{isRecording ? '⏹' : '🎙'}</Text>
+              <Icon name={isRecording ? 'stop' : 'microphone-outline'} size={22} color="#FFFFFF" />
             )}
           </TouchableOpacity>
         </Animated.View>
@@ -188,6 +199,8 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           onBlur={() => setInputFocused(false)}
           placeholder={gptChatOpen ? "Съобщение..." : "Питай Gemini..."}
           placeholderTextColor={colors.textMuted}
+          selectionColor="#00bfff"
+          cursorColor="#00bfff"
           onSubmitEditing={handleChat}
           returnKeyType="send"
           editable={!loading}
@@ -197,7 +210,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           onPress={handleChat}
           disabled={loading}
         >
-          <Text style={styles.chatSendText}>➤</Text>
+          <Icon name="send" size={20} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
     </BottomSheet>

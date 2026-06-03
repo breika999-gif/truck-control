@@ -278,21 +278,24 @@ export const useLocationRuntime = ({
           if (hdg >= 0) {
             // 1. Outlier detection — use ref (not state) to avoid stale closure
             const prev = smoothedHeadingRef.current;
+            let isHeadingValid = true;
             if (prev !== null) {
               const diff = Math.abs(((hdg - prev) + 360) % 360);
               const angleDiff = diff > 180 ? 360 - diff : diff;
-              if (angleDiff > 150) return; // ignore GPS outlier
+              isHeadingValid = angleDiff <= 150;
             }
-            // 2. Circular rolling average (last 4) — handles 0°/360° wrap correctly
-            headingHistoryRef.current.push(hdg);
-            if (headingHistoryRef.current.length > 4) headingHistoryRef.current.shift();
-            const toRad = (d: number) => (d * Math.PI) / 180;
-            const sinSum = headingHistoryRef.current.reduce((s, h) => s + Math.sin(toRad(h)), 0);
-            const cosSum = headingHistoryRef.current.reduce((s, h) => s + Math.cos(toRad(h)), 0);
-            const avg = (Math.atan2(sinSum, cosSum) * 180) / Math.PI;
-            const circAvg = Math.round(avg < 0 ? avg + 360 : avg);
-            smoothedHeadingRef.current = circAvg;
-            setUserHeading(circAvg);
+            if (isHeadingValid) {
+              // 2. Circular rolling average (last 4) — handles 0°/360° wrap correctly
+              headingHistoryRef.current.push(hdg);
+              if (headingHistoryRef.current.length > 4) headingHistoryRef.current.shift();
+              const toRad = (d: number) => (d * Math.PI) / 180;
+              const sinSum = headingHistoryRef.current.reduce((s, h) => s + Math.sin(toRad(h)), 0);
+              const cosSum = headingHistoryRef.current.reduce((s, h) => s + Math.cos(toRad(h)), 0);
+              const avg = (Math.atan2(sinSum, cosSum) * 180) / Math.PI;
+              const circAvg = Math.round(avg < 0 ? avg + 360 : avg);
+              smoothedHeadingRef.current = circAvg;
+              setUserHeading(circAvg);
+            }
           }
           isDrivingRef.current = kmh > 3;
 

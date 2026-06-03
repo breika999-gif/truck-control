@@ -15,7 +15,7 @@ from services.tacho_service import _tacho_summary
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
     _extract_nav_intent, _extract_app_intent, _strip_md_fence,
-    maybe_reach_answer,
+    maybe_reach_answer, require_app_token,
 )
 from database import _db_save_chat
 
@@ -61,6 +61,7 @@ def _digest_tacho_log(tacho_log) -> str:
 
 
 @gemini_bp.post("/api/gemini/chat")
+@require_app_token
 def gemini_chat():
     if _is_rate_limited(limit=30, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
@@ -77,13 +78,14 @@ def gemini_chat():
     if not user_msg: return jsonify({"ok": False, "error": "message is required"}), 400
 
     history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
+    request_role = (body.get("role") or "").strip()
     reach = maybe_reach_answer(user_msg, context)
     if reach:
         _db_save_chat(user_msg, reach, user_email=user_email)
         return jsonify({"ok": True, "reply": reach, "action": None, "app_intent": None, "remember": []})
 
     is_simple = is_simple_message(user_msg)
-    intent = "general" if is_simple else classify_intent(user_msg)
+    intent = "tacho" if request_role == "system_summary" else "general" if is_simple else classify_intent(user_msg)
     has_memory = bool((body.get("context") or {}).get("user_memory")) and not is_simple
     system_instruction = build_gemini_system(intent, has_memory)
 
@@ -125,6 +127,9 @@ def gemini_chat():
             fe_ctx = ""
             if context.get("shift_start_iso"): fe_ctx += f" shift_start={context['shift_start_iso']};"
             if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
+            if context.get("bt_connected") is not None: fe_ctx += f" bt={'on' if context['bt_connected'] else 'off'};"
+            if context.get("bt_activity"): fe_ctx += f" activity={context['bt_activity']};"
+            if context.get("bt_card") is not None: fe_ctx += f" card={'in' if context['bt_card'] else 'out'};"
             if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
             if context.get("destination"):
@@ -148,6 +153,9 @@ def gemini_chat():
 
             if context.get("tacho_week") and any(h in msg_lower for h in _week_hints):
                 ctx_note += _format_ctx_block("TACHO_WEEK", context["tacho_week"])
+
+            if context.get("weekly_status") and (intent == "tacho" or any(h in msg_lower for h in _TACHO_HINTS)):
+                ctx_note += _format_ctx_block("WEEKLY_STATUS", context["weekly_status"], max_chars=320)
 
             if context.get("user_memory"):
                 mem = context["user_memory"]
@@ -204,6 +212,7 @@ def gemini_chat():
     return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent, "remember": [{'category': c, 'text': t.strip()} for c, t in rem_tags]})
 
 @gemini_bp.post("/api/gemini/validate")
+@require_app_token
 def gemini_validate():
     body = _get_body()
     api_key = (body.get("api_key") or "").strip()

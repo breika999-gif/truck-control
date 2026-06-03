@@ -1,0 +1,232 @@
+import type { RouteResult, RouteStep } from '../api/directions';
+
+const DRIVE_PERIOD_S = 16200;
+const TRUCK_SPEED_CAP_KMH = 90;
+const TRANSITION_EPSILON = 0.0001;
+const REST_MARKER_EPSILON = 0.0001;
+
+const BLUE = '#9B59B6';
+const PURPLE = '#E67E22';
+const YELLOW = '#F1C40F';
+const RED = '#C0392B';
+
+export interface DriveSegment {
+  fraction: number;
+  color: typeof BLUE | typeof PURPLE | typeof YELLOW | typeof RED;
+  restPoint?: { coords: [number, number] };
+}
+
+export interface DriveSegmentsResult {
+  gradientStops: Array<{ fraction: number; color: string }>;
+  restPoints: Array<{ coords: [number, number]; restHours: 9 | 11 }>;
+}
+
+export interface TrafficDelay {
+  distM: number;
+  delayMin: number;
+}
+
+export interface HosConfig {
+  dailyLimitH: number;
+  reducedRestsRemaining: number;
+  dailyDrivenSeconds?: number;
+}
+
+function clampFraction(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function stepsForRoute(route: RouteResult): RouteStep[] {
+  if (route.steps.length > 0) return route.steps;
+  return [{
+    maneuver: { instruction: '', type: 'continue' },
+    distance: route.distance,
+    duration: route.duration,
+    name: '',
+    intersections: [],
+  }];
+}
+
+function truckCappedDurationSeconds(distanceM: number, durationS: number): number {
+  const speedCapDurationS = (distanceM / 1000 / TRUCK_SPEED_CAP_KMH) * 3600;
+  return Math.max(0, durationS, speedCapDurationS);
+}
+
+function appendTransition(
+  stops: DriveSegmentsResult['gradientStops'],
+  fraction: number,
+  color: string,
+): void {
+  const edge = clampFraction(fraction);
+  const previous = stops[stops.length - 1];
+  if (!previous || previous.color === color) return;
+
+  const beforeEdge = Math.max(previous.fraction, edge - TRANSITION_EPSILON);
+  if (beforeEdge > previous.fraction) {
+    stops.push({ fraction: beforeEdge, color: previous.color });
+  }
+  if (edge > stops[stops.length - 1].fraction) {
+    stops.push({ fraction: edge, color });
+  } else {
+    stops[stops.length - 1] = { fraction: edge, color };
+  }
+}
+
+function coordinateAtFraction(
+  coords: [number, number][],
+  fraction: number,
+): { coords: [number, number] } | null {
+  if (coords.length === 0) return null;
+  if (coords.length === 1) return { coords: coords[0] };
+
+  const segmentLengths: number[] = [];
+  let totalLengthM = 0;
+  for (let index = 1; index < coords.length; index += 1) {
+    const previous = coords[index - 1];
+    const current = coords[index];
+    const midLatRad = ((previous[1] + current[1]) / 2) * Math.PI / 180;
+    const dx = (current[0] - previous[0]) * 111320 * Math.cos(midLatRad);
+    const dy = (current[1] - previous[1]) * 110540;
+    const lengthM = Math.sqrt(dx * dx + dy * dy);
+    segmentLengths.push(lengthM);
+    totalLengthM += lengthM;
+  }
+
+  if (totalLengthM <= 0) return { coords: coords[0] };
+
+  const targetLengthM = clampFraction(fraction) * totalLengthM;
+  let traversedM = 0;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const segmentLengthM = segmentLengths[index];
+    if (targetLengthM <= traversedM + segmentLengthM || index === segmentLengths.length - 1) {
+      const t = segmentLengthM > 0 ? (targetLengthM - traversedM) / segmentLengthM : 0;
+      const start = coords[index];
+      const end = coords[index + 1];
+      return {
+        coords: [
+          start[0] + (end[0] - start[0]) * t,
+          start[1] + (end[1] - start[1]) * t,
+        ],
+      };
+    }
+    traversedM += segmentLengthM;
+  }
+
+  return { coords: coords[coords.length - 1] };
+}
+
+export function calculateDriveSegments(
+  route: RouteResult,
+  remainingTachoSeconds: number,
+  trafficAlerts?: TrafficDelay[] | null,
+  hosConfig?: HosConfig | null,
+): DriveSegmentsResult {
+  const totalDistM = route.distance;
+  const coords = route.geometry.coordinates;
+  if (totalDistM <= 0 || coords.length === 0) {
+    return { gradientStops: [], restPoints: [] };
+  }
+
+  const gradientStops: DriveSegmentsResult['gradientStops'] = [{ fraction: 0, color: BLUE }];
+  const restPoints: DriveSegmentsResult['restPoints'] = [];
+  void trafficAlerts;
+  const dailyLimitH = Number.isFinite(hosConfig?.dailyLimitH)
+    ? Math.max(0, hosConfig?.dailyLimitH ?? 9)
+    : 9;
+  const dailyLimitS = dailyLimitH * 3600;
+  const dailyDrivenS = Number.isFinite(hosConfig?.dailyDrivenSeconds)
+    ? Math.max(0, hosConfig?.dailyDrivenSeconds ?? 0)
+    : 0;
+  let reducedRestsRemaining = Number.isFinite(hosConfig?.reducedRestsRemaining)
+    ? Math.max(0, hosConfig?.reducedRestsRemaining ?? 0)
+    : 0;
+  let currentColor = BLUE;
+  const remainingDailyS = Math.max(0, dailyLimitS - dailyDrivenS);
+  let bluePeriodS = Math.max(0, Math.min(DRIVE_PERIOD_S, remainingTachoSeconds, remainingDailyS));
+  let purplePeriodS = Math.max(0, Math.min(DRIVE_PERIOD_S, remainingDailyS - bluePeriodS));
+  let extendedPeriodS = Math.max(0, remainingDailyS - bluePeriodS - purplePeriodS);
+  let elapsedCycleS = 0;
+  let phase: 'blue' | 'purple' | 'yellow' = 'blue';
+  let cumulativeDistM = 0;
+
+  for (const step of stepsForRoute(route)) {
+    const stepDistM = Math.max(0, step.distance ?? 0);
+    const stepStartM = cumulativeDistM;
+    const stepEndM = stepStartM + stepDistM;
+    let chunkDistM = stepDistM;
+    // TomTom step ETA already includes traffic. The floor prevents a truck
+    // period from covering more than 405 km even if upstream ETA is too fast.
+    let chunkDurationS = truckCappedDurationSeconds(stepDistM, step.duration ?? 0);
+    let stepCursorM = stepStartM;
+
+    while (chunkDurationS > 0) {
+      const thresholdS =
+        phase === 'blue'
+          ? bluePeriodS
+          : phase === 'purple'
+            ? bluePeriodS + purplePeriodS
+            : bluePeriodS + purplePeriodS + extendedPeriodS;
+      const untilThresholdS = Math.max(0, thresholdS - elapsedCycleS);
+
+      if (chunkDurationS < untilThresholdS || untilThresholdS === Infinity) {
+        elapsedCycleS += chunkDurationS;
+        stepCursorM += chunkDistM;
+        break;
+      }
+
+      const chunkFraction = chunkDurationS > 0 ? untilThresholdS / chunkDurationS : 0;
+      stepCursorM += chunkDistM * chunkFraction;
+      chunkDistM *= 1 - chunkFraction;
+      chunkDurationS -= untilThresholdS;
+      elapsedCycleS += untilThresholdS;
+      const routeFraction = clampFraction(stepCursorM / totalDistM);
+
+      if (phase === 'blue') {
+        currentColor = PURPLE;
+        appendTransition(gradientStops, routeFraction, currentColor);
+        phase = 'purple';
+        continue;
+      }
+
+      if (phase === 'purple' && extendedPeriodS > 0) {
+        currentColor = YELLOW;
+        appendTransition(gradientStops, routeFraction, currentColor);
+        phase = 'yellow';
+        continue;
+      }
+
+      currentColor = RED;
+      appendTransition(gradientStops, routeFraction, currentColor);
+      const restPoint = coordinateAtFraction(coords, routeFraction);
+      if (restPoint) {
+        const previousRest = restPoints[restPoints.length - 1];
+        if (
+          !previousRest ||
+          previousRest.coords[0] !== restPoint.coords[0] ||
+          previousRest.coords[1] !== restPoint.coords[1]
+        ) {
+          const restHours = reducedRestsRemaining > 0 ? 9 : 11;
+          restPoints.push({ coords: restPoint.coords, restHours });
+          if (restHours === 9) reducedRestsRemaining -= 1;
+        }
+      }
+
+      currentColor = BLUE;
+      appendTransition(gradientStops, Math.min(1, routeFraction + REST_MARKER_EPSILON), currentColor);
+      bluePeriodS = DRIVE_PERIOD_S;
+      purplePeriodS = Math.max(0, Math.min(DRIVE_PERIOD_S, dailyLimitS - bluePeriodS));
+      extendedPeriodS = 0;
+      elapsedCycleS = 0;
+      phase = 'blue';
+    }
+
+    cumulativeDistM = stepEndM;
+  }
+
+  const lastStop = gradientStops[gradientStops.length - 1];
+  if (lastStop.fraction < 1) {
+    gradientStops.push({ fraction: 1, color: currentColor });
+  }
+
+  return { gradientStops, restPoints };
+}

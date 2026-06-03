@@ -3,8 +3,9 @@ import re
 import json
 from dotenv import load_dotenv
 
-# Load .env relative to this file and let repo-local secrets win over stale process env vars.
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
+# Load repo-local development secrets without overriding Railway environment variables.
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=False)
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"), override=False)
 
 # ── API Keys & Model Setup ──────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

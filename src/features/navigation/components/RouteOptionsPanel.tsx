@@ -32,6 +32,19 @@ function remainingTachoMin(drivingSeconds: number, hosLimitS: number): number {
   return Math.max(0, Math.floor((hosLimitS - drivingSeconds) / 60));
 }
 
+const TRUCK_SPEED_CAP_KMH = 90;
+
+function truckCappedRouteMin(distanceM: number, durationS: number): number {
+  const distanceKm = distanceM / 1000;
+  const cappedMin = (distanceKm / TRUCK_SPEED_CAP_KMH) * 60;
+  return Math.max(durationS / 60, cappedMin);
+}
+
+function truckBreakDistanceKm(distanceM: number, tachoRemMin: number, effectiveRouteMin: number): number {
+  if (effectiveRouteMin <= 0) return 0;
+  return Math.round((distanceM / 1000) * Math.min(1, tachoRemMin / effectiveRouteMin));
+}
+
 function whyBulletTextStyle(bullet: ExplanationBullet) {
   if (bullet.positive) return routePanelStyles.whyBulletPositive;
   if (bullet.icon === '🔴' || bullet.icon === '🚫') return routePanelStyles.whyBulletCritical;
@@ -104,12 +117,13 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
 
           // "Мога ли да стигна?" per-card tacho check
           const tachoRemMin = tachoEnabled ? remainingTachoMin(drivingSeconds!, hosLimitS!) : null;
-          const routeDurMin = Math.ceil(opt.duration / 60);
+          const effectiveRouteMin = truckCappedRouteMin(opt.distance, opt.duration);
+          const routeDurMin = Math.ceil(effectiveRouteMin);
           const canMakeIt = tachoRemMin === null || routeDurMin <= tachoRemMin;
           const shortageMin = tachoRemMin !== null ? routeDurMin - tachoRemMin : 0;
-          // Distance until forced break (proportional)
+          // Distance until forced break, capped to realistic truck speed.
           const breakDistKm = tachoRemMin !== null && !canMakeIt
-            ? Math.round((opt.distance / 1000) * (tachoRemMin / routeDurMin))
+            ? truckBreakDistanceKm(opt.distance, tachoRemMin, effectiveRouteMin)
             : null;
 
           return (
@@ -201,11 +215,12 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
             const selOpt = routeOptions[effectiveSelectedRouteIdx];
             if (!selOpt) return null;
             const tachoRemMin = remainingTachoMin(drivingSeconds!, hosLimitS!);
-            const routeDurMin = Math.ceil(selOpt.duration / 60);
+            const effectiveRouteMin = truckCappedRouteMin(selOpt.distance, selOpt.duration);
+            const routeDurMin = Math.ceil(effectiveRouteMin);
             if (routeDurMin <= tachoRemMin) return null; // all good, no warning needed
 
             const shortageMin = routeDurMin - tachoRemMin;
-            const breakDistKm = Math.round((selOpt.distance / 1000) * (tachoRemMin / routeDurMin));
+            const breakDistKm = truckBreakDistanceKm(selOpt.distance, tachoRemMin, effectiveRouteMin);
 
             return (
               <View style={{

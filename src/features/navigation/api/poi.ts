@@ -1,4 +1,4 @@
-import { TOMTOM_API_KEY } from '../../../shared/constants/config';
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 
 export type POICategory = 'gas_station' | 'parking' | 'rest_area' | 'truck_stop';
 
@@ -42,8 +42,7 @@ export async function searchNearbyPOI(
   const [lng, lat] = center;
   const query = TT_QUERY[category];
   const params = new URLSearchParams({
-    key:       TOMTOM_API_KEY,
-    language:  'bg-BG',
+    query,
     limit:     String(limit),
     lat:       String(lat),
     lon:       String(lng),
@@ -53,7 +52,8 @@ export async function searchNearbyPOI(
 
   try {
     const res = await fetch(
-      `https://api.tomtom.com/search/2/search/${encodeURIComponent(query)}.json?${params}`,
+      `${BACKEND_URL}/api/geocode?${params}`,
+      { headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -96,14 +96,6 @@ export async function searchAlongRoute(
       : routeCoords;
 
   const query  = TT_QUERY[category];
-  const params = new URLSearchParams({
-    key:           TOMTOM_API_KEY,
-    maxDetourTime: String(maxDetourMinutes * 60),
-    limit:         String(limit),
-    vehicleType:   'Truck',
-    language:      'bg-BG',
-    spreadingMode: 'auto',
-  });
 
   const body = {
     route: {
@@ -113,11 +105,19 @@ export async function searchAlongRoute(
 
   try {
     const res = await fetch(
-      `https://api.tomtom.com/search/2/alongRouteSearch/${encodeURIComponent(query)}.json?${params}`,
+      `${BACKEND_URL}/api/poi/search-along-route`,
       {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-App-Token': APP_INTERNAL_TOKEN,
+        },
+        body: JSON.stringify({
+          ...body,
+          query,
+          maxDetourTime: maxDetourMinutes * 60,
+          limit,
+        }),
       },
     );
     if (!res.ok) return [];

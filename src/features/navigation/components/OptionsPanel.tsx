@@ -6,23 +6,23 @@ import {
   Share,
   ScrollView,
   Modal,
-  SafeAreaView,
   StyleSheet,
   ActivityIndicator,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import Tts from 'react-native-tts';
 import { getDaySummary } from '../../tacho/TachoEventLog';
 import { POI_META, type POICategory } from '../api/poi';
-import { POI_CATEGORIES } from '../utils/mapUtils';
+import { HOS_LIMIT_S, POI_CATEGORIES } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode, MapLayersConfig } from '../hooks/useMapUIState';
 import { styles as mapStyles, NEON } from '../screens/MapScreen.styles';
+import { isTablet } from '../../../shared/utils/screen';
 
 const LOGO = require('../../../shared/assets/TruckExpoAi.png');
 
@@ -58,6 +58,7 @@ interface OptionsPanelProps {
   handleSearchAlongRoute: () => void;
   setMapIsLoaded: (loaded: boolean) => void;
   userCoords: [number, number] | null;
+  drivingSeconds: number;
   onReportCamera: () => void;
   backendOnline: boolean;
 }
@@ -124,31 +125,20 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setMapMode,
   lightMode,
   setLightMode,
-  voiceMuted,
-  setVoiceMuted,
   mapLayers,
   toggleLayer,
-  avoidUnpaved,
-  setAvoidUnpaved,
   navigating,
   route,
-  simulating,
-  startSim,
-  stopSim,
   poiCategory,
   handlePOISearch,
   sarMode,
   handleSARSearch,
-  googleUser,
-  setShowAccountModal,
-  setBorderCrossings,
-  setShowBorderPanel,
   searchTop,
   isSearchingAlongRoute,
   handleSearchAlongRoute,
   setMapIsLoaded,
   userCoords,
-  onReportCamera,
+  drivingSeconds,
   backendOnline: _backendOnline,
 }) => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -264,37 +254,16 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconColor={lightMode ? '#A78BFA' : '#FCD34D'}
                 iconBg={lightMode ? 'rgba(167,139,250,0.15)' : 'rgba(252,211,77,0.15)'}
               />
-              {/* ТРАФИК */}
-              <Divider />
-              <SectionHeader title="ТРАФИК" />
               <Row
-                icon="traffic-light"
-                label="Трафик на картата"
-                onPress={() => toggleLayer('traffic')}
-                iconColor={mapLayers.traffic ? '#FFFFFF' : C_OFF}
-                active={mapLayers.traffic}
-                rightEl={
-                  <View style={[s.toggle, mapLayers.traffic && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{mapLayers.traffic ? 'ВКЛ' : 'ИЗК'}</Text>
-                  </View>
-                }
+                icon="map-download"
+                label="Офлайн карти"
+                onPress={() => { navigation.navigate('OfflineMaps'); close(); }}
+                iconColor="#00BFFF"
+                iconBg="rgba(0,191,255,0.15)"
               />
-
-              {/* КАМИОН */}
+              {/* ОГРАНИЧЕНИЯ */}
               <Divider />
               <SectionHeader title="ОГРАНИЧЕНИЯ" />
-              <Row
-                icon="road-variant"
-                label="Само асфалт"
-                onPress={() => setAvoidUnpaved(v => !v)}
-                iconColor={avoidUnpaved ? C_ACT : C_OFF}
-                active={avoidUnpaved}
-                rightEl={
-                  <View style={[s.toggle, avoidUnpaved && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{avoidUnpaved ? 'ВКЛ' : 'ИЗК'}</Text>
-                  </View>
-                }
-              />
               <Row
                 icon="star"
                 label="Любими места"
@@ -312,32 +281,17 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               <Divider />
               <SectionHeader title="НАВИГАЦИЯ" />
               <Row
-                icon={voiceMuted ? 'volume-off' : 'volume-high'}
-                label={voiceMuted ? 'Гласови указания: ИЗК' : 'Гласови указания: ВКЛ'}
-                onPress={() => { setVoiceMuted(v => !v); if (!voiceMuted) Tts.stop(); }}
-                iconColor={voiceMuted ? C_OFF : '#FFFFFF'}
-                rightEl={
-                  <View style={[s.toggle, !voiceMuted && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{voiceMuted ? 'ИЗК' : 'ВКЛ'}</Text>
-                  </View>
-                }
-              />
-              <Row
-                icon="passport"
-                label="Гранични пунктове"
+                icon="clipboard-list-outline"
+                label="Диспечер · Multi-stop"
                 onPress={() => {
+                  navigation.navigate('Dispatcher', {
+                    userCoords: userCoords || undefined,
+                    remainingDriveSeconds: Math.max(0, HOS_LIMIT_S - drivingSeconds),
+                  });
                   close();
-                  setBorderCrossings([
-                    { name: 'Капитан Андреево', flag: 'BG-TR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                    { name: 'Кулата', flag: 'BG-GR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                    { name: 'Дунав мост 2', flag: 'BG-RO', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                    { name: 'Дунав мост 1', flag: 'BG-RO', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                    { name: 'Малко Търново', flag: 'BG-TR', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                    { name: 'Гюешево', flag: 'BG-MK', status: 'Виж на живо', url: 'https://granici.mvr.bg/' },
-                  ]);
-                  setShowBorderPanel(true);
                 }}
-                iconColor="#FFFFFF"
+                iconColor="#A78BFA"
+                iconBg="rgba(167,139,250,0.16)"
               />
               <Row
                 icon="parking"
@@ -409,50 +363,31 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               )}
 
               {/* АКАУНТ */}
-              <Divider />
-              <SectionHeader title="АКАУНТ & AI" />
-              <Row
-                icon="google"
-                label={googleUser ? googleUser.email : 'Google акаунт'}
-                onPress={() => { setShowAccountModal(true); close(); }}
-                iconColor="#EA4335"
-                iconBg="rgba(234,67,53,0.12)"
-              />
               {userCoords && (
-                <Row
-                  icon="map-marker-radius"
-                  label="Сподели позиция"
-                  onPress={() => {
-                    close();
-                    Share.share({
-                      message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
-                    });
-                  }}
-                  iconColor={C_ACT}
-                />
-              )}
-
-              {/* DEV */}
-              {__DEV__ && route && (
                 <>
                   <Divider />
-                  <SectionHeader title="DEV" />
                   <Row
-                    icon={simulating ? 'stop' : 'play'}
-                    label={simulating ? 'Спри симулация' : 'Симулация'}
-                    onPress={() => { simulating ? stopSim() : startSim(); close(); }}
-                    iconColor={simulating ? '#FF4444' : '#4CAF50'}
-                    iconBg={simulating ? 'rgba(255,68,68,0.15)' : 'rgba(76,175,80,0.15)'}
+                    icon="map-marker-radius"
+                    label="Сподели позиция"
+                    onPress={() => {
+                      close();
+                      Share.share({
+                        message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
+                      });
+                    }}
+                    iconColor={C_ACT}
                   />
                 </>
               )}
 
-              {/* ДОКЛАДВАЙ КАМЕРА */}
               <Divider />
-              <TouchableOpacity style={s.reportBtn} onPress={() => { onReportCamera(); close(); }} activeOpacity={0.8}>
-                <Icon name="speed-camera" size={22} color="#FFFFFF" />
-                <Text style={s.reportBtnTxt}>ДОКЛАДВАЙ КАМЕРА</Text>
-              </TouchableOpacity>
+              <Row
+                icon="information-outline"
+                label="За приложението · Лицензи"
+                onPress={() => { navigation.navigate('Licenses'); close(); }}
+                iconColor="rgba(255,255,255,0.5)"
+                iconBg="rgba(255,255,255,0.06)"
+              />
 
               <View style={{ height: 24 }} />
             </ScrollView>
@@ -548,7 +483,7 @@ const s = StyleSheet.create({
     backgroundColor: '#0A0E1A',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    height: '85%',
+    height: isTablet ? '65%' : '85%',
     borderTopWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },

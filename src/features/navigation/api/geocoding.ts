@@ -1,4 +1,4 @@
-import { TOMTOM_API_KEY, MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
+import { APP_INTERNAL_TOKEN, MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
 
 export interface GeoPlace {
   id: string;
@@ -33,10 +33,8 @@ export async function suggestPlaces(
 ): Promise<SearchSuggestion[]> {
   if (query.trim().length < 2) return [];
 
-  const encoded = encodeURIComponent(query.trim());
   const params = new URLSearchParams({
-    key:       TOMTOM_API_KEY,
-    language:  'bg-BG',
+    query:     query.trim(),
     limit:     '6',
     typeahead: 'true',
   });
@@ -49,8 +47,8 @@ export async function suggestPlaces(
 
   try {
     const res = await fetch(
-      `https://api.tomtom.com/search/2/search/${encoded}.json?${params}`,
-      { signal },
+      `${BACKEND_URL}/api/geocode?${params}`,
+      { signal, headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -91,7 +89,10 @@ export async function suggestPlacesGoogle(
   const params = new URLSearchParams({ q: query.trim(), lat: String(lat), lng: String(lng) });
 
   try {
-    const res = await fetch(`${BACKEND_URL}/api/places/search?${params}`, { signal });
+    const res = await fetch(`${BACKEND_URL}/api/places/search?${params}`, {
+      signal,
+      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+    });
     if (!res.ok) return [];
     const data = await res.json();
 
@@ -143,7 +144,8 @@ export async function retrievePlace(place_id: string): Promise<GeoPlace | null> 
   // Fallback B: TomTom entity details by ID
   try {
     const res = await fetch(
-      `https://api.tomtom.com/search/2/place.json?entityId=${encodeURIComponent(place_id)}&key=${TOMTOM_API_KEY}&language=bg-BG`,
+      `${BACKEND_URL}/api/geocode/place?entity_id=${encodeURIComponent(place_id)}`,
+      { headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
     );
     if (!res.ok) return null;
     const data = await res.json();

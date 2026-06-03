@@ -1,16 +1,15 @@
-import os, sys, json, re, requests, time as _cache_time
+import os, json, math, re, requests, time as _cache_time
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
-from config import TOMTOM_API_KEY, MAPBOX_PUBLIC_TOKEN
+from config import TOMTOM_API_KEY
 from database import get_db, row_to_poi, DB_PATH
-from utils.helpers import _is_rate_limited, _get_body, now_iso
+from utils.helpers import _is_rate_limited, _get_body, now_iso, require_app_token, validate_coords
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
     _adr_to_tunnel_code, _mapbox_match_geometry, _mapbox_openlr_match, _find_openlr_code
 )
-from services.gemini_service import _gemini_ready
-from services.gpt_service import _gpt4o_ready, client
+from services.gpt_service import client
 
 misc_bp = Blueprint('misc', __name__)
 
@@ -36,32 +35,159 @@ def _search_parking_tomtom(lat: float, lng: float, radius_m: int = 20000) -> lis
     from services.poi_service import _tool_find_truck_parking
     return _tool_find_truck_parking(lat, lng, radius_m)
 
+def _validate_lng_lat_point(point):
+    if not isinstance(point, (list, tuple)) or len(point) < 2:
+        return None
+    lat, lng = validate_coords(point[1], point[0])
+    return [lng, lat] if lat is not None else None
+
+def _validate_lng_lat_points(points, max_points: int = 500):
+    if not isinstance(points, list) or len(points) > max_points:
+        return None
+    validated = []
+    for point in points:
+        parsed = _validate_lng_lat_point(point)
+        if parsed is None:
+            return None
+        validated.append(parsed)
+    return validated
+
+def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+def _json_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
 @misc_bp.get("/api/health")
 def health():
     return jsonify({
-        "status": "ok", 
-        "version": "modular-v1.1", 
-        "python": sys.version, 
-        "gpt4o_ready": _gpt4o_ready, 
-        "gemini_ready": _gemini_ready, 
-        "tomtom_ready": bool(TOMTOM_API_KEY), 
-        "mapbox_ready": bool(MAPBOX_PUBLIC_TOKEN),
+        "status": "ok",
         "timestamp": now_iso()
     })
 
+@misc_bp.get("/api/geocode")
+@require_app_token
+def geocode_proxy():
+    query = request.args.get("query", "").strip()
+    if not query:
+        return jsonify({"error": "missing query"}), 400
+    if not TOMTOM_API_KEY:
+        return jsonify({"error": "TomTom API key not configured"}), 503
+
+    params = {
+        "key": TOMTOM_API_KEY,
+        "limit": _bounded_int(request.args.get("limit"), 10, 1, 20),
+        "language": "bg-BG",
+    }
+    lat, lon = request.args.get("lat"), request.args.get("lon")
+    if lat or lon:
+        lat_f, lon_f = validate_coords(lat, lon)
+        if lat_f is None:
+            return jsonify({"error": "invalid coordinates"}), 400
+        params["lat"], params["lon"] = lat_f, lon_f
+    radius = request.args.get("radius", type=int)
+    if radius is not None:
+        params["radius"] = min(max(radius, 1), 100_000)
+    if request.args.get("typeahead") == "true":
+        params["typeahead"] = "true"
+
+    try:
+        url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query, safe='')}.json"
+        resp = requests.get(url, params=params, timeout=8)
+        return jsonify(resp.json()), resp.status_code
+    except requests.RequestException:
+        return jsonify({"error": "geocoding unavailable"}), 502
+    except ValueError:
+        return jsonify({"error": "invalid geocoding response"}), 502
+
+@misc_bp.get("/api/geocode/place")
+@require_app_token
+def geocode_place_proxy():
+    entity_id = request.args.get("entity_id", "").strip()
+    if not entity_id:
+        return jsonify({"error": "missing entity_id"}), 400
+    if not TOMTOM_API_KEY:
+        return jsonify({"error": "TomTom API key not configured"}), 503
+    try:
+        resp = requests.get(
+            "https://api.tomtom.com/search/2/place.json",
+            params={"entityId": entity_id, "key": TOMTOM_API_KEY, "language": "bg-BG"},
+            timeout=8,
+        )
+        return jsonify(resp.json()), resp.status_code
+    except requests.RequestException:
+        return jsonify({"error": "geocoding unavailable"}), 502
+    except ValueError:
+        return jsonify({"error": "invalid geocoding response"}), 502
+
+@misc_bp.post("/api/poi/search-along-route")
+@require_app_token
+def poi_search_along_route_proxy():
+    body = _get_body()
+    query = (body.get("query") or "").strip()
+    points = (body.get("route") or {}).get("points") or []
+    if not query:
+        return jsonify({"error": "missing query"}), 400
+    if not isinstance(points, list) or len(points) < 2 or len(points) > 400:
+        return jsonify({"error": "invalid route"}), 400
+    validated_points = []
+    for point in points:
+        if not isinstance(point, dict):
+            return jsonify({"error": "invalid coordinates"}), 400
+        lat, lon = validate_coords(point.get("lat"), point.get("lon"))
+        if lat is None:
+            return jsonify({"error": "invalid coordinates"}), 400
+        validated_points.append({"lat": lat, "lon": lon})
+    if not TOMTOM_API_KEY:
+        return jsonify({"error": "TomTom API key not configured"}), 503
+
+    params = {
+        "key": TOMTOM_API_KEY,
+        "maxDetourTime": _bounded_int(body.get("maxDetourTime"), 600, 0, 3600),
+        "limit": _bounded_int(body.get("limit"), 8, 1, 20),
+        "vehicleType": "Truck",
+        "language": "bg-BG",
+        "spreadingMode": "auto",
+    }
+    try:
+        url = f"https://api.tomtom.com/search/2/alongRouteSearch/{requests.utils.quote(query, safe='')}.json"
+        resp = requests.post(url, params=params, json={"route": {"points": validated_points}}, timeout=8)
+        return jsonify(resp.json()), resp.status_code
+    except requests.RequestException:
+        return jsonify({"error": "POI search unavailable"}), 502
+    except ValueError:
+        return jsonify({"error": "invalid POI response"}), 502
+
 @misc_bp.route("/api/google-sync", methods=["GET", "POST"])
+@require_app_token
 def google_sync():
     email = (request.args.get("user_email") or "").strip()
     if not email: return jsonify({"ok": False, "error": "email required"}), 400
     if request.method == "GET":
         with get_db() as conn: rows = conn.execute("SELECT * FROM pois WHERE user_email=? AND category='google_synced' ORDER BY created_at DESC", (email,)).fetchall()
         return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
-    pois, count = _get_body().get("pois", []), 0
+    pois, count, validated_pois = _get_body().get("pois", []), 0, []
+    for p in pois:
+        if not p.get("name") or p.get("lat") is None or p.get("lng") is None:
+            continue
+        lat, lng = validate_coords(p.get("lat"), p.get("lng"))
+        if lat is None:
+            return jsonify({"ok": False, "error": "invalid coordinates"}), 400
+        validated_pois.append((p, lat, lng))
     with get_db() as conn:
-        for p in pois:
-            if p.get("name") and p.get("lat") is not None:
-                conn.execute("INSERT OR REPLACE INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (p["name"], p.get("address", ""), "google_synced", float(p["lat"]), float(p["lng"]), p.get("notes", ""), email, now_iso()))
-                count += 1
+        for p, lat, lng in validated_pois:
+            conn.execute("INSERT OR REPLACE INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (p["name"], p.get("address", ""), "google_synced", lat, lng, p.get("notes", ""), email, now_iso()))
+            count += 1
         conn.commit()
     return jsonify({"ok": True, "imported": count})
 
@@ -125,25 +251,16 @@ def get_truck_bans():
         fetch_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key or ''}&d={date_str}"
         bans_resp = session.get(fetch_url, headers=headers, timeout=10)
         
-        debug_info = {
-            "root_status": root_resp.status_code,
-            "key_status": key_resp.status_code,
-            "bans_status": bans_resp.status_code,
-            "has_key": bool(key),
-            "content_type": bans_resp.headers.get('Content-Type'),
-            "sample": bans_resp.text[:500] if bans_resp.text else "empty"
-        }
-
         if not bans_resp.ok:
-            return jsonify({"bans": [], "error": f"HTTP {bans_resp.status_code}", "debug": debug_info}), 502
+            return jsonify({"bans": [], "error": f"HTTP {bans_resp.status_code}"}), 502
 
         try:
             raw_bans = bans_resp.json()
         except:
-            return jsonify({"bans": [], "error": "Not JSON", "debug": debug_info}), 502
+            return jsonify({"bans": [], "error": "Not JSON"}), 502
 
         if not isinstance(raw_bans, list):
-            return jsonify({"bans": [], "error": "Not a list", "debug": debug_info}), 502
+            return jsonify({"bans": [], "error": "Not a list"}), 502
 
         formatted = []
         for b in raw_bans:
@@ -163,10 +280,10 @@ def get_truck_bans():
                 conn.commit()
         except: pass
 
-        return jsonify({"bans": formatted, "source": "live", "debug": debug_info})
+        return jsonify({"bans": formatted, "source": "live"})
 
-    except Exception as e:
-        return jsonify({"bans": [], "error": "Request failed", "details": str(e)}), 502
+    except Exception:
+        return jsonify({"bans": [], "error": "Request failed"}), 502
 
 _NUMERIC_RESTRICTION_TAGS = (
     "maxheight",
@@ -296,12 +413,16 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
     return results[:80]
 
 @misc_bp.post("/api/check-truck-restrictions")
+@require_app_token
 def check_truck_restrictions():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"ok": False, "safe": False, "warnings": ["Проверката за ограничения е временно ограничена. Опитайте пак след малко."], "restrictions_checked": False, "error": "Rate limited"}), 429
     body = _get_body()
     profile, coords = body.get("profile") or {}, body.get("coords") or []
     if not isinstance(coords, list) or len(coords) < 2:
         return jsonify({"ok": False, "safe": False, "warnings": ["Няма достатъчно координати за проверка на ограничения."], "restrictions_checked": False, "error": "coords required"}), 400
+    coords = _validate_lng_lat_points(coords)
+    if coords is None:
+        return jsonify({"ok": False, "safe": False, "warnings": [], "restrictions_checked": False, "error": "invalid coordinates"}), 400
 
     def _num(value):
         try:
@@ -442,9 +563,12 @@ def _simple_congestion_geojson(geometry: dict, delay_seconds: int = 0) -> dict:
 
 def _tomtom_steps(route: dict, total_m: int) -> list:
     instructions = route.get("guidance", {}).get("instructions", [])
+    total_s = route.get("summary", {}).get("travelTimeInSeconds", 0)
     steps = []
     for i, instr in enumerate(instructions):
         nxt = instructions[i+1].get("routeOffsetInMeters", 0) if i+1 < len(instructions) else total_m
+        current_s = instr.get("travelTimeInSeconds", 0)
+        next_s = instructions[i+1].get("travelTimeInSeconds", total_s) if i+1 < len(instructions) else total_s
         steps.append({
             "maneuver": {
                 "instruction": instr.get("message", ""),
@@ -452,7 +576,7 @@ def _tomtom_steps(route: dict, total_m: int) -> list:
                 "modifier": None,
             },
             "distance": max(0, nxt - instr.get("routeOffsetInMeters", 0)),
-            "duration": instr.get("travelTimeInSeconds", 0),
+            "duration": max(0, next_s - current_s),
             "name": instr.get("street", ""),
             "intersections": [{"location": [instr["point"]["longitude"], instr["point"]["latitude"]]}] if instr.get("point") else [],
             "bannerInstructions": [_tomtom_lane_banner(instr)] if _tomtom_lane_banner(instr) else [],
@@ -460,20 +584,25 @@ def _tomtom_steps(route: dict, total_m: int) -> list:
     return steps
 
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
+@require_app_token
 def calculate_route():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
     data = request.json or {}
     origin, destination, waypoints, truck = data.get("origin"), data.get("destination"), data.get("waypoints", []), data.get("truck", {})
     if not origin or not destination: return jsonify({"error": "origin and destination required"}), 400
+    origin, destination = _validate_lng_lat_point(origin), _validate_lng_lat_point(destination)
+    waypoints = _validate_lng_lat_points(waypoints, max_points=25)
+    if origin is None or destination is None or waypoints is None:
+        return jsonify({"error": "invalid coordinates"}), 400
     if not TOMTOM_API_KEY: return jsonify({"error": "TomTom API key not configured"}), 503
-    include_restrictions = bool(data.get("include_restrictions"))
+    include_restrictions = _json_bool(data.get("include_restrictions"), True)
     o_lat, o_lng, d_lat, d_lng = round(origin[1], 6), round(origin[0], 6), round(destination[1], 6), round(destination[0], 6)
     truck_key = (
         f"{truck.get('max_height')}:{truck.get('max_weight')}:{truck.get('max_width')}:"
         f"{truck.get('max_length')}:{truck.get('hazmat_class')}:{truck.get('adr_tunnel')}:"
-        f"{truck.get('avoidUnpaved')}:{data.get('depart_at')}"
+        f"{truck.get('avoidUnpaved')}:{data.get('depart_at')}:vmax=90"
     )
-    cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}"
+    cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}:restr={include_restrictions}"
     if cache_key in _route_cache:
         res, exp = _route_cache[cache_key]
         if _cache_time.time() < exp: return jsonify(res)
@@ -481,7 +610,7 @@ def calculate_route():
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
     # Base avoid list — low emission zones + unpaved
     avoid_list = ["lowEmissionZones", "unpavedRoads"] if truck.get("avoidUnpaved") else ["lowEmissionZones"]
-    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "locationReferencing": ["openlr"]}
+    params = {"key": TOMTOM_API_KEY, "travelMode": "truck", "vehicleCommercial": "true", "vehicleMaxSpeed": 90, "vehicleEngineType": "combustion", "avoid": ",".join(avoid_list), "traffic": "true", "computeTravelTimeFor": "all", "routeType": "fastest", "instructionsType": "tagged", "language": "bg-BG", "sectionType": "traffic", "maxAlternatives": 1, "routeRepresentation": "polyline", "locationReferencing": ["openlr"]}
     if data.get("optimize"): params["computeBestOrder"] = "true"
     if truck.get("max_height"): params["vehicleHeight"] = truck["max_height"]
     if truck.get("max_width"): params["vehicleWidth"] = truck["max_width"]
@@ -515,12 +644,8 @@ def calculate_route():
                 geom, snapped_primary = openlr_geom, True
                 match_path = "openlr"
         if not snapped_primary:
-            if total_m < 80_000:
-                geom, snapped_primary = _mapbox_match_geometry(raw_geom)
-                match_path = "coordinate_match" if snapped_primary else "raw"
-            elif total_m <= 150_000:
-                geom, snapped_primary = _mapbox_match_geometry(raw_geom, edge_only_m=15_000)
-                match_path = "coordinate_edge_match" if snapped_primary else "raw"
+            geom, snapped_primary = _mapbox_match_geometry(raw_geom)
+            match_path = "coordinate_match" if snapped_primary else "raw"
         print(f"[ROUTING] using {match_path} openlr={bool(openlr_code)} distance_m={total_m} coords={len(raw_geom.get('coordinates', []))}", flush=True)
 
         instructions = rt.get("guidance", {}).get("instructions", [])
@@ -550,12 +675,8 @@ def calculate_route():
                     alt_geom, snapped_alt = alt_openlr_geom, True
                     alt_match_path = "openlr"
             if not snapped_alt:
-                if alt_m < 80_000:
-                    alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom)
-                    alt_match_path = "coordinate_match" if snapped_alt else "raw"
-                elif alt_m <= 150_000:
-                    alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom, edge_only_m=15_000)
-                    alt_match_path = "coordinate_edge_match" if snapped_alt else "raw"
+                alt_geom, snapped_alt = _mapbox_match_geometry(raw_alt_geom)
+                alt_match_path = "coordinate_match" if snapped_alt else "raw"
             print(f"[ROUTING] alt {idx + 1} using {alt_match_path} openlr={bool(alt_openlr_code)} distance_m={alt_m} coords={len(raw_alt_geom.get('coordinates', []))}", flush=True)
             alt_congestion = (
                 _simple_congestion_geojson(alt_geom, alt_summary.get("trafficDelayInSeconds", 0))
@@ -596,7 +717,99 @@ def calculate_route():
         return jsonify(final)
     except Exception as e: return jsonify({"error": str(e)}), 500
 
+@misc_bp.post("/api/routes/start")
+@require_app_token
+def start_route_log():
+    data = _get_body()
+    origin_lat, origin_lng = validate_coords(data.get("origin_lat"), data.get("origin_lng"))
+    dest_lat, dest_lng = validate_coords(data.get("dest_lat"), data.get("dest_lng"))
+    if origin_lat is None or dest_lat is None:
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
+
+    try:
+        waypoints = json.loads(data.get("waypoints_json") or "[]")
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid waypoints_json"}), 400
+    if not isinstance(waypoints, list) or len(waypoints) > 25:
+        return jsonify({"ok": False, "error": "invalid waypoints_json"}), 400
+    validated_waypoints = []
+    for point in waypoints:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            return jsonify({"ok": False, "error": "invalid waypoints_json"}), 400
+        lat, lng = validate_coords(point[0], point[1])
+        if lat is None:
+            return jsonify({"ok": False, "error": "invalid waypoints_json"}), 400
+        validated_waypoints.append([lat, lng])
+
+    try:
+        distance_m = max(0.0, float(data.get("distance_m") or 0))
+        duration_s = max(0.0, float(data.get("duration_s") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid route metrics"}), 400
+    if not math.isfinite(distance_m) or not math.isfinite(duration_s):
+        return jsonify({"ok": False, "error": "invalid route metrics"}), 400
+
+    now = now_iso()
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO routes (
+                user_email, origin_name, destination_name,
+                origin_lat, origin_lng, dest_lat, dest_lng,
+                waypoints_json, distance_m, duration_s,
+                started_at, completed_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+            """,
+            (
+                (data.get("user_email") or "").strip(),
+                (data.get("origin_name") or "").strip(),
+                (data.get("destination_name") or "").strip(),
+                origin_lat, origin_lng, dest_lat, dest_lng,
+                json.dumps(validated_waypoints, ensure_ascii=False),
+                distance_m, duration_s, now, now,
+            ),
+        )
+        conn.commit()
+    return jsonify({"ok": True, "route_id": cursor.lastrowid}), 201
+
+@misc_bp.post("/api/routes/complete")
+@require_app_token
+def complete_route_log():
+    try:
+        route_id = int(_get_body().get("route_id"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid route_id"}), 400
+    with get_db() as conn:
+        updated = conn.execute(
+            "UPDATE routes SET completed_at=? WHERE id=? AND completed_at IS NULL",
+            (now_iso(), route_id),
+        ).rowcount
+        conn.commit()
+    return jsonify({"ok": updated > 0})
+
+@misc_bp.get("/api/routes")
+@require_app_token
+def route_history():
+    email = (request.args.get("user_email") or "").strip()
+    limit = _bounded_int(request.args.get("limit"), 20, 1, 100)
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_email, origin_name, destination_name,
+                   origin_lat, origin_lng, dest_lat, dest_lng,
+                   waypoints_json, distance_m, duration_s,
+                   started_at, completed_at, created_at
+            FROM routes
+            WHERE user_email=?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (email, limit),
+        ).fetchall()
+    return jsonify({"ok": True, "routes": [dict(row) for row in rows]})
+
 @misc_bp.post("/api/transcribe")
+@require_app_token
 def whisper_transcribe():
     if _is_rate_limited(limit=5, window_s=60): return jsonify({"error": "Rate limited"}), 429
     audio_file = request.files.get("audio")

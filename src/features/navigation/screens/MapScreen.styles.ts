@@ -1,5 +1,6 @@
 import { StyleSheet, Platform } from 'react-native';
 import { colors, radius, spacing, typography } from '../../../shared/constants/theme';
+import { isLandscape, isTablet, screenWidth, uiScale } from '../../../shared/utils/screen';
 
 // ── Neon Blue theme ──────────────────────────────────────────────────────────
 export const NEON = '#00f7ff'; // light neon blue (cyan)
@@ -47,8 +48,9 @@ export const styles = StyleSheet.create({
 
   searchContainer: {
     position: 'absolute',
-    left: spacing.md,
-    right: 68, // keep clear of 44px Options btn + spacing.md
+    left: isTablet ? (screenWidth - Math.min(600, screenWidth - 40)) / 2 : spacing.md,
+    right: isTablet ? undefined : 68, // keep clear of 44px Options btn + spacing.md
+    width: isTablet ? Math.min(600, screenWidth - 40) : undefined,
     zIndex: 20,
   },
 
@@ -646,13 +648,14 @@ export const styles = StyleSheet.create({
   bottomPanel: {
     position: 'absolute',
     bottom: 0,
-    left: 0,
-    right: 0,
+    left: isTablet && isLandscape ? 16 : 0,
+    right: isTablet && isLandscape ? undefined : 0,
+    width: isTablet && isLandscape ? 380 : undefined,
     backgroundColor: 'rgba(0,8,20,0.94)',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
+    paddingHorizontal: spacing.md * uiScale,
+    paddingTop: spacing.md * uiScale,
     elevation: 16,
     borderTopWidth: 1.5,
     borderColor: NEON,
@@ -844,7 +847,6 @@ export const styles = StyleSheet.create({
   },
   geminiFabOnline:  { backgroundColor: NEON_DIM, borderColor: NEON, shadowColor: NEON, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.85, shadowRadius: 8 },
   geminiFabOffline: { backgroundColor: 'rgba(22,33,62,0.92)', borderColor: colors.border },
-  geminiFabEmoji: { fontSize: 24 },
 
   // Online indicator dot
   onlineDot: {
@@ -863,8 +865,9 @@ export const styles = StyleSheet.create({
   // Chat panel
   chatPanel: {
     position: 'absolute',
-    left: spacing.md,
-    right: spacing.md,
+    left: isTablet ? undefined : spacing.md,
+    right: isTablet ? 16 : spacing.md,
+    width: isTablet ? 420 : undefined,
     maxHeight: 360,
     backgroundColor: colors.bgSecondary,
     borderRadius: radius.md,
@@ -934,14 +937,17 @@ export const styles = StyleSheet.create({
   },
   chatInput: {
     flex: 1,
-    height: 40,
-    backgroundColor: 'rgba(15,15,30,0.8)',
+    height: 46,
+    backgroundColor: 'rgba(0,8,20,0.96)',
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
-    color: colors.text,
-    ...typography.caption,
+    paddingVertical: 0,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlignVertical: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(0,191,255,0.45)',
   },
   chatMicBtn: {
     width: 40,
@@ -962,7 +968,6 @@ export const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
-  chatMicText: { fontSize: 18 },
 
   chatSendBtn: {
     ...baseNeonBtn,
@@ -972,7 +977,6 @@ export const styles = StyleSheet.create({
     shadowOpacity: 0.75,
     shadowRadius: 6,
   },
-  chatSendText: { color: colors.text, fontSize: 16 },
 
   // ── Fuel cards panel ─────────────────────────────────────────────────────
   fuelPanel: {
@@ -1250,8 +1254,9 @@ export const styles = StyleSheet.create({
   // ── Tachograph card ──────────────────────────────────────────────────────
   tachPanel: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: isTablet ? 16 : 0,
+    right: isTablet ? undefined : 0,
+    width: isTablet ? 420 : undefined,
     zIndex: 19,
   },
   tachTitle: {

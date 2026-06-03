@@ -7,6 +7,7 @@ import {
   Share,
   Animated,
   PanResponder,
+  StyleSheet,
 } from 'react-native';
 
 const HANDLE_H = 92; // handle + infoRow + destName always visible when collapsed
@@ -180,6 +181,24 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
     return arrival.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' });
   }, [route, navigating, remainingSeconds]);
 
+  const hosWarning = useMemo(() => {
+    if (!navigating || !route) return null;
+    const remainingSec = remainingSeconds > 0 ? remainingSeconds : route.duration;
+    const hosRemainingSec = Math.max(0, HOS_LIMIT_S - drivingSeconds);
+    if (hosRemainingSec <= 0) return 'break_required';
+    if (remainingSec > hosRemainingSec + 1800) return 'wont_arrive';
+    if (remainingSec > hosRemainingSec) return 'tight';
+    return null;
+  }, [navigating, route, remainingSeconds, HOS_LIMIT_S, drivingSeconds]);
+
+  const hosWarningColor = hosWarning === 'tight' ? '#FF9500' : '#FF3B30';
+  const hosWarningLabel =
+    hosWarning === 'break_required'
+      ? 'СТОП · Почивка сега'
+      : hosWarning === 'wont_arrive'
+      ? 'ВНИМАНИЕ · Няма да стигнете'
+      : 'ВНИМАНИЕ · Следете времето';
+
   if (!route && !navigating && speedLimit === null) return null;
 
   return (
@@ -275,6 +294,12 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
         >
           {/* Drag handle */}
           <View style={styles.sheetHandle} />
+          {hosWarning && (
+            <View style={[hudStyles.hosWarningBanner, { borderLeftColor: hosWarningColor }]}>
+              <View style={[hudStyles.hosWarningDot, { backgroundColor: hosWarningColor }]} />
+              <Text style={hudStyles.hosWarningText}>{hosWarningLabel}</Text>
+            </View>
+          )}
           <View style={styles.infoRow}>
             <View style={styles.infoCell}>
               <Text style={styles.infoLabel}>РАЗСТОЯНИЕ</Text>
@@ -507,6 +532,30 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
       )}
     </>
   );
+});
+
+const hudStyles = StyleSheet.create({
+  hosWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 20, 30, 0.92)',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  hosWarningDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  hosWarningText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
 });
 
 export default NavigationHUD;

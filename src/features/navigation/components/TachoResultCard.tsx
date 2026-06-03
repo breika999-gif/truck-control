@@ -18,6 +18,8 @@ interface TachoResultCardProps {
   topOffset: number;
 }
 
+const HOS_CONTINUOUS_LIMIT_S = 16200;
+
 const TachoResultCard: React.FC<TachoResultCardProps> = ({
   result,
   tachoSummary,
@@ -30,6 +32,13 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
 
   const drivenHours = asFiniteNumber(result.drivenHours) ?? 0;
   const remainingHours = asFiniteNumber(result.remainingHours) ?? 0;
+  const remainingSeconds = Math.max(0, remainingHours * 3600);
+  const progress = Math.max(0, Math.min(1, remainingSeconds / HOS_CONTINUOUS_LIMIT_S));
+  const barColor = remainingSeconds <= 600
+    ? '#FF3B30'
+    : remainingSeconds <= 1800
+    ? '#FF9500'
+    : '#34C759';
   const dailyDrivenH = asFiniteNumber(tachoSummary?.daily_driven_h);
   const dailyRemainingH = asFiniteNumber(tachoSummary?.daily_remaining_h);
   const dailyLimitH = asFiniteNumber(tachoSummary?.daily_limit_h);
@@ -68,6 +77,14 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
             ? `⚠️ Само ${Math.round(remainingHours * 60)} мин до почивка!`
             : `✅ Остават ${remainingHours.toFixed(1)} ч`}
         </Text>
+        <View style={{ height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, marginTop: 4 }}>
+          <View style={{
+            height: 4,
+            width: `${progress * 100}%`,
+            backgroundColor: barColor,
+            borderRadius: 2,
+          }} />
+        </View>
 
         {/* Daily / Weekly from persistent DB */}
         {tachoSummary && (

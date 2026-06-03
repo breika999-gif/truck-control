@@ -1,5 +1,6 @@
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { TouchableOpacity, View } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { spacing } from '../../../shared/constants/theme';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -34,8 +35,10 @@ const ChatFABs: React.FC<ChatFABsProps> = ({
         ]}
         onPress={onToggleGemini}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={geminiChatOpen ? 'Затвори Gemini асистента' : 'Отвори Gemini асистента'}
       >
-        <Text style={styles.geminiFabEmoji}>{geminiChatOpen ? '✕' : '💬'}</Text>
+        <Icon name={geminiChatOpen ? 'close' : 'message-processing-outline'} size={27} color="#FFFFFF" />
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
       </TouchableOpacity>
 
@@ -47,8 +50,10 @@ const ChatFABs: React.FC<ChatFABsProps> = ({
         ]}
         onPress={onToggleGPT}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={gptChatOpen ? 'Затвори GPT навигатора' : 'Отвори GPT навигатора'}
       >
-        <Text style={styles.geminiFabEmoji}>{gptChatOpen ? '✕' : '🤖'}</Text>
+        <Icon name={gptChatOpen ? 'close' : 'navigation-variant-outline'} size={27} color="#FFFFFF" />
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
       </TouchableOpacity>
     </>

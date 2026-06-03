@@ -2,20 +2,34 @@ import React, { useState, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, LayoutChangeEvent } from 'react-native';
 import type { RoutePOI } from '../hooks/useRouteInsights';
 
+type TrafficSegment = {
+  startFraction: number;
+  endFraction: number;
+  level: 'low' | 'moderate' | 'heavy';
+};
+
 interface RouteTimelineProps {
   routeAheadPOIs: RoutePOI[];
   totalDistM: number;
   onPOIPress: (poi: RoutePOI) => void;
+  trafficSegments?: TrafficSegment[];
 }
 
 const PIN_SIZE = 28;
 const PIN_HALF = PIN_SIZE / 2;
 const PIN_TOP_PAD = 10;
 
+function logScale(km: number, maxKm: number): number {
+  if (maxKm <= 0) return 0;
+  // log1p(x) = ln(1+x), gives 0 at x=0 and grows slower as x increases
+  return Math.min(1, Math.log1p(km) / Math.log1p(maxKm));
+}
+
 const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   routeAheadPOIs,
   totalDistM,
   onPOIPress,
+  trafficSegments,
 }) => {
   const [barHeight, setBarHeight] = useState(0);
 
@@ -41,8 +55,11 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   const progressPct = (() => {
     if (pins.length === 0) return 0;
     const nearest = pins[0];
-    const estimatedTraveledKm = nearest.distKm - nearest.remainingKm;
-    return Math.min(1, Math.max(0, estimatedTraveledKm / totalKm));
+    const progressPct = logScale(
+      nearest.distKm - nearest.remainingKm,
+      farthestVisibleKm
+    );
+    return Math.min(1, Math.max(0, progressPct));
   })();
 
   return (
@@ -58,6 +75,27 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
         {/* Traveled portion — grows from bottom */}
         <View style={[styles.lineTraveled, { height: `${progressPct * 100}%` }]} />
 
+        {barHeight > 0 && (trafficSegments ?? []).map((seg, i) => {
+          const topFraction = 1 - seg.endFraction;
+          const heightFraction = seg.endFraction - seg.startFraction;
+          const color = seg.level === 'heavy' ? '#FF3B30' : '#FF9500';
+          return (
+            <View
+              key={`traffic-${i}`}
+              style={{
+                position: 'absolute',
+                top: topFraction * barHeight,
+                left: 6,
+                width: 3,
+                height: Math.max(4, heightFraction * barHeight),
+                backgroundColor: color,
+                borderRadius: 2,
+                opacity: 0.85,
+              }}
+            />
+          );
+        })}
+
         {/* POI pins positioned along the track */}
         {barHeight > 0 && pins.map((poi, i) => {
           // The route can be thousands of km, so the side rail shows the next
@@ -65,7 +103,7 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
           // parking readable instead of pinned under the bottom HUD.
           const pct = pins.length === 1
             ? 0.5
-            : Math.min(1, Math.max(0, poi.remainingKm / farthestVisibleKm));
+            : logScale(poi.remainingKm, farthestVisibleKm);
           const usableHeight = Math.max(0, barHeight - PIN_SIZE - PIN_TOP_PAD * 2);
           const top = PIN_TOP_PAD + (1 - pct) * usableHeight;
           const isFuel = poi.type === 'fuel';
@@ -96,8 +134,8 @@ const styles = StyleSheet.create({
   container: {
     position: 'absolute',
     right: 15,
-    top: '15%',
-    bottom: '25%',
+    top: '20%',
+    bottom: '30%',
     width: 40,
     alignItems: 'center',
     justifyContent: 'space-between',

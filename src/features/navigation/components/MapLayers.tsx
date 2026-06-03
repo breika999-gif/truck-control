@@ -6,6 +6,7 @@ import { RouteResult } from '../api/directions';
 import { RouteOption, POICard, SavedPOI } from '../../../shared/services/backendApi';
 import { TruckPOI, POI_META } from '../api/poi';
 import { MapLayersConfig } from '../hooks/useMapUIState';
+import type { DriveSegmentsResult } from '../utils/driveSegments';
 
 interface MapLayersProps {
   mapIsLoaded: boolean;
@@ -18,12 +19,15 @@ interface MapLayersProps {
   routeShape: GeoJSON.FeatureCollection | GeoJSON.Geometry | GeoJSON.Feature | null;
   congestionGeoJSON: GeoJSON.FeatureCollection | null;
   routeLineColor: string;
+  routeProgressFraction?: number;
+  driveSegments?: DriveSegmentsResult | null;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
   customOriginRef: React.MutableRefObject<[number, number] | null>;
   userCoords: [number, number] | null;
   destination: [number, number] | null;
   parkingResults: POICard[];
+  reachMarker?: { coords: [number, number]; label: string } | null;
   fuelResults: POICard[];
   starredPOIs: SavedPOI[];
   businessResults: POICard[];
@@ -34,16 +38,40 @@ interface MapLayersProps {
   selectedRouteIdx: number | null;
   setSelectedParking: (p: POICard) => void;
   setSelectedFuel: (f: POICard) => void;
+  onRestMarkerPress?: (coords: [number, number]) => void;
   onBizMarkerPress: (business: POICard) => void;
   handleSelectRouteOption: (idx: number) => void;
   ttsSpeak: (text: string) => void;
   voiceMutedRef: React.MutableRefObject<boolean>;
-  restrictionPoints?: Array<{ lng: number; lat: number; type: 'maxheight'|'maxweight'|'maxwidth'|'no_trucks'|'hazmat'; value: string }>;
+  restrictionPoints?: RestrictionLayerPoint[];
   poiResults?: TruckPOI[];
   handlePOINavigate?: (poi: TruckPOI) => void;
 }
 
+type RestrictionLayerPoint = {
+  lng: number;
+  lat: number;
+  type: 'maxheight' | 'maxweight' | 'maxwidth' | 'no_trucks' | 'hazmat';
+  value: string;
+  value_num?: number;
+};
+
 const POI_MARKER_SIZE = 36;
+const NUMERIC_RESTRICTION_FILTER = ['==', ['get', 'numeric'], true] as const;
+const ICON_RESTRICTION_FILTER = ['!=', ['get', 'numeric'], true] as const;
+
+function buildLineGradient(stops: Array<{ fraction: number; color: string }>): unknown[] {
+  const expression: unknown[] = ['interpolate', ['linear'], ['line-progress']];
+  const normalizedStops = stops
+    .map(stop => ({ ...stop, fraction: Math.max(0, Math.min(1, stop.fraction)) }))
+    .sort((a, b) => a.fraction - b.fraction)
+    .filter((stop, index, sorted) => index === 0 || stop.fraction > sorted[index - 1].fraction);
+
+  for (const stop of normalizedStops) {
+    expression.push(stop.fraction, stop.color);
+  }
+  return expression;
+}
 
 function formatPOIDistance(distanceM?: number): string | null {
   if (distanceM == null || !Number.isFinite(distanceM)) return null;
@@ -52,13 +80,30 @@ function formatPOIDistance(distanceM?: number): string | null {
     : `${Math.round(distanceM)}m`;
 }
 
+function isNumericRestriction(type: RestrictionLayerPoint['type']): boolean {
+  return type === 'maxheight' || type === 'maxwidth' || type === 'maxweight';
+}
+
+function formatRestrictionLabel(point: RestrictionLayerPoint): string {
+  if (!isNumericRestriction(point.type)) return '';
+  const value = Number.isFinite(point.value_num)
+    ? Number(point.value_num)
+    : Number(String(point.value).replace(',', '.').split(/\s+/)[0]);
+  if (!Number.isFinite(value) || value <= 0) return '';
+
+  const rounded = value >= 10
+    ? Math.round(value).toString()
+    : value.toFixed(1).replace(/\.0$/, '');
+  return `${rounded}${point.type === 'maxweight' ? 't' : 'm'}`;
+}
+
 function toPointGeoJSON(
   items: Array<{ lng: number; lat: number }>,
 ): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: items
-      .filter(item => item.lat && item.lng)
+      .filter(item => Number.isFinite(item.lat) && Number.isFinite(item.lng))
       .map((item, idx) => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [item.lng, item.lat] },
@@ -133,12 +178,15 @@ const MapLayers: React.FC<MapLayersProps> = ({
   routeShape,
   congestionGeoJSON,
   routeLineColor,
+  routeProgressFraction,
+  driveSegments,
   exitsGeoJSON,
   navTrafficAlerts,
   customOriginRef,
   userCoords,
   destination,
   parkingResults,
+  reachMarker,
   fuelResults,
   starredPOIs,
   businessResults,
@@ -149,6 +197,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   selectedRouteIdx,
   setSelectedParking,
   setSelectedFuel,
+  onRestMarkerPress,
   onBizMarkerPress,
   handleSelectRouteOption,
   ttsSpeak,
@@ -159,15 +208,25 @@ const MapLayers: React.FC<MapLayersProps> = ({
 }) => {
 
   const { traffic: showTraffic } = mapLayers;
+  const hasDriveSegments = Boolean(driveSegments?.gradientStops.length);
+  const routeBaseColor = hasDriveSegments ? 'rgba(0,0,0,0)' : routeLineColor;
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
-    features: restrictionPoints.map((rp, i) => ({
-      type: 'Feature',
-      id: i,
-      geometry: { type: 'Point', coordinates: [rp.lng, rp.lat] },
-      properties: { value: rp.value, type: rp.type },
-    })),
+    features: restrictionPoints
+      .filter(rp => Number.isFinite(rp.lat) && Number.isFinite(rp.lng))
+      .map((rp, i) => ({
+        type: 'Feature',
+        id: i,
+        geometry: { type: 'Point', coordinates: [rp.lng, rp.lat] },
+        properties: {
+          value: rp.value,
+          value_num: rp.value_num,
+          label: formatRestrictionLabel(rp),
+          numeric: isNumericRestriction(rp.type),
+          type: rp.type,
+        },
+      })),
   }), [restrictionPoints]);
 
   const parkingGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
@@ -265,46 +324,92 @@ const MapLayers: React.FC<MapLayersProps> = ({
       {/* ── Restriction Signs Layer ── */}
       {mapIsLoaded && restrictionPoints.length > 0 && (
         <Mapbox.ShapeSource id="restriction-signs-source" shape={restrictionGeoJSON}>
-          {/* Sign background: White circle with red border (European style) */}
           <Mapbox.CircleLayer
-            id="restriction-circles"
+            id="restriction-numeric-signs"
             slot="top"
-            minZoomLevel={7}
+            filter={NUMERIC_RESTRICTION_FILTER as any}
+            minZoomLevel={8}
             style={{
-              circleRadius: ['interpolate', ['linear'], ['zoom'], 7, 11, 9, 15, 13, 18] as any,
               circleColor: '#FFFFFF',
-              circleOpacity: 1.0,
-              circleStrokeWidth: ['interpolate', ['linear'], ['zoom'], 7, 2, 12, 3] as any,
+              circleOpacity: 0.98,
+              circleRadius: [
+                'interpolate', ['linear'], ['zoom'],
+                8, 8,
+                12, 11,
+                15, 15,
+                17, 18,
+              ],
               circleStrokeColor: '#D0021B',
-              circleStrokeOpacity: 1.0,
-              circlePitchAlignment: 'viewport',
-              ...((!lightMode) && { circleEmissiveStrength: 1.0 } as any),
-            }}
+              circleStrokeOpacity: 1,
+              circleStrokeWidth: [
+                'interpolate', ['linear'], ['zoom'],
+                8, 2.5,
+                12, 3,
+                15, 4,
+                17, 4.5,
+              ],
+            } as any}
           />
           <Mapbox.SymbolLayer
-            id="restriction-signs"
+            id="restriction-numeric-labels"
             slot="top"
-            minZoomLevel={9}
+            filter={NUMERIC_RESTRICTION_FILTER as any}
+            minZoomLevel={8}
             style={{
-              textField: [
-                'case',
-                ['==', ['get', 'type'], 'no_trucks'], 'HGV',
-                ['==', ['get', 'type'], 'hazmat'], 'ADR',
-                [
-                  'concat',
-                  ['get', 'value'],
-                  ['match', ['get', 'type'], 'maxheight', 'м', 'maxweight', 'т', 'maxwidth', 'м', ''],
-                ],
+              textField: ['get', 'label'],
+              textSize: [
+                'interpolate', ['linear'], ['zoom'],
+                8, 7,
+                12, 9,
+                15, 11,
+                17, 13,
               ],
-              textSize: ['interpolate', ['linear'], ['zoom'], 7, 10, 9, 12, 13, 14],
-              textColor: '#1A1A1A',
+              textColor: '#050505',
               textHaloColor: '#FFFFFF',
-              textHaloWidth: 2.5,
+              textHaloWidth: 0.4,
               textAnchor: 'center',
               textAllowOverlap: true,
               textIgnorePlacement: true,
               textPitchAlignment: 'viewport',
-              textEmissiveStrength: lightMode ? 0 : 1.0,
+              textRotationAlignment: 'viewport',
+            } as any}
+          />
+          <Mapbox.SymbolLayer
+            id="restriction-signs"
+            slot="top"
+            filter={ICON_RESTRICTION_FILTER as any}
+            minZoomLevel={8}
+            style={{
+              iconImage: [
+                'match',
+                ['coalesce', ['get', 'restriction_type'], ['get', 'type']],
+                'maxheight', 'restriction-height',
+                'maxwidth', 'restriction-width',
+                'maxweight', 'restriction-weight',
+                'maxaxleload', 'restriction-axle',
+                'maxlength', 'restriction-length',
+                'no_trucks', 'restriction-no-trucks',
+                'hazmat', 'restriction-hazmat',
+                'adr_tunnel', 'restriction-adr',
+                'restriction-no-trucks',
+              ],
+              iconSize: [
+                'interpolate', ['linear'], ['zoom'],
+                8, 0.12,
+                12, 0.18,
+                15, 0.26,
+                17, 0.34,
+              ],
+              iconOpacity: [
+                'interpolate', ['linear'], ['zoom'],
+                12, 0.7,
+                15, 1.0,
+              ],
+              iconAllowOverlap: true,
+              iconAnchor: 'center',
+              iconPitchAlignment: 'viewport',
+              iconRotationAlignment: 'viewport',
+              iconEmissiveStrength: lightMode ? 0 : 1.0,
             } as any}
           />
         </Mapbox.ShapeSource>
@@ -382,16 +487,17 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
       {/* ── Route casing (dark border) ── */}
       {mapIsLoaded && routeShape && (
-        <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0}>
+        <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0} lineMetrics={true}>
           <Mapbox.LineLayer
             id="route-casing"
             slot="middle"
             style={{
               lineColor: lightMode ? '#0a0a1a' : '#003d6b',
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 6, 10, 10, 15, 12],
+              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 7, 15, 9],
               lineOpacity: 1.0,
               lineCap: 'round',
               lineJoin: 'round',
+              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
             }}
           />
         </Mapbox.ShapeSource>
@@ -404,27 +510,50 @@ const MapLayers: React.FC<MapLayersProps> = ({
           ? (navCongestionVisible && navCongestionVisible.features.length > 0 ? navCongestionVisible : congestionGeoJSON)
           : congestionGeoJSON;
         return shape && (
-          <Mapbox.ShapeSource id="route-congestion-source" shape={shape} tolerance={0}>
+          <Mapbox.ShapeSource id="route-congestion-source" shape={shape} tolerance={0} lineMetrics={true}>
             <Mapbox.LineLayer
               id="route-line"
               slot="middle"
               aboveLayerID="route-casing"
               style={{
                 lineColor: ['match', ['get', 'congestion'],
-                  'low', routeLineColor,
+                  'low', routeBaseColor,
                   'moderate', '#FFBC40',
                   'heavy', '#FF9100',
                   'severe', '#FA0000',
-                  routeLineColor,
+                  routeBaseColor,
                 ],
-                lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 4, 10, 6, 15, 8],
+                lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 7],
                 lineCap: 'round',
                 lineJoin: 'round',
+                lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
               }}
             />
           </Mapbox.ShapeSource>
         );
       })()}
+
+      {/* ── Tachograph drive periods (visible route surface) ── */}
+      {mapIsLoaded && driveSegments && routeShape && driveSegments.gradientStops.length > 0 && (
+        <Mapbox.ShapeSource
+          id="drive-segments-source"
+          lineMetrics={true}
+          shape={routeShape}
+        >
+          <Mapbox.LineLayer
+            id="drive-segments-layer"
+            slot="middle"
+            aboveLayerID="route-line"
+            style={{
+              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 7],
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineGradient: buildLineGradient(driveSegments.gradientStops),
+              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
 
       {/* ── Route Arrows ── */}
       {mapIsLoaded && route && (
@@ -471,6 +600,22 @@ const MapLayers: React.FC<MapLayersProps> = ({
           />
         </Mapbox.ShapeSource>
       )}
+
+      {mapIsLoaded && driveSegments?.restPoints.map((restPoint, index) => (
+        <Mapbox.PointAnnotation
+          key={`drive-rest-${index}-${restPoint.coords[0].toFixed(5)}-${restPoint.coords[1].toFixed(5)}`}
+          id={`drive-rest-${index}`}
+          coordinate={restPoint.coords}
+          onSelected={() => onRestMarkerPress?.(restPoint.coords)}
+        >
+          <POIMarker
+            symbol="⛺"
+            accent={restPoint.restHours === 9 ? '#FF9500' : '#9B59B6'}
+            label={`${restPoint.restHours}ч почивка`}
+            symbolSize={16}
+          />
+        </Mapbox.PointAnnotation>
+      ))}
 
       {/* Origin/Dest Pins */}
       {(route || navigating) && originCoords && (
@@ -581,6 +726,56 @@ const MapLayers: React.FC<MapLayersProps> = ({
             } as any}
           />
         </Mapbox.ShapeSource>
+      )}
+
+      {/* Reach marker — deterministic "дотук стигаш" point on active route */}
+      {mapIsLoaded && reachMarker && (
+        <>
+          <Mapbox.ShapeSource
+            id="reach-pulse-source"
+            shape={{
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'Point', coordinates: reachMarker.coords },
+            }}
+          >
+            <Mapbox.CircleLayer
+              id="reach-pulse"
+              slot="top"
+              style={{
+                circleRadius: 18,
+                circleColor: 'rgba(255, 149, 0, 0)',
+                circleStrokeWidth: 3,
+                circleStrokeColor: '#FF9500',
+                circleStrokeOpacity: 0.7,
+                circlePitchAlignment: 'map',
+              }}
+            />
+          </Mapbox.ShapeSource>
+          <Mapbox.PointAnnotation
+            key={`reach-marker-${reachMarker.coords[0].toFixed(5)}-${reachMarker.coords[1].toFixed(5)}`}
+            id="reach-marker"
+            coordinate={reachMarker.coords}
+          >
+            <View style={{
+              alignItems: 'center',
+              backgroundColor: 'rgba(255, 149, 0, 0.92)',
+              borderRadius: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderWidth: 2,
+              borderColor: '#FF9500',
+              shadowColor: '#FF9500',
+              shadowRadius: 6,
+              shadowOpacity: 0.7,
+              elevation: 8,
+            }}>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                {reachMarker.label}
+              </Text>
+            </View>
+          </Mapbox.PointAnnotation>
+        </>
       )}
 
       {/* Manual POI Search Results (poiResults) — PointAnnotation */}
@@ -718,6 +913,15 @@ const MapLayers: React.FC<MapLayersProps> = ({
         if (isSelected && route) return null;
         const coords = opt.geometry.coordinates;
         const midCoord = coords[Math.floor(coords.length / 2)] as [number, number];
+        const fastestDuration = routeOptions[0]?.duration ?? 0;
+        const diffMin = Math.round((opt.duration - fastestDuration) / 60);
+        const timeLabel = i === 0
+          ? 'Най-бърз'
+          : diffMin > 0
+            ? `+${diffMin} мин`
+            : diffMin < 0
+              ? `${diffMin} мин`
+              : 'Равен';
         
         return (
           <React.Fragment key={`route-opt-${i}`}>
@@ -730,7 +934,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
                 }}
               />
             </Mapbox.ShapeSource>
-            <Mapbox.ShapeSource id={`route-opt-label-src-${i}`} shape={{ type: 'Feature', properties: { label: i === 0 ? 'Най-бърз' : 'Алтернатива' }, geometry: { type: 'Point', coordinates: midCoord } }}>
+            <Mapbox.ShapeSource id={`route-opt-label-src-${i}`} shape={{ type: 'Feature', properties: { label: timeLabel }, geometry: { type: 'Point', coordinates: midCoord } }}>
               <Mapbox.SymbolLayer
                 id={`route-opt-label-${i}`} slot="top"
                 style={{ textField: ['get', 'label'], textSize: 12, textColor: '#ffffff', textHaloColor: opt.color, textHaloWidth: 2, textAllowOverlap: false }}

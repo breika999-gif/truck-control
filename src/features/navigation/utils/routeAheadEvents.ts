@@ -128,6 +128,12 @@ export interface BuildEventsInput {
   distToTurn: number | null;        // metres to current maneuver
   restrictions?: RestrictionPoint[] | null;
   maxspeeds?: MaxspeedEntry[] | null;
+  traffic_alerts?: Array<{
+    distM: number;
+    severity: 'low' | 'moderate' | 'heavy' | 'severe';
+    delayMin: number;
+    roadName?: string;
+  }> | null;
   userCoords?: [number, number] | null;
   profile?: VehicleProfile | null;
   /** Remaining continuous driving seconds before HOS break (hosLimit - driven) */
@@ -136,7 +142,8 @@ export interface BuildEventsInput {
   routeDurationSec?: number;
 }
 
-const LOOKAHEAD_M = 5000; // only surface events within 5 km
+const LOOKAHEAD_M = 10000; // only surface events within 10 km
+const SPEED_LOOKAHEAD_M = 5000; // keep speed-zone previews tighter
 
 export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[] {
   const {
@@ -149,6 +156,7 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
     totalRouteDistM,
     routeDurationSec,
     maxspeeds,
+    traffic_alerts,
   } = input;
 
   const events: RouteAheadEvent[] = [];
@@ -258,7 +266,7 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
         cumulativeDistM += stepDistance;
 
         if (cumulativeDistM <= 0) continue;
-        if (cumulativeDistM > LOOKAHEAD_M) break;
+        if (cumulativeDistM > SPEED_LOOKAHEAD_M) break;
 
         const speedAtBoundary = speedAtDistance(maxspeeds, totalRouteDistM, cumulativeDistM);
         if (speedAtBoundary == null) continue;
@@ -280,6 +288,24 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
         emitted += 1;
         if (emitted >= 3) break;
       }
+    }
+  }
+
+  // ── 5b. Traffic congestion events ahead ──────────────────────────────────
+  if (traffic_alerts?.length) {
+    for (const alert of traffic_alerts) {
+      if (alert.distM <= 0 || alert.distM > LOOKAHEAD_M) continue;
+      if (alert.severity === 'low') continue;
+      events.push({
+        type: 'traffic',
+        distanceM: alert.distM,
+        priority: alert.severity === 'severe' || alert.severity === 'heavy' ? 1 : 2,
+        payload: {
+          delayMin: alert.delayMin,
+          severity: alert.severity === 'severe' ? 'heavy' : alert.severity,
+          roadName: alert.roadName ?? '',
+        } satisfies TrafficEventPayload,
+      });
     }
   }
 

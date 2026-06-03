@@ -1,5 +1,5 @@
 import type GeoJSON from 'geojson';
-import { BACKEND_URL } from '../../../shared/constants/config';
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 
 const ROUTE_FETCH_TIMEOUT_MS = 60000;
 
@@ -175,13 +175,14 @@ export async function fetchRoute(
   try {
     const res = await fetch(`${BACKEND_URL}/api/routes/calculate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
       signal: controller.signal,
       body: JSON.stringify({
         origin,
         destination,
         waypoints: waypoints ?? [],
         truck: truck ?? {},
+        include_restrictions: true,
         avoid_unpaved: truck?.avoidUnpaved ?? false,
         adr_tunnel_code: truck?.adr_tunnel ?? 'none',
         depart_at: departAt ?? null,

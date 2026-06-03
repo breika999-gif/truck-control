@@ -82,7 +82,7 @@ Single-file Flask app proxying AI APIs and managing per-user data:
 
 ### Key Config
 
-`src/shared/constants/config.ts` — holds `MAPBOX_PUBLIC_TOKEN`, `TOMTOM_API_KEY`, `BACKEND_URL` (currently Railway: `https://truckexpoai-production.up.railway.app`), and `MAP_CENTER` (Bulgaria: lon 25.0, lat 42.7).
+`src/shared/constants/config.ts` — holds the public `MAPBOX_PUBLIC_TOKEN`, `BACKEND_URL`, env-backed `APP_INTERNAL_TOKEN`, and `MAP_CENTER` (Bulgaria: lon 25.0, lat 42.7). `TOMTOM_API_KEY` stays backend-only.
 
 `src/shared/constants/theme.ts` — dark theme constants. Always use these instead of hardcoded colors.
 

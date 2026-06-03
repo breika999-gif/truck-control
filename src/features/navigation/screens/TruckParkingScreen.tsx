@@ -24,7 +24,7 @@ const TruckParkingScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<TruckParkingRouteProp>();
   const { url } = route.params || {};
-  const transparkingUrl = url ?? 'https://truckerapps.eu/transparking/en/map/';
+  const transparkingUrl = url ?? 'https://truckerapps.eu/transparking/bg/map/';
 
   return (
     <SafeAreaView style={styles.container}>

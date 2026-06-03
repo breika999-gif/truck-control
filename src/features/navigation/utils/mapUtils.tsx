@@ -32,6 +32,22 @@ export const ICON_WAYPOINT      = require('../../../shared/assets/icon_waypoint.
 export const ICON_BIZ           = require('../../../shared/assets/icon_biz.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_NO_OVERTAKING = require('../../../shared/assets/icon_no_overtaking.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_HEIGHT = require('../../../shared/assets/tomtom_icons/ic_map_restriction_height.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_WIDTH = require('../../../shared/assets/tomtom_icons/ic_map_restriction_width.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_WEIGHT = require('../../../shared/assets/tomtom_icons/ic_map_restriction_truck_weight.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_AXLE = require('../../../shared/assets/tomtom_icons/ic_map_restriction_axle_weight.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_LENGTH = require('../../../shared/assets/tomtom_icons/ic_map_restriction_length.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_HAZMAT = require('../../../shared/assets/tomtom_icons/ic_map_restriction_dangerous_goods.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_ADR = require('../../../shared/assets/tomtom_icons/ic_map_restriction_adr_tunnel.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_RESTRICTION_NO_TRUCKS = require('../../../shared/assets/tomtom_icons/ic_map_restriction_no_trucks.png') as number;
 
 // ── Maneuver arrow icons (TomTom originals) ───────────────────────────────────
 export const ARROW_STRAIGHT      = require('../../../shared/assets/maneuver/arrow_straight.png') as number;
@@ -371,15 +387,15 @@ export async function getTransParkingUrl(id: string): Promise<string> {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-Requested-With': 'XMLHttpRequest',
-        'Referer': 'https://truckerapps.eu/transparking/en/map/',
+        'Referer': 'https://truckerapps.eu/transparking/bg/map/',
       },
-      body: `pointid=${id}&lang=lang.en.php`,
+      body: `pointid=${id}&lang=lang.bg.php`,
     });
     const html = await res.text();
     const match = html.match(/href="(https:\/\/truckerapps\.eu\/transparking\/[^"]+\.html)"/);
-    return match ? match[1] : 'https://truckerapps.eu/transparking/en/map/';
+    return match ? match[1] : 'https://truckerapps.eu/transparking/bg/map/';
   } catch {
-    return 'https://truckerapps.eu/transparking/en/map/';
+    return 'https://truckerapps.eu/transparking/bg/map/';
   }
 }
 
@@ -406,6 +422,7 @@ interface StableCameraProps {
   speed?: number;
   isTracking?: boolean;
   userCoords?: [number, number] | null;
+  distToTurn?: number | null;
 }
 
 function regionToZoom(latitudeDelta = 0.01, longitudeDelta = 0.01): number {
@@ -423,17 +440,32 @@ function paddingObjectToArray(padding?: { top?: number; right?: number; bottom?:
 }
 
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords }: StableCameraProps) => {
+  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords, distToTurn }: StableCameraProps) => {
     const nativeCameraRef = React.useRef<any>(null);
-    const followZoomLevel =
-      speed != null && speed > 90 ? 15.5 :
-      speed != null && speed > 60 ? 16.0 :
-      speed != null && speed > 30 ? 16.8 :
-      16.8;
-    const followPitch =
-      speed != null && speed > 40 ? 60 :
-      speed != null && speed > 5  ? 55 :
-      navigating ? 45 : 0;
+    const speedKmh = speed ?? 0;
+    const isCourseTracking = speedKmh >= 1;
+    const followZoomLevel = (() => {
+      // Intersection zoom — aggressive zoom near turns (city feel)
+      if (distToTurn != null && distToTurn < 80)  return 18.0;
+      if (distToTurn != null && distToTurn < 200) return 17.5;
+      if (distToTurn != null && distToTurn < 400) return 17.0;
+      // Highway bird's eye — zoom out at high speed
+      if (speedKmh > 100) return 14.5;
+      if (speedKmh > 80)  return 15.0;
+      if (speedKmh > 60)  return 15.5;
+      if (speedKmh > 30)  return 16.0;
+      return 16.2;
+    })();
+    const followPitch = (() => {
+      // Near turn: increase pitch for 3D city feel
+      if (distToTurn != null && distToTurn < 300) return 62;
+      // Highway: flatten for bird's eye
+      if (speedKmh > 80) return 40;
+      if (speedKmh > 40) return 55;
+      if (speedKmh > 6)  return 50;
+      if (speedKmh > 3)  return ((speedKmh - 3) / 3) * 50;
+      return 0;
+    })();
 
     React.useEffect(() => {
       cameraRef.current = {
@@ -490,13 +522,13 @@ export const StableCamera = React.memo(
           centerCoordinate: [MAP_CENTER.longitude, MAP_CENTER.latitude],
           zoomLevel: MAP_CENTER.zoomLevel,
         }}
-        followUserLocation={Boolean(navigating && mapLoaded && isTracking && userCoords)}
-        followUserMode={speed != null && speed > 1 ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
+        followUserLocation={Boolean(mapLoaded && isTracking && userCoords)}
+        followUserMode={isCourseTracking ? UserTrackingMode.FollowWithCourse : UserTrackingMode.Follow}
         followZoomLevel={followZoomLevel}
         followPitch={followPitch}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
-        animationDuration={600}
+        animationDuration={100}
       />
     );
   },

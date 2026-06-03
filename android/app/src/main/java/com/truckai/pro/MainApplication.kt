@@ -17,6 +17,8 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           // Packages that cannot be autolinked yet can be added manually here
           add(AccountManagerPackage())
+          add(SpeechPackage())
+          add(TruckAutoPackage())
           add(RNMBXPackage())
         },
     )

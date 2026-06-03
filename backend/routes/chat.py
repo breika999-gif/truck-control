@@ -1,10 +1,11 @@
 from flask import Blueprint, jsonify, request
-from utils.helpers import _is_rate_limited, _get_body
+from utils.helpers import _is_rate_limited, _get_body, require_app_token
 from services.gpt_service import _run_gpt4o_internal
 
 chat_bp = Blueprint('chat', __name__)
 
 @chat_bp.post("/api/chat")
+@require_app_token
 def chat():
     if _is_rate_limited(limit=20, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429

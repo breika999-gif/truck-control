@@ -283,7 +283,10 @@ def _mapbox_match_geometry(geometry: dict, edge_only_m: int = 0) -> tuple[dict, 
             )
             any_matched = first_ok or last_ok
         else:
-            all_snapped, any_matched = _match_coordinate_chunks(coords)
+            # Full-route matching keeps the rendered polyline on Mapbox roads.
+            # Sampling bounds the number of matching requests on long haul routes.
+            sampled = _sample_coords_for_snap(coords, max_points=600)
+            all_snapped, any_matched = _match_coordinate_chunks(sampled)
 
         if len(all_snapped) >= 2:
             result = ({"type": "LineString", "coordinates": all_snapped}, any_matched)

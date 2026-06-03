@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   TextInput,
@@ -38,8 +38,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading]       = useState(false);
   const [retrieving, setRetrieving] = useState(false);
-  // Show origin row only when user is actively searching or has custom origin
-  const [destFocused, setDestFocused] = useState(false);
+  const originInputRef = useRef<import('react-native').TextInput>(null);
 
   // Origin search state
   const [originQuery, setOriginQuery]       = useState('');
@@ -55,15 +54,42 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
   const originDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const originAbortRef    = useRef<AbortController | null>(null);
 
+  // Фокусира origin полето ръчно — без autoFocus за да няма цикличен ре-рендер
+  useEffect(() => {
+    if (originFocused) {
+      const t = setTimeout(() => originInputRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [originFocused]);
+
+  const focusOrigin = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    abortRef.current?.abort();
+    setSuggestions([]);
+    setLoading(false);
+    setOriginFocused(true);
+  }, []);
+
+  const focusDestination = useCallback(() => {
+    if (originDebounceRef.current) clearTimeout(originDebounceRef.current);
+    originAbortRef.current?.abort();
+    setOriginSuggestions([]);
+    setOriginLoading(false);
+  }, []);
+
   // ── Fully exit search mode ─────────────────────────────────────────────────
   const exitSearch = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (timeoutRef.current)  clearTimeout(timeoutRef.current);
     abortRef.current?.abort();
+    if (originDebounceRef.current) clearTimeout(originDebounceRef.current);
+    originAbortRef.current?.abort();
     setQuery('');
     setSuggestions([]);
+    setOriginSuggestions([]);
     setLoading(false);
-    setDestFocused(false);
+    setOriginLoading(false);
+    setOriginFocused(false);
     Keyboard.dismiss();
     onClear?.();
   }, [onClear]);
@@ -155,12 +181,48 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
       if (place) {
         onSelect(place);
         setQuery('');
-        setDestFocused(false);
       }
     } finally {
       setRetrieving(false);
     }
   }, [onSelect]);
+
+  const handleSubmitSearch = useCallback(async () => {
+    const trimmed = query.trim();
+    if (trimmed.length < 2 || retrieving) return;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    abortRef.current?.abort();
+
+    Keyboard.dismiss();
+    setSuggestions([]);
+    setLoading(false);
+    setRetrieving(true);
+
+    try {
+      let first = suggestions[0];
+      if (!first) {
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        const tomtomResults = await suggestPlaces(trimmed, ctrl.signal);
+        const results = tomtomResults.length > 0
+          ? tomtomResults
+          : await suggestPlacesGoogle(trimmed, ctrl.signal);
+        first = results[0];
+      }
+
+      if (!first) return;
+
+      const place = await retrievePlace(first.place_id);
+      if (place) {
+        onSelect(place);
+        setQuery('');
+      }
+    } finally {
+      setRetrieving(false);
+    }
+  }, [onSelect, query, retrieving, suggestions]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -170,24 +232,24 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     <View pointerEvents="box-none">
 
       {/* ── Origin row — shown only when searching or custom origin set ── */}
-      {onOriginChange && (destFocused || query.length > 0 || originLabel !== null) && (
+      {onOriginChange && (query.length > 0 || originLabel !== null || originFocused) && (
         <View pointerEvents="auto">
           <View style={styles.originRow}>
             <Text style={styles.originIcon}>📍</Text>
             {originFocused ? (
               <TextInput
+                ref={originInputRef}
                 style={styles.originInput}
                 placeholder="Начална точка..."
                 placeholderTextColor={colors.textMuted}
                 value={originQuery}
                 onChangeText={handleOriginChange}
                 onBlur={() => { if (!originQuery.trim()) setOriginFocused(false); }}
-                autoFocus
                 autoCorrect={false}
                 returnKeyType="search"
               />
             ) : (
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setOriginFocused(true)}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={focusOrigin}>
                 <Text style={styles.originLabel} numberOfLines={1}>
                   {originLabel ?? 'Моето местоположение'}
                 </Text>
@@ -232,8 +294,8 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
           placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={handleChange}
-          onFocus={() => setDestFocused(true)}
-          onBlur={() => setDestFocused(false)}
+          onFocus={focusDestination}
+          onSubmitEditing={handleSubmitSearch}
           returnKeyType="search"
           autoCorrect={false}
         />

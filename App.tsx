@@ -21,6 +21,9 @@ import POIListScreen from './src/features/navigation/screens/POIListScreen';
 import TachoScreen from './src/features/tacho/screens/TachoScreen';
 import TruckBansScreen from './src/features/navigation/screens/TruckBansScreen';
 import TruckParkingScreen from './src/features/navigation/screens/TruckParkingScreen';
+import DispatcherScreen from './src/features/navigation/screens/DispatcherScreen';
+import OfflineRegionsScreen from './src/features/offline/screens/OfflineRegionsScreen';
+import { LicensesScreen } from './src/features/legal/screens/LicensesScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -85,6 +88,33 @@ export default function App() {
           component={TruckParkingScreen}
           options={{
             headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="Dispatcher"
+          component={DispatcherScreen}
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="OfflineMaps"
+          component={OfflineRegionsScreen}
+          options={{
+            presentation: 'modal',
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="Licenses"
+          component={LicensesScreen}
+          options={{
+            presentation: 'modal',
+            headerShown: true,
+            title: 'Правна информация',
+            headerStyle: { backgroundColor: colors.bgSecondary },
+            headerTintColor: colors.text,
+            headerTitleStyle: { fontWeight: '600' },
           }}
         />
       </Stack.Navigator>

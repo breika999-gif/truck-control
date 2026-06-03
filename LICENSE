@@ -1,0 +1,28 @@
+Copyright (c) 2026 TruckExpoAI. All rights reserved.
+
+PROPRIETARY AND CONFIDENTIAL
+
+This software and all associated files, documentation, and materials
+("Software") are the exclusive property of TruckExpoAI.
+
+RESTRICTIONS:
+- Unauthorized copying, distribution, modification, or use of this Software,
+  in whole or in part, via any medium, is strictly prohibited.
+- This Software may not be sublicensed, sold, or transferred without prior
+  written permission from TruckExpoAI.
+- Reverse engineering, decompiling, or disassembling this Software is
+  prohibited except to the extent required by applicable law.
+
+THIRD-PARTY COMPONENTS:
+This Software incorporates open-source components. Their respective licenses
+are listed in the application under Settings > About > Third-Party Licenses.
+
+Map data is provided by Mapbox (mapbox.com) and OpenStreetMap contributors,
+subject to their respective terms of service.
+
+Routing data is provided by TomTom N.V., subject to their terms of service.
+
+AI features are powered by OpenAI (GPT-4o) and Google (Gemini 2.0 Flash),
+subject to their respective terms of service.
+
+For licensing inquiries: contact@truckexpoai.com

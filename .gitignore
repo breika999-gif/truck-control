@@ -70,6 +70,7 @@ yarn-error.log
 .claude/
 
 # Backend secrets — NEVER commit
+.env
 backend/.env
 backend/truckai.db
 
