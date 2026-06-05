@@ -22,6 +22,7 @@ const CAMERA_FETCH_DEBOUNCE_MS = 1200;
 const CAMERA_FETCH_PREVIEW_DEBOUNCE_MS = 350;
 const CAMERA_REFRESH_TOLERANCE_M = 120;
 const MAX_CAMERA_CACHE_ROUTES = 8;
+const REROUTE_TIMEOUT_MS = 10_000;
 
 function routeCheckpointIndices(length: number): number[] {
   if (length <= 1) return [0];
@@ -270,12 +271,30 @@ export function useRouteOrchestrator({
     autoStart = false,
     optimizeWaypoints = false,
   ) => {
-    // Cancel previous POI fetches if any
+    let routeSucceeded = false;
+    const wasNavigating = navigatingRef.current;
+    const fallbackRoute = wasNavigating ? routeRef.current : null;
+
+    // Cancel previous fetches
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
+
+    // Rerouting timeout — if no response in 10s, restore last known route
+    let rerouteTimer: ReturnType<typeof setTimeout> | null = null;
+    if (wasNavigating) {
+      rerouteTimer = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        abortControllerRef.current?.abort();
+        if (fallbackRoute) {
+          routeRef.current = fallbackRoute;
+          setRoute(fallbackRoute);
+        }
+        setNavPhase('NAVIGATING');
+      }, REROUTE_TIMEOUT_MS);
+    }
 
     setDestination(dest);
     setDestinationName(name);
@@ -322,6 +341,7 @@ export function useRouteOrchestrator({
       if (!isMountedRef.current) return; // unmount guard
 
       setBackendOnline(!!result);
+      routeSucceeded = !!result;
 
       // Apply TomTom's optimal waypoint order if requested
       if (optimizeWaypoints && result?.optimizedWaypointOrder && waypointsArg) {
@@ -361,6 +381,7 @@ export function useRouteOrchestrator({
         setRouteOptDest({ name: destinationNameRef.current, coords: dest, waypoints: waypointsArg });
       } else if (!navigatingRef.current) {
         setRouteOptions([]);
+        setRouteOptDest(null);
       }
 
       if (result) {
@@ -399,9 +420,14 @@ export function useRouteOrchestrator({
       setBackendOnline(false);
       if (!navigatingRef.current) cameraRef.current?.animateToRegion({ latitude: dest[1], longitude: dest[0], latitudeDelta: 0.05, longitudeDelta: 0.05 }, 800);
     } finally {
+      if (rerouteTimer) clearTimeout(rerouteTimer);
       // REROUTING → NAVIGATING; SEARCHING → ROUTE_PREVIEW
       if (isMountedRef.current) {
-        setNavPhase((navigatingRef.current || autoStart) ? 'NAVIGATING' : 'ROUTE_PREVIEW');
+        if (navigatingRef.current || (autoStart && routeSucceeded)) {
+          setNavPhase('NAVIGATING');
+        } else {
+          setNavPhase(routeSucceeded ? 'ROUTE_PREVIEW' : 'IDLE');
+        }
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
