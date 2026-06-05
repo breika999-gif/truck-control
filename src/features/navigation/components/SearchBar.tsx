@@ -17,6 +17,7 @@ import {
   type GeoPlace,
   type SearchSuggestion,
 } from '../api/geocoding';
+import { pingBackend } from '../../../shared/services/backendApi';
 
 // Neon blue — matches MapScreen theme
 const NEON     = '#00bfff';
@@ -75,6 +76,8 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
     originAbortRef.current?.abort();
     setOriginSuggestions([]);
     setOriginLoading(false);
+    // Warm up Railway so route calculation starts faster when user selects a destination
+    pingBackend();
   }, []);
 
   // ── Fully exit search mode ─────────────────────────────────────────────────
