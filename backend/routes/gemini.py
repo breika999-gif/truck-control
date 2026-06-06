@@ -89,6 +89,23 @@ def gemini_chat():
     has_memory = bool((body.get("context") or {}).get("user_memory")) and not is_simple
     system_instruction = build_gemini_system(intent, has_memory)
 
+    # Cost guard: navigation commands need MapAction JSON, so send them straight to
+    # the navigation engine instead of spending one Gemini call and then one GPT call.
+    if intent == "nav" and _gpt4o_ready:
+        gpt_context = dict(context or {})
+        gpt_context["last_message"] = user_msg
+        gpt_res = _run_gpt4o_internal(user_msg, [], gpt_context, user_email=user_email)
+        if not gpt_res.get("ok"):
+            code = 503 if "конфигуриран" in gpt_res.get("error", "") else 500
+            return jsonify(gpt_res), code
+        return jsonify({
+            "ok": True,
+            "reply": gpt_res.get("reply") or gpt_res.get("text") or "Разбрах, колега.",
+            "action": gpt_res.get("action"),
+            "app_intent": None,
+            "remember": [],
+        })
+
     def call_gemini_task():
         contents = []
 

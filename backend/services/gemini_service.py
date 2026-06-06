@@ -1,4 +1,5 @@
 import json
+import re
 from collections import OrderedDict
 from google import genai as _google_genai
 from config import (
@@ -27,13 +28,25 @@ class _LRUCache(OrderedDict):
 
 _personal_gemini_clients = _LRUCache(maxsize=50)
 
-INTENT_LABELS = {"tacho", "nav", "general"}
-INTENT_CLASSIFIER_SYSTEM = "Classify as one word: tacho, nav, or general."
-
 SIMPLE_KEYWORDS = [
     "мерси", "благодаря", "ок", "добре", "разбрах", "чао", "да", "не",
     "ok", "thanks", "yes", "no",
 ]
+
+TACHO_RE = re.compile(
+    r"\b(тахограф|остава|стигам|стигна|докъде|до къде|докаде|до каде|каране|"
+    r"шофиране|почивка|пауза|смяна|лимит|седмично|driving|drive|reach|remain|"
+    r"hours|break|weekly|shift)\b",
+    re.IGNORECASE,
+)
+
+NAV_RE = re.compile(
+    r"\b(карай до|маршрут|навигир|навигация|отиди до|закарай|добави спирка|"
+    r"паркинг|гориво|бензиностанция|дизел|route|navigate|navigation|waypoint|"
+    r"parking|fuel|diesel|gas station|ruta|navega|navegar|aparcamiento|"
+    r"gasolinera|combustible)\b",
+    re.IGNORECASE,
+)
 
 def is_simple_message(msg: str) -> bool:
     text = (msg or "").strip().lower().strip("!?.")
@@ -43,22 +56,14 @@ def is_simple_message(msg: str) -> bool:
     return len(text) <= 10 or text in SIMPLE_KEYWORDS
 
 def classify_intent(msg: str) -> str:
-    if not _gemini_ready:
+    text = (msg or "").strip().lower()
+    if not text:
         return "general"
-    try:
-        resp = _gemini_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=(msg or "").strip()[:500],
-            config=_google_genai.types.GenerateContentConfig(
-                system_instruction=INTENT_CLASSIFIER_SYSTEM,
-                temperature=0,
-                max_output_tokens=10,
-            ),
-        )
-        label = (resp.text or "").strip().lower().split()[0].strip(".,:;\"'")
-        return label if label in INTENT_LABELS else "general"
-    except Exception:
-        return "general"
+    if TACHO_RE.search(text):
+        return "tacho"
+    if NAV_RE.search(text):
+        return "nav"
+    return "general"
 
 def build_gemini_system(intent: str, has_memory: bool) -> str:
     from config import GEMINI_BASE, GEMINI_TACHO_RULES, GEMINI_MEMORY_RULES
