@@ -174,16 +174,26 @@ def row_to_poi(row: sqlite3.Row) -> dict:
 
 def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
     from utils.helpers import now_iso
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
-            (user_email, "user", user_msg, now_iso()),
-        )
-        conn.execute(
-            "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
-            (user_email, "model", reply, now_iso()),
-        )
-        conn.commit()
+
+    def insert_pair() -> None:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
+                (user_email, "user", user_msg, now_iso()),
+            )
+            conn.execute(
+                "INSERT INTO chat_history (user_email, role, message, created_at) VALUES (?, ?, ?, ?)",
+                (user_email, "model", reply, now_iso()),
+            )
+            conn.commit()
+
+    try:
+        insert_pair()
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        init_db()
+        insert_pair()
 
 def _transparking_cache_refresh() -> None:
     from utils.helpers import now_iso
