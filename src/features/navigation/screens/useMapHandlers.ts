@@ -240,7 +240,6 @@ interface UseMapHandlersArgs {
 }
 
 export function useMapHandlers({
-  speak,
   handleChatState,
   handleMicStartState,
   handleMicStopState,
@@ -324,7 +323,6 @@ export function useMapHandlers({
   route,
   destinationNameRef,
   destinationRef,
-  departAtRef,
   routeOptDest,
   selectedRouteIdx,
 }: UseMapHandlersArgs): MapHandlers {
@@ -434,7 +432,7 @@ export function useMapHandlers({
       setWakeWordHeard(false);
     }, 1200);
     sendGeminiText(cmd);
-  }, [sendGeminiText]);
+  }, [sendGeminiText, setWakeWordHeard, wakeWordFlashTimerRef]);
 
   const handleAcceptFasterRoute = useCallback(() => {
     if (!fasterOffer) return;
@@ -455,7 +453,7 @@ export function useMapHandlers({
 
     if (!Array.isArray(coords) || coords.length < 2) return;
     setLongPressCoord([coords[0], coords[1]]);
-  }, []);
+  }, [setLongPressCoord]);
 
   const handleDestinationSelect = useCallback(
     (place: GeoPlace) => navigateTo(place.center, place.text),
@@ -483,7 +481,21 @@ export function useMapHandlers({
       Tts.stop();
       ttsSpeak('Следвайте маршрута.');
     }
-  }, [beginRouteLog, mapMode, resetSession, route, routeRef, setRoute]);
+  }, [
+    beginRouteLog,
+    lastSpokenStepRef,
+    mapMode,
+    resetSession,
+    route,
+    routeRef,
+    setCurrentStep,
+    setDistToTurn,
+    setIsTracking,
+    setMapMode,
+    setNavPhase,
+    setRoute,
+    voiceMutedRef,
+  ]);
 
   const handleStopNav = useCallback(() => {
     completeActiveRouteLog();
@@ -498,7 +510,19 @@ export function useMapHandlers({
     lastRerouteRef.current = 0;
     void summarizeShift();
     saveSession();
-  }, [completeActiveRouteLog, saveSession, setNavPhase, summarizeShift]);
+  }, [
+    completeActiveRouteLog,
+    lastRerouteRef,
+    saveSession,
+    setCurrentStep,
+    setDistToTurn,
+    setIsTracking,
+    setMapPitch,
+    setNavCongestionGeoJSON,
+    setNavPhase,
+    setNavTrafficAlerts,
+    summarizeShift,
+  ]);
 
   const handleClear = useCallback(() => {
     completeActiveRouteLog();
@@ -552,12 +576,49 @@ export function useMapHandlers({
           },
       800,
     );
-  }, [clearPOI, completeActiveRouteLog, resetSession, routeRef, saveSession, stopSim, userCoords]);
+  }, [
+    cameraRef,
+    clearPOI,
+    completeActiveRouteLog,
+    lastRerouteRef,
+    lastSpokenStepRef,
+    resetSession,
+    routeRef,
+    saveSession,
+    setBusinessResults,
+    setCameraAlert,
+    setCameraResults,
+    setCurrentStep,
+    setDestination,
+    setDestinationName,
+    setDistToTurn,
+    setFuelResults,
+    setIsTracking,
+    setLongPressCoord,
+    setMapPitch,
+    setNavPhase,
+    setParkingResults,
+    setReachMarker,
+    setRestrictionWarnings,
+    setRoute,
+    setRouteOptDest,
+    setRouteOptions,
+    setSelectedRouteIdx,
+    setSpeedLimit,
+    setTachographResult,
+    setWaypointNames,
+    setWaypoints,
+    shouldCenterOnIdleGpsRef,
+    stopSim,
+    userCoords,
+    waypointNamesRef,
+    waypointsRef,
+  ]);
 
   const handleOriginChange = useCallback((place: GeoPlace | null) => {
     customOriginRef.current = place?.center ?? null;
     setCustomOriginName(place?.text ?? '');
-  }, []);
+  }, [customOriginRef, setCustomOriginName]);
 
   const handleSelectRouteOption = useCallback(async (idx: number) => {
     setSelectedRouteIdx(idx);
@@ -595,7 +656,18 @@ export function useMapHandlers({
     } finally {
       setRestrictionChecking(false);
     }
-  }, [routeOptions, routeRef, setNavCongestionGeoJSON, setNavTrafficAlerts, setRoute]);
+  }, [
+    profileRef,
+    restrictionAnalysisCacheRef,
+    routeOptions,
+    routeRef,
+    setNavCongestionGeoJSON,
+    setNavTrafficAlerts,
+    setRestrictionChecking,
+    setRestrictionWarnings,
+    setRoute,
+    setSelectedRouteIdx,
+  ]);
 
   const handleUserMapPan = useCallback(() => {
     if (!navigating) return;
@@ -604,7 +676,13 @@ export function useMapHandlers({
     if (now - lastMapTouchAtRef.current > 1200) return;
     setIsTracking(false);
     setAutoRetrackNonce(n => n + 1);
-  }, [navigating]);
+  }, [
+    lastMapTouchAtRef,
+    navigating,
+    setAutoRetrackNonce,
+    setIsTracking,
+    suppressPanUntilRef,
+  ]);
 
   const handleAppIntent = useCallback((intent: AppIntent) => {
     if (intent.url) {
@@ -642,7 +720,12 @@ export function useMapHandlers({
     }
     activeStructureWarningKeyRef.current = null;
     setTunnelWarning(null);
-  }, [setTunnelWarning]);
+  }, [
+    activeStructureWarningKeyRef,
+    dismissedStructureWarningsRef,
+    setTunnelWarning,
+    structureWarningDismissMs,
+  ]);
 
   const handlePOINavigate = useCallback((poi: TruckPOI) => {
     clearPOI();

@@ -53,9 +53,12 @@ function isExceeded(
 
 const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
   const opacity = useRef(new Animated.Value(0)).current;
+  const restrictionAnimationKey = restriction
+    ? `${restriction.type}:${restriction.lat}:${restriction.lng}:${restriction.value_num}`
+    : null;
 
   useEffect(() => {
-    if (restriction) {
+    if (restrictionAnimationKey) {
       Animated.sequence([
         Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         Animated.delay(7000),
@@ -64,7 +67,7 @@ const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
     } else {
       opacity.setValue(0);
     }
-  }, [opacity, restriction?.lat, restriction?.lng]);
+  }, [opacity, restrictionAnimationKey]);
 
   if (!restriction) return null;
 

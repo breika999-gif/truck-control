@@ -120,7 +120,6 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
           const effectiveRouteMin = truckCappedRouteMin(opt.distance, opt.duration);
           const routeDurMin = Math.ceil(effectiveRouteMin);
           const canMakeIt = tachoRemMin === null || routeDurMin <= tachoRemMin;
-          const shortageMin = tachoRemMin !== null ? routeDurMin - tachoRemMin : 0;
           // Distance until forced break, capped to realistic truck speed.
           const breakDistKm = tachoRemMin !== null && !canMakeIt
             ? truckBreakDistanceKm(opt.distance, tachoRemMin, effectiveRouteMin)

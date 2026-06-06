@@ -48,26 +48,27 @@ export function useSoundAlerts(mutedRef: MutableRefObject<boolean>) {
   useEffect(() => {
     if (!Sound) return;
     Sound.setCategory('Playback');
+    const sounds = soundsRef.current;
 
     (Object.keys(SOUND_ASSETS) as SoundKey[]).forEach((key) => {
       try {
-        if (!Sound) { soundsRef.current[key] = null; return; }
-        soundsRef.current[key] = new Sound(
+        if (!Sound) { sounds[key] = null; return; }
+        sounds[key] = new Sound(
           SOUND_ASSETS[key],
           Sound.MAIN_BUNDLE,
-          (error: unknown) => { if (error) soundsRef.current[key] = null; },
+          (error: unknown) => { if (error) sounds[key] = null; },
         ) as SoundInstance;
       } catch {
-        soundsRef.current[key] = null;
+        sounds[key] = null;
       }
     });
 
     return () => {
-      (Object.keys(soundsRef.current) as SoundKey[]).forEach((key) => {
+      (Object.keys(sounds) as SoundKey[]).forEach((key) => {
         try {
-          soundsRef.current[key]?.release();
+          sounds[key]?.release();
         } catch {}
-        soundsRef.current[key] = null;
+        sounds[key] = null;
       });
     };
   }, []);

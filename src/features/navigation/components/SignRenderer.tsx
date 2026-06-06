@@ -52,22 +52,6 @@ function signArrow(modifier?: string): string {
   }
 }
 
-/** Same logic for individual lane boxes. */
-function laneArrow(dir?: string): string {
-  switch (dir) {
-    case 'sharp left':   return '↰';
-    case 'left':         return '←';
-    case 'slight left':  return '↖';
-    case 'straight':
-    case 'none':         return '↑';
-    case 'slight right': return '↗';
-    case 'right':        return '→';
-    case 'sharp right':  return '↱';
-    case 'uturn':        return '↩';
-    default:             return '↑';
-  }
-}
-
 /** Format metres to display string. */
 function fmtDist(m: number): string {
   if (m >= 1000) return `${(m / 1000).toFixed(1)} км`;

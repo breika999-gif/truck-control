@@ -305,6 +305,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <Mapbox.SymbolLayer
             id="traffic-sign-closed"
             sourceLayerID="traffic"
+            slot="top"
             filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
             minZoomLevel={6}
             style={{

@@ -41,7 +41,7 @@ export function usePOI(
     } finally {
       setLoadingPOI(false);
     }
-  }, [mapCenter]);
+  }, [mapCenter, userCoordsRef]);
 
   // ── Search Along Route ────────────────────────────────────────────────────
   const handleSARSearch = useCallback(async (cat: POICategory) => {
@@ -73,7 +73,7 @@ export function usePOI(
     } finally {
       setLoadingPOI(false);
     }
-  }, []);
+  }, [routeRef]);
 
   const clearPOI = useCallback(() => {
     setPoiCategory(null);

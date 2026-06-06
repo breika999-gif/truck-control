@@ -12,6 +12,9 @@ import {
 } from '../utils/routeAheadEvents';
 
 export function useRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[] {
+  const userLng = input.userCoords?.[0];
+  const userLat = input.userCoords?.[1];
+
   return useMemo(
     () => {
       if (!input.steps.length) return [];
@@ -22,9 +25,8 @@ export function useRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[] 
     [
       input.currentStepIdx,
       input.distToTurn,
-      // Stringify coords for stable comparison
-      input.userCoords?.[0],
-      input.userCoords?.[1],
+      userLng,
+      userLat,
       input.steps,
       input.restrictions,
       input.remainingTachoSec,
