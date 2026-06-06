@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { TachoSummary } from '../../../shared/services/backendApi';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -27,6 +28,7 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
   onNavigate,
   topOffset,
 }) => {
+  const { t } = useTranslation();
   const asFiniteNumber = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) ? value : null;
 
@@ -61,7 +63,7 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
   return (
     <View style={[styles.tachPanel, { top: topOffset }]}>
       <View style={styles.parkingPanelHeader}>
-        <Text style={styles.tachTitle}>🚛 Тахограф</Text>
+        <Text style={styles.tachTitle}>🚛 {t('tacho.title')}</Text>
         <TouchableOpacity onPress={onClose} style={styles.parkingDismissBtn}>
           <Text style={styles.parkingDismissTxt}>✕</Text>
         </TouchableOpacity>
@@ -69,13 +71,13 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
 
       <View style={styles.tachCard}>
         {/* Continuous session */}
-        <Text style={styles.tachRow}>🕐 Изкарани: {drivenHours.toFixed(1)} ч</Text>
+        <Text style={styles.tachRow}>🕐 {t('tacho.driven')}: {drivenHours.toFixed(1)} {t('tacho.hourShort')}</Text>
         <Text style={[styles.tachRow, result.breakNeeded && styles.tachWarn]}>
           {result.breakNeeded
-            ? '⚠️ Нужна е задължителна 45 мин почивка!'
+            ? t('tacho.mandatoryBreak')
             : remainingHours < 0.5
-            ? `⚠️ Само ${Math.round(remainingHours * 60)} мин до почивка!`
-            : `✅ Остават ${remainingHours.toFixed(1)} ч`}
+            ? t('tacho.onlyUntilBreak', { minutes: Math.round(remainingHours * 60) })
+            : t('tacho.hoursRemaining', { hours: remainingHours.toFixed(1) })}
         </Text>
         <View style={{ height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, marginTop: 4 }}>
           <View style={{
@@ -92,48 +94,48 @@ const TachoResultCard: React.FC<TachoResultCardProps> = ({
             <View style={styles.tachDivider} />
             {hasDailySummary && (
               <Text style={styles.tachRow}>
-                📅 Дневно: {dailyDrivenH!.toFixed(1)} / {dailyLimitH} ч
+                📅 {t('tacho.daily')}: {dailyDrivenH!.toFixed(1)} / {dailyLimitH} {t('tacho.hourShort')}
                 {'  '}
                 <Text style={dailyRemainingH! < 1 ? styles.tachWarn : styles.tachOk}>
-                  (остават {dailyRemainingH!.toFixed(1)} ч)
+                  {t('tacho.hoursRemainingWrap', { hours: dailyRemainingH!.toFixed(1) })}
                 </Text>
               </Text>
             )}
             {hasWeeklySummary && (
               <Text style={styles.tachRow}>
-                📆 Седмично: {weeklyDrivenH!.toFixed(1)} / {weeklyLimitH} ч
+                📆 {t('tacho.weekly')}: {weeklyDrivenH!.toFixed(1)} / {weeklyLimitH} {t('tacho.hourShort')}
                 {'  '}
                 <Text style={weeklyRemainingH! < 4 ? styles.tachWarn : styles.tachOk}>
-                  (остават {weeklyRemainingH!.toFixed(1)} ч)
+                  {t('tacho.hoursRemainingWrap', { hours: weeklyRemainingH!.toFixed(1) })}
                 </Text>
               </Text>
             )}
             {hasBiweeklySummary && (
               <Text style={styles.tachRow}>
-                📊 2 седм.: {biweeklyDrivenH!.toFixed(1)} / {biweeklyLimitH} ч
+                📊 {t('tacho.biweekly')}: {biweeklyDrivenH!.toFixed(1)} / {biweeklyLimitH} {t('tacho.hourShort')}
                 {'  '}
                 <Text style={biweeklyRemainingH! < 5 ? styles.tachWarn : styles.tachOk}>
-                  (остават {biweeklyRemainingH!.toFixed(1)} ч)
+                  {t('tacho.hoursRemainingWrap', { hours: biweeklyRemainingH!.toFixed(1) })}
                 </Text>
               </Text>
             )}
             <View style={styles.tachDivider} />
             {/* Weekly daily-rest breakdown */}
-            <Text style={styles.tachRow}>🌙 Дневни почивки седмицата:</Text>
+            <Text style={styles.tachRow}>{t('tacho.weeklyRests')}</Text>
             <Text style={styles.tachRow}>
-              {'  '}🌕 11ч (пълни): {weeklyRegularRests}
+              {'  '}{t('tacho.regularRests', { count: weeklyRegularRests })}
               {'   '}
               <Text style={weeklyReducedRests > 0 ? styles.tachOk : undefined}>
-                🌗 9ч (намалени): {weeklyReducedRests}/3
+                {t('tacho.reducedRests', { count: weeklyReducedRests })}
               </Text>
             </Text>
             {reducedRestsRemaining === 0 ? (
               <Text style={styles.tachWarn}>
-                ⚠️ Намалените почивки свършиха — следващата трябва да е 11ч!
+                {t('tacho.reducedRestsDone')}
               </Text>
             ) : (
               <Text style={styles.tachOk}>
-                Още {reducedRestsRemaining}x 9ч почивки
+                {t('tacho.reducedRestsLeft', { count: reducedRestsRemaining })}
               </Text>
             )}
           </>

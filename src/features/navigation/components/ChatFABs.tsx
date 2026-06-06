@@ -1,6 +1,7 @@
 import React from 'react';
 import { TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { spacing } from '../../../shared/constants/theme';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -23,6 +24,8 @@ const ChatFABs: React.FC<ChatFABsProps> = ({
   onToggleGemini,
   onToggleGPT,
 }) => {
+  const { t } = useTranslation();
+
   if (!visible) return null;
 
   return (
@@ -36,7 +39,7 @@ const ChatFABs: React.FC<ChatFABsProps> = ({
         onPress={onToggleGemini}
         activeOpacity={0.85}
         accessibilityRole="button"
-        accessibilityLabel={geminiChatOpen ? 'Затвори Gemini асистента' : 'Отвори Gemini асистента'}
+        accessibilityLabel={geminiChatOpen ? t('chat.closeGemini') : t('chat.openGemini')}
       >
         <Icon name={geminiChatOpen ? 'close' : 'message-processing-outline'} size={27} color="#FFFFFF" />
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />
@@ -51,7 +54,7 @@ const ChatFABs: React.FC<ChatFABsProps> = ({
         onPress={onToggleGPT}
         activeOpacity={0.85}
         accessibilityRole="button"
-        accessibilityLabel={gptChatOpen ? 'Затвори GPT навигатора' : 'Отвори GPT навигатора'}
+        accessibilityLabel={gptChatOpen ? t('chat.closeGpt') : t('chat.openGpt')}
       >
         <Icon name={gptChatOpen ? 'close' : 'navigation-variant-outline'} size={27} color="#FFFFFF" />
         <View style={[styles.onlineDot, backendOnline ? styles.onlineDotGreen : styles.onlineDotGrey]} />

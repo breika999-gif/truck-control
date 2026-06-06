@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { View, Text } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 
 interface OfflineBannerProps {
@@ -7,10 +8,12 @@ interface OfflineBannerProps {
 }
 
 const OfflineBanner: React.FC<OfflineBannerProps> = ({ backendOnline }) => {
+  const { t } = useTranslation();
+
   if (backendOnline) return null;
   return (
     <View style={styles.noInternetBanner} pointerEvents="none">
-      <Text style={styles.noInternetText}>⚠️ Сървърът не отговаря — AI функциите са изключени</Text>
+      <Text style={styles.noInternetText}>{t('offlineBanner.message')}</Text>
     </View>
   );
 };

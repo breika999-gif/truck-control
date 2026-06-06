@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { POICard } from '../../../shared/services/backendApi';
 import { fmtDistance } from '../api/directions';
 import { NEON, styles } from '../screens/MapScreen.styles';
@@ -22,12 +23,14 @@ const FuelResultsPanel: React.FC<FuelResultsPanelProps> = ({
   onNavigate,
   onAddWaypoint,
 }) => {
+  const { t } = useTranslation();
+
   if (navigating || fuelResults.length === 0) return null;
 
   return (
     <View style={[styles.fuelPanel, { top: searchTop + 58 }]}>
       <View style={styles.parkingPanelHeader}>
-        <Text style={styles.fuelPanelTitle}>⛽ Горивни станции</Text>
+        <Text style={styles.fuelPanelTitle}>⛽ {t('panels.fuelStations')}</Text>
         <TouchableOpacity onPress={onDismiss} style={styles.parkingDismissBtn}>
           <Text style={styles.parkingDismissTxt}>✕</Text>
         </TouchableOpacity>
@@ -49,7 +52,7 @@ const FuelResultsPanel: React.FC<FuelResultsPanelProps> = ({
             ) : null}
             {f.truck_lane ? (
               <View style={styles.fuelBadgeTruck}>
-                <Text style={styles.fuelBadgeTxt}>🚛 Камионна лента</Text>
+                <Text style={styles.fuelBadgeTxt}>🚛 {t('panels.truckLane')}</Text>
               </View>
             ) : null}
             {f.opening_hours ? (
@@ -65,7 +68,7 @@ const FuelResultsPanel: React.FC<FuelResultsPanelProps> = ({
                 }}
               >
                 <Icon name="gas-station" size={14} color="#0a0c1c" />
-                <Text style={styles.goBtnTxt}>Маршрут</Text>
+                <Text style={styles.goBtnTxt}>{t('common.route')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.fuelWpBtn}
@@ -76,7 +79,7 @@ const FuelResultsPanel: React.FC<FuelResultsPanelProps> = ({
                 }}
               >
                 <Icon name="map-marker-plus" size={14} color={NEON} />
-                <Text style={styles.fuelWpBtnTxt}>+ Спирка</Text>
+                <Text style={styles.fuelWpBtnTxt}>{t('parking.stop')}</Text>
               </TouchableOpacity>
             </View>
           </View>

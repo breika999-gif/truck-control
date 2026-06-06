@@ -1,5 +1,6 @@
 import React from 'react';
 import { Animated, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 
 interface SpeedCameraHUDProps {
@@ -15,6 +16,8 @@ const SpeedCameraHUD: React.FC<SpeedCameraHUDProps> = ({
   bottomOffset,
   flashAnim,
 }) => {
+  const { t } = useTranslation();
+
   if (!visible) return null;
 
   const borderColor = flashAnim.interpolate({
@@ -37,8 +40,8 @@ const SpeedCameraHUD: React.FC<SpeedCameraHUDProps> = ({
     ]}>
       <Text style={styles.cameraHUDIcon}>📸</Text>
       <View>
-        <Text style={styles.cameraHUDDist}>{distM} м</Text>
-        <Text style={styles.cameraHUDLabel}>КАМЕРА</Text>
+        <Text style={styles.cameraHUDDist}>{distM} {t('units.meterShort')}</Text>
+        <Text style={styles.cameraHUDLabel}>{t('camera.label')}</Text>
       </View>
     </Animated.View>
   );

@@ -10,6 +10,7 @@ import { BleManager, Device, Characteristic, State } from 'react-native-ble-plx'
 import { decode as atob } from 'base-64';
 import { VDO_BLE_CONFIG, VdoDataInterpreter } from './VdoItsProtocol';
 import { TachoParser } from './TachoParser';
+import i18n from '../../i18n';
 
 // ── Decode helpers for React Native ──────────────────────────────
 function base64ToBytes(base64: string): Uint8Array {
@@ -30,7 +31,7 @@ function readUInt16LE(bytes: Uint8Array, offset: number): number {
 const TACHO_NAME_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge'];
 
 export interface TachoLiveData {
-  activity: string;          // 'Шофиране' | 'Почивка' | 'Друга работа' | 'На разположение'
+  activity: string;
   activityCode: number;      // 0-3
   drivingTimeLeftMin: number;
   dailyDrivenMin: number;
@@ -68,7 +69,7 @@ export class TachoBleService {
   ): void {
     this.onStatusCallback = onStatus;
     this._foundDevices = [];
-    onStatus('scanning', 'Търся BLE устройства...');
+    onStatus('scanning', i18n.t('tacho.scanBle'));
 
     // Scan ALL devices (null = no UUID filter) — VDO uses proprietary UUIDs
     // that are not advertised, so filtering by UUID never finds anything.
@@ -77,7 +78,7 @@ export class TachoBleService {
       { allowDuplicates: false },
       (error, device) => {
         if (error) {
-          onStatus('error', `Грешка при сканиране: ${error.message}`);
+          onStatus('error', i18n.t('tacho.scanError', { error: error.message }));
           return;
         }
         if (!device) return;
@@ -110,8 +111,8 @@ export class TachoBleService {
     this.scanTimeout = setTimeout(() => {
       this.manager.stopDeviceScan();
       onStatus('idle', this._foundDevices.length > 0
-        ? `Намерих ${this._foundDevices.length} устройства. Избери тахографа ръчно.`
-        : 'Не са намерени BLE устройства. Провери дали Bluetooth е включен.',
+        ? i18n.t('tacho.foundDevicesManual', { count: this._foundDevices.length })
+        : i18n.t('tacho.noDevices'),
       );
     }, timeoutMs);
   }
@@ -136,13 +137,14 @@ export class TachoBleService {
     this.onStatusCallback = onStatus;
 
     try {
-      onStatus('connecting', `Свързване с ${device.name ?? device.id}...`);
+      const deviceName = device.name ?? device.id;
+      onStatus('connecting', i18n.t('tacho.connectingDevice', { device: deviceName }));
 
       const connected = await device.connect({ timeout: 10000 });
       this.device = connected;
 
       await connected.discoverAllServicesAndCharacteristics();
-      onStatus('connected', `Свързан с ${device.name ?? device.id}`);
+      onStatus('connected', i18n.t('tacho.connectedDevice', { device: deviceName }));
 
       // Subscribe to live activity changes
       this._subscribeActivity(connected);
@@ -152,7 +154,7 @@ export class TachoBleService {
       this._subscribeSpeed(connected);
 
     } catch (err: any) {
-      onStatus('error', `Неуспешно свързване: ${err?.message ?? err}`);
+      onStatus('error', i18n.t('tacho.connectionFailed', { error: err?.message ?? err }));
     }
   }
 
@@ -243,7 +245,7 @@ export class TachoBleService {
       await this.device.cancelConnection();
       this.device = null;
     }
-    this.onStatusCallback?.('idle', 'Прекъснато');
+    this.onStatusCallback?.('idle', i18n.t('tacho.disconnected'));
   }
 
   destroy(): void {

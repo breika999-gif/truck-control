@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import { HOS_LIMIT_S } from '../utils/mapUtils';
@@ -31,21 +32,24 @@ const GREEN = '#34C759';
 const ORANGE = '#FF9500';
 const MAX_STOPS = 6;
 
-const STOP_TYPES: Array<{ type: DispatchStopType; icon: string; label: string }> = [
-  { type: 'pickup', icon: 'package-variant-closed-plus', label: 'Товарене' },
-  { type: 'delivery', icon: 'package-variant-closed-check', label: 'Доставка' },
-  { type: 'fuel', icon: 'gas-station', label: 'Гориво' },
-  { type: 'rest', icon: 'bed', label: 'Почивка' },
+const STOP_TYPES: Array<{ type: DispatchStopType; icon: string; labelKey: string }> = [
+  { type: 'pickup', icon: 'package-variant-closed-plus', labelKey: 'dispatcher.pickup' },
+  { type: 'delivery', icon: 'package-variant-closed-check', labelKey: 'dispatcher.delivery' },
+  { type: 'fuel', icon: 'gas-station', labelKey: 'dispatcher.fuel' },
+  { type: 'rest', icon: 'bed', labelKey: 'dispatcher.rest' },
 ];
 
-function formatDuration(seconds: number): string {
+function formatDuration(seconds: number, t: (key: string) => string): string {
   const totalMin = Math.round(seconds / 60);
   const hours = Math.floor(totalMin / 60);
   const minutes = totalMin % 60;
-  return hours > 0 ? `${hours}ч ${minutes}мин` : `${minutes}мин`;
+  return hours > 0
+    ? `${hours}${t('tacho.hourShort')} ${minutes}${t('tacho.minuteShort')}`
+    : `${minutes}${t('tacho.minuteShort')}`;
 }
 
 const DispatcherScreen: React.FC = () => {
+  const { t } = useTranslation();
   const navigation = useNavigation<DispatcherNavigation>();
   const route = useRoute<DispatcherRoute>();
   const remainingDriveSeconds = route.params?.remainingDriveSeconds ?? HOS_LIMIT_S;
@@ -73,22 +77,22 @@ const DispatcherScreen: React.FC = () => {
 
   const handleLaunch = useCallback(() => {
     if (!canLaunch) {
-      Alert.alert('Липсват адреси', 'Локализирай всяка спирка преди да пуснеш маршрута.');
+      Alert.alert(t('dispatcher.missingAddressesTitle'), t('dispatcher.missingAddressesMessage'));
       return;
     }
     if (estimate.hosWarning) {
       Alert.alert(
-        'Тахограф · нужна почивка',
-        `${estimate.hosWarning}\n\nТочната сметка ще се покаже след TomTom маршрута.`,
+        t('dispatcher.tachoBreakTitle'),
+        `${estimate.hosWarning}\n\n${t('dispatcher.tachoBreakMessage')}`,
         [
-          { text: 'Назад', style: 'cancel' },
-          { text: 'Покажи маршрута', onPress: launchRoute },
+          { text: t('common.back'), style: 'cancel' },
+          { text: t('dispatcher.showRoute'), onPress: launchRoute },
         ],
       );
       return;
     }
     launchRoute();
-  }, [canLaunch, estimate.hosWarning, launchRoute]);
+  }, [canLaunch, estimate.hosWarning, launchRoute, t]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -98,15 +102,15 @@ const DispatcherScreen: React.FC = () => {
       >
         <View style={styles.header}>
           <TouchableOpacity
-            accessibilityLabel="Назад"
+            accessibilityLabel={t('common.back')}
             style={styles.headerButton}
             onPress={() => navigation.goBack()}
           >
             <Icon name="arrow-left" size={24} color="#FFFFFF" />
           </TouchableOpacity>
           <View style={styles.headerCopy}>
-            <Text style={styles.title}>Диспечер</Text>
-            <Text style={styles.subtitle}>Multi-stop планиране</Text>
+            <Text style={styles.title}>{t('dispatcher.title')}</Text>
+            <Text style={styles.subtitle}>{t('dispatcher.subtitle')}</Text>
           </View>
           <View style={styles.headerBadge}>
             <Text style={styles.headerBadgeText}>{stops.length}/{MAX_STOPS}</Text>
@@ -115,15 +119,15 @@ const DispatcherScreen: React.FC = () => {
 
         <View style={styles.summary}>
           <View>
-            <Text style={styles.summaryLabel}>ОЦЕНКА</Text>
+            <Text style={styles.summaryLabel}>{t('dispatcher.estimate')}</Text>
             <Text style={styles.summaryValue}>
-              ~{estimate.distanceKm.toFixed(1)} км · {formatDuration(estimate.durationS)}
+              ~{estimate.distanceKm.toFixed(1)} {t('units.kilometerShort')} · {formatDuration(estimate.durationS, t)}
             </Text>
           </View>
           <View style={styles.summaryRight}>
-            <Text style={styles.summaryLabel}>ТАХО ОСТАВА</Text>
+            <Text style={styles.summaryLabel}>{t('dispatcher.tachoRemaining')}</Text>
             <Text style={[styles.summaryValue, estimate.hosWarning ? styles.warningText : styles.successText]}>
-              {formatDuration(remainingDriveSeconds)}
+              {formatDuration(remainingDriveSeconds, t)}
             </Text>
           </View>
         </View>
@@ -156,10 +160,10 @@ const DispatcherScreen: React.FC = () => {
                   <View style={styles.stopNumber}>
                     <Text style={styles.stopNumberText}>{index + 1}</Text>
                   </View>
-                  <Text style={styles.stopTitle}>Спирка {index + 1}</Text>
+                  <Text style={styles.stopTitle}>{t('dispatcher.stop')} {index + 1}</Text>
                   <View style={styles.reorderButtons}>
                     <TouchableOpacity
-                      accessibilityLabel="Премести нагоре"
+                      accessibilityLabel={t('dispatcher.moveUp')}
                       disabled={index === 0}
                       style={[styles.iconButton, index === 0 && styles.iconButtonDisabled]}
                       onPress={() => reorderStop(index, index - 1)}
@@ -167,7 +171,7 @@ const DispatcherScreen: React.FC = () => {
                       <Icon name="chevron-up" size={20} color="#FFFFFF" />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      accessibilityLabel="Премести надолу"
+                      accessibilityLabel={t('dispatcher.moveDown')}
                       disabled={index === stops.length - 1}
                       style={[styles.iconButton, index === stops.length - 1 && styles.iconButtonDisabled]}
                       onPress={() => reorderStop(index, index + 1)}
@@ -175,7 +179,7 @@ const DispatcherScreen: React.FC = () => {
                       <Icon name="chevron-down" size={20} color="#FFFFFF" />
                     </TouchableOpacity>
                     <TouchableOpacity
-                      accessibilityLabel="Изтрий спирката"
+                      accessibilityLabel={t('dispatcher.deleteStop')}
                       style={[styles.iconButton, styles.deleteButton]}
                       onPress={() => removeStop(stop.id)}
                     >
@@ -190,13 +194,13 @@ const DispatcherScreen: React.FC = () => {
                     return (
                       <TouchableOpacity
                         key={option.type}
-                        accessibilityLabel={option.label}
+                        accessibilityLabel={t(option.labelKey)}
                         style={[styles.typeButton, active && styles.typeButtonActive]}
                         onPress={() => setStopType(stop.id, option.type)}
                       >
                         <Icon name={option.icon} size={18} color={active ? '#FFFFFF' : 'rgba(255,255,255,0.55)'} />
                         <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>
-                          {option.label}
+                          {t(option.labelKey)}
                         </Text>
                       </TouchableOpacity>
                     );
@@ -207,12 +211,12 @@ const DispatcherScreen: React.FC = () => {
                   <TextInput
                     value={stop.address}
                     onChangeText={text => updateStopAddress(stop.id, text)}
-                    placeholder="Адрес, фирма или склад"
+                    placeholder={t('dispatcher.addressPlaceholder')}
                     placeholderTextColor="rgba(255,255,255,0.35)"
                     style={styles.addressInput}
                   />
                   <TouchableOpacity
-                    accessibilityLabel="Локализирай адреса"
+                    accessibilityLabel={t('dispatcher.geocodeAddress')}
                     style={styles.geocodeButton}
                     disabled={isGeocoding}
                     onPress={() => geocodeStop(stop.id, stop.address)}
@@ -230,14 +234,14 @@ const DispatcherScreen: React.FC = () => {
                     color={stop.coords ? GREEN : ORANGE}
                   />
                   <Text style={[styles.statusText, stop.coords ? styles.successText : styles.warningText]}>
-                    {stop.coords ? 'Локализирано' : 'Натисни иконата за локализиране'}
+                    {stop.coords ? t('dispatcher.geocoded') : t('dispatcher.pressToGeocode')}
                   </Text>
                 </View>
 
                 <TextInput
                   value={stop.notes ?? ''}
                   onChangeText={text => updateStopNotes(stop.id, text)}
-                  placeholder="Бележка за шофьора (по желание)"
+                  placeholder={t('dispatcher.driverNotePlaceholder')}
                   placeholderTextColor="rgba(255,255,255,0.3)"
                   style={styles.notesInput}
                 />
@@ -251,14 +255,14 @@ const DispatcherScreen: React.FC = () => {
             onPress={handleAddStop}
           >
             <Icon name="plus" size={20} color={NEON} />
-            <Text style={styles.addButtonText}>Добави спирка</Text>
+            <Text style={styles.addButtonText}>{t('dispatcher.addStop')}</Text>
           </TouchableOpacity>
         </ScrollView>
 
         <View style={styles.footer}>
           <TouchableOpacity style={styles.optimizeButton} onPress={optimizeOrder}>
             <Icon name="source-branch" size={20} color={NEON} />
-            <Text style={styles.optimizeButtonText}>Оптимизирай реда</Text>
+            <Text style={styles.optimizeButtonText}>{t('dispatcher.optimizeOrder')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.launchButton, !canLaunch && styles.buttonDisabled]}
@@ -266,7 +270,7 @@ const DispatcherScreen: React.FC = () => {
             onPress={handleLaunch}
           >
             <Icon name="navigation-variant" size={20} color="#08111D" />
-            <Text style={styles.launchButtonText}>Покажи маршрута</Text>
+            <Text style={styles.launchButtonText}>{t('dispatcher.showRoute')}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -472,4 +476,3 @@ const styles = StyleSheet.create({
 });
 
 export default DispatcherScreen;
-

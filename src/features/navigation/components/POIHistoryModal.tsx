@@ -9,6 +9,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 import type { SavedPOI } from '../../../shared/services/backendApi';
@@ -21,6 +22,7 @@ interface Props {
 }
 
 const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavigate }) => {
+  const { t } = useTranslation();
   const [items, setItems] = useState<SavedPOI[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -47,7 +49,7 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
         <View style={s.sheet}>
 
           <View style={s.header}>
-            <Text style={s.title}>POI История</Text>
+            <Text style={s.title}>{t('poi.historyModal')}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <Icon name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -60,7 +62,7 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
           ) : items.length === 0 ? (
             <View style={s.center}>
               <Icon name="map-marker-off" size={40} color={colors.textSecondary} style={{ marginBottom: 12 }} />
-              <Text style={s.empty}>Нямате записани точки</Text>
+              <Text style={s.empty}>{t('poi.emptyPoints')}</Text>
             </View>
           ) : (
             <ScrollView contentContainerStyle={s.list} keyboardShouldPersistTaps="handled">
@@ -80,7 +82,7 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
                     style={s.goBtn}
                     onPress={() => { onNavigate([poi.lng, poi.lat], poi.name); onClose(); }}
                   >
-                    <Text style={s.goText}>Навигирай</Text>
+                    <Text style={s.goText}>{t('poi.navigate')}</Text>
                   </TouchableOpacity>
                 </View>
               ))}

@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTranslation } from 'react-i18next';
 
 import { colors, radius, spacing } from '../../../shared/constants/theme';
 import { useVoiceDialer } from '../hooks/useVoiceDialer';
@@ -19,6 +20,7 @@ interface CallingPanelProps {
 }
 
 const CallingPanel: React.FC<CallingPanelProps> = ({ visible, onClose }) => {
+  const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const {
     isListening,
@@ -70,7 +72,7 @@ const CallingPanel: React.FC<CallingPanelProps> = ({ visible, onClose }) => {
       <View style={styles.mainRow}>
         <Animated.View style={{ transform: [{ scale: pulse }] }}>
           <TouchableOpacity
-            accessibilityLabel={isListening ? 'Спри слушането' : 'Започни гласово обаждане'}
+            accessibilityLabel={isListening ? t('calling.stopListening') : t('calling.startVoiceCall')}
             activeOpacity={0.78}
             onPress={isListening ? stopListening : startListening}
             style={[styles.micButton, isListening && styles.micButtonListening]}
@@ -85,11 +87,11 @@ const CallingPanel: React.FC<CallingPanelProps> = ({ visible, onClose }) => {
 
         {isCalling && (
           <TouchableOpacity activeOpacity={0.78} onPress={cancel} style={styles.cancelButton}>
-            <Text style={styles.cancelButtonText}>Прекъсни</Text>
+            <Text style={styles.cancelButtonText}>{t('calling.hangUp')}</Text>
           </TouchableOpacity>
         )}
 
-        <Pressable accessibilityLabel="Затвори" hitSlop={8} onPress={handleClose} style={styles.closeButton}>
+        <Pressable accessibilityLabel={t('calling.close')} hitSlop={8} onPress={handleClose} style={styles.closeButton}>
           <Text style={styles.closeText}>×</Text>
         </Pressable>
       </View>

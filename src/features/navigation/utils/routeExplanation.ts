@@ -1,4 +1,5 @@
 import type { RouteOption, TruckRestrictionPoint, TrafficAlert } from '../../../shared/services/backendApi';
+import i18n from '../../../i18n';
 
 export interface ExplanationBullet {
   icon: string;
@@ -56,26 +57,32 @@ export function buildRouteExplanation(
   const labels: ExplanationBullet[] = [];
 
   if (option.traffic === 'low') {
-    trafficAndRestrictions.push({ icon: '🟢', text: 'Без трафик', positive: true });
+    trafficAndRestrictions.push({ icon: '🟢', text: i18n.t('route.noTraffic'), positive: true });
   } else if (option.traffic === 'moderate') {
-    trafficAndRestrictions.push({ icon: '🟡', text: 'Умерен трафик', positive: false });
+    trafficAndRestrictions.push({ icon: '🟡', text: i18n.t('route.moderateTraffic'), positive: false });
   } else if (option.traffic === 'heavy') {
-    trafficAndRestrictions.push({ icon: '🔴', text: 'Тежък трафик', positive: false });
+    trafficAndRestrictions.push({ icon: '🔴', text: i18n.t('route.heavyTraffic'), positive: false });
   }
 
   const totalDelay = Math.round(totalTrafficDelayMin(option.traffic_alerts));
   if (totalDelay > 0) {
-    trafficAndRestrictions.push({ icon: '⚠️', text: `Закъснение +${totalDelay} мин`, positive: false });
+    trafficAndRestrictions.push({
+      icon: '⚠️',
+      text: i18n.t('route.delayMinutesPlain', { minutes: totalDelay }),
+      positive: false,
+    });
   }
 
   if (restrictions.length === 0) {
-    trafficAndRestrictions.push({ icon: '✅', text: 'Без ограничения за камион', positive: true });
+    trafficAndRestrictions.push({ icon: '✅', text: i18n.t('route.noTruckRestrictions'), positive: true });
   } else {
     pushRestrictionBullet(trafficAndRestrictions, restrictions, 'maxheight', restriction => {
       const value = formatRestrictionValue(restriction.value_num);
       return {
         icon: '⬆️',
-        text: value ? `Минава под нисък мост (${value}м)` : 'Минава под нисък мост',
+        text: value
+          ? i18n.t('route.lowBridgeValue', { value })
+          : i18n.t('route.lowBridge'),
         positive: false,
       };
     });
@@ -83,18 +90,20 @@ export function buildRouteExplanation(
       const value = formatRestrictionValue(restriction.value_num);
       return {
         icon: '⚖️',
-        text: value ? `Ограничение за тегло (${value}т)` : 'Ограничение за тегло',
+        text: value
+          ? i18n.t('route.weightLimitValue', { value })
+          : i18n.t('route.weightLimit'),
         positive: false,
       };
     });
     pushRestrictionBullet(trafficAndRestrictions, restrictions, 'hazmat', () => ({
       icon: '☢️',
-      text: 'ADR ограничение по маршрута',
+      text: i18n.t('route.adrRestriction'),
       positive: false,
     }));
     pushRestrictionBullet(trafficAndRestrictions, restrictions, 'no_trucks', () => ({
       icon: '🚫',
-      text: 'Забранен за камиони участък',
+      text: i18n.t('route.noTrucksSegment'),
       positive: false,
     }));
   }
@@ -104,16 +113,20 @@ export function buildRouteExplanation(
   }
 
   if (minDuration != null && option.duration === minDuration) {
-    comparison.push({ icon: '⚡', text: 'Най-бърз маршрут', positive: true });
+    comparison.push({ icon: '⚡', text: i18n.t('route.fastestRoute'), positive: true });
   }
 
   if (minDistance != null && option.distance === minDistance) {
-    comparison.push({ icon: '📏', text: 'Най-кратък маршрут', positive: true });
+    comparison.push({ icon: '📏', text: i18n.t('route.shortestRoute'), positive: true });
   }
 
   if (minDuration != null && option.duration > minDuration) {
     const diffMin = Math.max(1, Math.round((option.duration - minDuration) / 60));
-    comparison.push({ icon: '🕐', text: `+${diffMin} мин спрямо най-бързия`, positive: false });
+    comparison.push({
+      icon: '🕐',
+      text: i18n.t('route.minutesComparedFastest', { minutes: diffMin }),
+      positive: false,
+    });
   }
 
   return [

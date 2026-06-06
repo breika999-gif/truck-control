@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { colors } from '../../../shared/constants/theme';
 import { parseBubbleText } from '../utils/mapUtils';
 import { styles } from '../screens/MapScreen.styles';
@@ -59,13 +60,14 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
   micLoading,
   onClose,
 }) => {
+  const { t } = useTranslation();
   const isOpen = gptChatOpen || geminiChatOpen;
   const history = gptChatOpen ? gptHistory : geminiHistory;
   const loading = gptChatOpen ? gptLoading : geminiLoading;
   const scrollRef = gptChatOpen ? gptScrollRef : geminiScrollRef;
   const inputRef = useRef<TextInput>(null);
   const [inputFocused, setInputFocused] = useState(false);
-  const placeholder = "Питай за маршрут, паркинг или кажи 'отвори YouTube'...";
+  const placeholder = t('chat.placeholder');
   const fallbackKbHeight = inputFocused && kbHeight === 0
     ? Math.round(Dimensions.get('window').height * (Platform.OS === 'android' ? 0.42 : 0.34))
     : 0;
@@ -197,7 +199,7 @@ const ChatPanel: React.FC<ChatPanelProps> = memo(({
           onChangeText={setChatInput}
           onFocus={() => setInputFocused(true)}
           onBlur={() => setInputFocused(false)}
-          placeholder={gptChatOpen ? "Съобщение..." : "Питай Gemini..."}
+          placeholder={gptChatOpen ? t('chat.message') : t('chat.gemini')}
           placeholderTextColor={colors.textMuted}
           selectionColor="#00bfff"
           cursorColor="#00bfff"

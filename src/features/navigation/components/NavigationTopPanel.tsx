@@ -1,5 +1,6 @@
 import React from 'react';
 import { Text, View, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { RouteStep } from '../api/directions';
 import { fmtDistance, maneuverEmoji } from '../api/directions';
 import SignRenderer, { SIGN_TRIGGER_M } from './SignRenderer';
@@ -27,9 +28,10 @@ interface NavigationTopPanelProps {
 // ── Ahead chip: one-liner preview of the next important event ─────────────────
 
 function AheadChip({ event }: { event: RouteAheadEvent }) {
+  const { t } = useTranslation();
   const dist = event.distanceM < 1000
-    ? `${Math.round(event.distanceM / 10) * 10} м`
-    : `${(event.distanceM / 1000).toFixed(1)} км`;
+    ? `${Math.round(event.distanceM / 10) * 10} ${t('units.meterShort')}`
+    : `${(event.distanceM / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
 
   let icon = '';
   let label = '';
@@ -43,22 +45,22 @@ function AheadChip({ event }: { event: RouteAheadEvent }) {
     textColor = exceeded ? '#FF3B30' : '#FF9500';
     icon = p.type === 'maxheight' ? '⬆️' : p.type === 'maxweight' ? '⚖️' : p.type === 'hazmat' ? '☢️' : '🚫';
     const valueStr = p.value_num ? ` ${p.value_num}` : '';
-    label = `${icon}${valueStr} след ${dist}`;
+    label = `${icon}${valueStr} ${t('ahead.after', { distance: dist })}`;
   } else if (event.type === 'tunnel') {
     const p = event.payload as TunnelEventPayload;
     chipColor = p.adrRelevant ? 'rgba(255,59,48,0.22)' : 'rgba(30,107,30,0.25)';
     textColor = p.adrRelevant ? '#FF3B30' : '#4cff91';
-    label = `🚇 ${p.name} след ${dist}`;
+    label = `🚇 ${p.name} ${t('ahead.after', { distance: dist })}`;
   } else if (event.type === 'parking_break') {
     const p = event.payload as ParkingBreakPayload;
     const remMin = Math.round(p.remainingDriveSec / 60);
     chipColor = remMin < 30 ? 'rgba(255,59,48,0.22)' : 'rgba(255,149,0,0.18)';
     textColor = remMin < 30 ? '#FF3B30' : '#FF9500';
-    label = `⏱ Пауза след ${dist} (${remMin} мин таход)`;
+    label = t('ahead.parkingBreak', { distance: dist, minutes: remMin });
   } else if (event.type === 'traffic') {
     chipColor = 'rgba(255,59,48,0.15)';
     textColor = '#FF6B35';
-    label = `🔴 Трафик след ${dist}`;
+    label = t('ahead.trafficAfter', { distance: dist });
   } else {
     return null;
   }
@@ -83,6 +85,7 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
   aheadQueue = [],
   activeSituationDistanceM,
 }) => {
+  const { t } = useTranslation();
   const junctionViewURL = React.useMemo(() => {
     const comps = step.bannerInstructions?.[0]?.primary?.components ?? [];
     const guidanceView = comps.find(c => c.type === 'guidance-view' && c.imageBaseURL);
@@ -142,7 +145,7 @@ const NavigationTopPanel: React.FC<NavigationTopPanelProps> = ({
               </Text>
               {nextStep && (
                 <Text style={styles.navNext} numberOfLines={1}>
-                  после:{' '}
+                  {t('ahead.then')}{' '}
                   {maneuverEmoji(nextStep.maneuver.type, nextStep.maneuver.modifier)}{' '}
                   {nextStep.name || nextStep.maneuver.instruction}
                 </Text>

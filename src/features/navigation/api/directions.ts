@@ -1,7 +1,8 @@
 import type GeoJSON from 'geojson';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
+import i18n from '../../../i18n';
 
-const ROUTE_FETCH_TIMEOUT_MS = 20_000;
+const ROUTE_FETCH_TIMEOUT_MS = 45_000;
 
 export interface MaxspeedEntry {
   speed?: number;
@@ -268,75 +269,80 @@ export function getCurrentStepIndex(
   return minIdx;
 }
 
-/** Format distance in human-readable Bulgarian (internal helper). */
-function fmtDistBg(m: number): string {
-  if (m >= 1000) return `${(m / 1000).toFixed(1)} километра`;
-  if (m >= 100)  return `${Math.round(m / 100) * 100} метра`;
-  return `${Math.round(m)} метра`;
+/** Format distance for spoken turn instructions. */
+function fmtSpokenDistance(m: number): string {
+  if (m >= 1000) {
+    return i18n.t('directions.distanceKilometersLong', { kilometers: (m / 1000).toFixed(1) });
+  }
+  const meters = m >= 100 ? Math.round(m / 100) * 100 : Math.round(m);
+  return i18n.t('directions.distanceMetersLong', { meters });
 }
 
 /**
- * Generate a Bulgarian turn instruction from RouteStep maneuver data.
+ * Generate a localized turn instruction from RouteStep maneuver data.
  * Used as fallback when Mapbox voiceInstructions are unavailable
  * or when the device TTS engine cannot handle the API-provided text.
  */
 export function bgInstruction(step: RouteStep): string {
   const { type, modifier } = step.maneuver;
-  const road  = step.name ? ` по ${step.name.replace(/<[^>]*>/g, '').trim()}` : '';
-  const ahead = step.distance > 50 ? ` след ${fmtDistBg(step.distance)}` : '';
+  const cleanRoad = step.name.replace(/<[^>]*>/g, '').trim();
+  const road = cleanRoad ? i18n.t('directions.roadPrefix', { road: cleanRoad }) : '';
+  const ahead = step.distance > 50
+    ? i18n.t('directions.ahead', { distance: fmtSpokenDistance(step.distance) })
+    : '';
 
   switch (type) {
     case 'depart':
-      return `Тръгнете${road}.`;
+      return i18n.t('directions.depart', { road });
     case 'arrive':
-      return 'Пристигнахте на дестинацията.';
+      return i18n.t('directions.arrive');
     case 'continue':
     case 'new name':
-      return `Продължете направо${road}.`;
+      return i18n.t('directions.continue', { road });
     case 'merge':
-      return `Влезте в потока${road}.`;
+      return i18n.t('directions.merge', { road });
     case 'on ramp':
-      return `Качете се на магистралата${road}.`;
+      return i18n.t('directions.onRamp', { road });
     case 'off ramp':
-      return `Слезте от магистралата${road}.`;
+      return i18n.t('directions.offRamp', { road });
     case 'fork':
       return modifier?.includes('left')
-        ? `Вземете левия клон${road}.`
-        : `Вземете десния клон${road}.`;
+        ? i18n.t('directions.forkLeft', { road })
+        : i18n.t('directions.forkRight', { road });
     case 'end of road':
       return modifier?.includes('left')
-        ? `В края на пътя завийте наляво${road}.`
-        : `В края на пътя завийте надясно${road}.`;
+        ? i18n.t('directions.endLeft', { road })
+        : i18n.t('directions.endRight', { road });
     case 'turn':
     case 'ramp': {
       switch (modifier) {
-        case 'sharp left':   return `Завийте рязко наляво${ahead}${road}.`;
-        case 'left':         return `Завийте наляво${ahead}${road}.`;
-        case 'slight left':  return `Завийте леко наляво${ahead}${road}.`;
-        case 'straight':     return `Продължете направо${road}.`;
-        case 'slight right': return `Завийте леко надясно${ahead}${road}.`;
-        case 'right':        return `Завийте надясно${ahead}${road}.`;
-        case 'sharp right':  return `Завийте рязко надясно${ahead}${road}.`;
-        case 'uturn':        return `Направете обратен завой.`;
-        default:             return `Завийте${road}.`;
+        case 'sharp left':   return i18n.t('directions.sharpLeft', { ahead, road });
+        case 'left':         return i18n.t('directions.left', { ahead, road });
+        case 'slight left':  return i18n.t('directions.slightLeft', { ahead, road });
+        case 'straight':     return i18n.t('directions.straight', { road });
+        case 'slight right': return i18n.t('directions.slightRight', { ahead, road });
+        case 'right':        return i18n.t('directions.right', { ahead, road });
+        case 'sharp right':  return i18n.t('directions.sharpRight', { ahead, road });
+        case 'uturn':        return i18n.t('directions.uturn');
+        default:             return i18n.t('directions.turnGeneric', { road });
       }
     }
     case 'roundabout':
     case 'rotary': {
       const exit = (step.maneuver as { exit?: number }).exit;
       return exit
-        ? `Влезте в кръговото и излезте на ${exit}-ия изход.`
-        : 'Влезте в кръговото движение.';
+        ? i18n.t('directions.roundaboutExit', { exit })
+        : i18n.t('directions.roundabout');
     }
     default:
-      return step.maneuver.instruction || `Продължете${road}.`;
+      return step.maneuver.instruction || i18n.t('directions.continueGeneric', { road });
   }
 }
 
 /**
  * Nearest-neighbour TSP approximation for waypoint ordering.
  * Reorders intermediate stops to minimize total travel distance from origin.
- * O(nВІ) вЂ" fast enough for в‰¤20 waypoints.
+ * O(n²) — fast enough for ≤20 waypoints.
  */
 export function optimizeWaypointOrder(
   origin: [number, number],
@@ -360,19 +366,24 @@ export function optimizeWaypointOrder(
   return ordered;
 }
 
-/** Format distance in human-readable Bulgarian. */
-export function fmtDistance(meters: number): string {
-  if (meters < 1000) return `${Math.round(meters)} м`;
-  return `${(meters / 1000).toFixed(1)} км`;
+/** Format distance in the active app language. */
+export function fmtDistance(meters: number | null | undefined): string {
+  if (meters == null) return '';
+  if (meters < 1000) {
+    return i18n.t('directions.distanceMetersShort', { meters: Math.round(meters) });
+  }
+  return i18n.t('directions.distanceKilometersShort', { kilometers: (meters / 1000).toFixed(1) });
 }
 
-/** Format duration in human-readable Bulgarian. */
-export function fmtDuration(seconds: number): string {
+/** Format duration in the active app language. */
+export function fmtDuration(seconds: number | null | undefined): string {
+  if (seconds == null) return '';
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
-  if (h === 0) return `${m} мин`;
-  return `${h} ч ${m} мин`;
+  if (h === 0) return i18n.t('directions.durationMinutes', { minutes: m });
+  return i18n.t('directions.durationHoursMinutes', { hours: h, minutes: m });
 }
+
 
 /** Emoji for maneuver type + modifier. */
 export function maneuverEmoji(type: string, modifier?: string): string {

@@ -11,6 +11,7 @@ import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useTranslation } from 'react-i18next';
 
 import { RootStackParamList } from '../../../shared/types/navigation';
 import { spacing } from '../../../shared/constants/theme';
@@ -21,6 +22,7 @@ type TruckParkingRouteProp = RouteProp<RootStackParamList, 'TruckParking'>;
 const NEON = '#00bfff';
 
 const TruckParkingScreen: React.FC = () => {
+  const { t } = useTranslation();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<TruckParkingRouteProp>();
   const { url } = route.params || {};
@@ -35,7 +37,7 @@ const TruckParkingScreen: React.FC = () => {
         </TouchableOpacity>
         <View style={styles.titleContainer}>
           <Text style={styles.headerTitle}>TransParking Live</Text>
-          <Text style={styles.subTitle}>Паркинги в реално време</Text>
+          <Text style={styles.subTitle}>{t('parking.subtitle')}</Text>
         </View>
         <Icon name="truck-parking" size={28} color={NEON} style={styles.headerIcon} />
       </View>
@@ -49,7 +51,7 @@ const TruckParkingScreen: React.FC = () => {
           renderLoading={() => (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color={NEON} />
-              <Text style={styles.loadingText}>Зареждам картата на TransParking...</Text>
+              <Text style={styles.loadingText}>{t('parking.loadingMap')}</Text>
             </View>
           )}
           geolocationEnabled={true}

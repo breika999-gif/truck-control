@@ -6,6 +6,7 @@ import { MAP_CENTER } from '../../../shared/constants/config';
 import type { DispatcherRoutePlan, RootStackParamList } from '../../../shared/types/navigation';
 import { retrievePlace, suggestPlaces, suggestPlacesGoogle } from '../api/geocoding';
 import { haversineMeters } from '../utils/mapUtils';
+import i18n from '../../../i18n';
 
 export type DispatchStopType = 'pickup' | 'delivery' | 'fuel' | 'rest';
 
@@ -115,9 +116,13 @@ function estimatePlan(
     const routeH = (durationS / 3600).toFixed(1);
     const availableH = (Math.max(0, remainingDriveSeconds) / 3600).toFixed(1);
     const breakText = breakBeforeStopIdx != null && breakBeforeStopIdx > 0
-      ? `Добави почивка след спирка ${breakBeforeStopIdx}.`
-      : 'Добави почивка преди първата дълга отсечка.';
-    hosWarning = `Маршрутът е ~${routeH}ч, имаш ${availableH}ч. ${breakText}`;
+      ? i18n.t('dispatcher.breakAfterStop', { index: breakBeforeStopIdx })
+      : i18n.t('dispatcher.breakBeforeLongLeg');
+    hosWarning = i18n.t('dispatcher.hosWarning', {
+      routeHours: routeH,
+      availableHours: availableH,
+      breakText,
+    });
   }
 
   return {
@@ -188,7 +193,7 @@ export function useDispatcher(
   const geocodeStop = useCallback(async (id: string, address: string) => {
     const query = address.trim();
     if (query.length < 2) {
-      setLastError('Въведи адрес или име на фирма.');
+      setLastError(i18n.t('dispatcher.enterAddress'));
       return;
     }
 
@@ -201,12 +206,12 @@ export function useDispatcher(
       }
       const suggestion = suggestions[0];
       if (!suggestion) {
-        setLastError(`Не намерих "${query}".`);
+        setLastError(i18n.t('dispatcher.notFound', { query }));
         return;
       }
       const place = await retrievePlace(suggestion.place_id);
       if (!place) {
-        setLastError(`Не успях да локализирам "${query}".`);
+        setLastError(i18n.t('dispatcher.geocodeFailed', { query }));
         return;
       }
       setStops(current => current.map(stop => stop.id === id
@@ -240,9 +245,9 @@ export function useDispatcher(
     const plan: DispatcherRoutePlan = {
       requestId: createStopId(),
       destination: finalStop.coords as [number, number],
-      destinationName: finalStop.address || 'Последна спирка',
+      destinationName: finalStop.address || i18n.t('dispatcher.lastStop'),
       waypoints: waypointStops.map(stop => stop.coords as [number, number]),
-      waypointNames: waypointStops.map(stop => stop.address || 'Спирка'),
+      waypointNames: waypointStops.map(stop => stop.address || i18n.t('dispatcher.stopFallback')),
     };
     navigation.navigate('Map', { dispatcherPlan: plan });
     return true;

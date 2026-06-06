@@ -15,6 +15,7 @@
 
 import type { RouteStep, BannerComponent, RestrictionPoint, MaxspeedEntry } from '../api/directions';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
+import i18n from '../../../i18n';
 
 // ── Event types ───────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ export function buildRouteAheadEvents(input: BuildEventsInput): RouteAheadEvent[
         distanceM: stepDist,
         priority: hasAdr ? 1 : 3,
         payload: {
-          name: step.name ?? 'Тунел',
+          name: step.name ?? i18n.t('route.tunnelFallback'),
           adrRelevant: hasAdr,
           hasAdrProfile: hasAdr,
         } satisfies TunnelEventPayload,

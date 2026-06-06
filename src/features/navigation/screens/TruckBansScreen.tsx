@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius } from '../../../shared/constants/theme';
 import { useTruckBans, type Ban } from '../hooks/useTruckBans';
 
@@ -26,20 +27,6 @@ const FLAG_MAP: Record<string, string> = {
   SK: '🇸🇰', TR: '🇹🇷', UA: '🇺🇦',
 };
 
-const COUNTRY_BG: Record<string, string> = {
-  Austria: 'Австрия', Belgium: 'Белгия', Bulgaria: 'България',
-  Switzerland: 'Швейцария', 'Czech Republic': 'Чехия', Germany: 'Германия',
-  Denmark: 'Дания', Spain: 'Испания', Finland: 'Финландия', France: 'Франция',
-  Croatia: 'Хърватия', Hungary: 'Унгария', Italy: 'Италия',
-  Liechtenstein: 'Лихтенщайн', Luxembourg: 'Люксембург', Netherlands: 'Холандия',
-  Norway: 'Норвегия', Poland: 'Полша', Portugal: 'Португалия',
-  Romania: 'Румъния', Serbia: 'Сърбия', Sweden: 'Швеция',
-  Slovenia: 'Словения', Slovakia: 'Словения', Turkey: 'Турция', Ukraine: 'Украйна',
-};
-
-const DAYS_BG = ['Нед', 'Пон', 'Вто', 'Сря', 'Чет', 'Пет', 'Съб'];
-const MONTHS_BG = ['Яну', 'Фев', 'Мар', 'Апр', 'Май', 'Юни', 'Юли', 'Авг', 'Сеп', 'Окт', 'Ное', 'Дек'];
-
 function toISO(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
@@ -47,8 +34,10 @@ function toISO(d: Date) {
 const TODAY = toISO(new Date());
 
 export default function TruckBansScreen() {
+  const { t, i18n } = useTranslation();
   const navigation = useNavigation();
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const locale = i18n.language === 'bg' ? 'bg-BG' : i18n.language === 'es' ? 'es-ES' : 'en-US';
   
   const { bans, loading, error, refetch } = useTruckBans(toISO(selectedDate));
 
@@ -63,7 +52,7 @@ export default function TruckBansScreen() {
   const renderBan = ({ item }: { item: Ban }) => {
     const code = item.flag.toUpperCase();
     const flag = FLAG_MAP[code] ?? '🏳️';
-    const name = COUNTRY_BG[item.country] ?? item.country;
+    const name = t(`countries.${item.country}`, { defaultValue: item.country });
     return (
       <View style={[styles.card, item.alert && styles.cardAlert]}>
         {item.alert && <View style={styles.alertAccent} />}
@@ -85,7 +74,7 @@ export default function TruckBansScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backArrow}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>🚫 Забрани за движение</Text>
+        <Text style={styles.headerTitle}>{t('bans.title')}</Text>
       </View>
 
       {/* Date Picker */}
@@ -105,15 +94,15 @@ export default function TruckBansScreen() {
               onPress={() => setSelectedDate(date)}
               style={[styles.dateItem, isSelected && styles.dateItemSelected]}
             >
-              {isToday && <Text style={styles.todayLabel}>ДНЕС</Text>}
+              {isToday && <Text style={styles.todayLabel}>{t('bans.today')}</Text>}
               <Text style={[styles.dateDayName, isSelected && styles.dateTextSelected]}>
-                {DAYS_BG[date.getDay()]}
+                {date.toLocaleDateString(locale, { weekday: 'short' })}
               </Text>
               <Text style={[styles.dateDayNum, isSelected && styles.dateTextSelected]}>
                 {String(date.getDate()).padStart(2,'0')}
               </Text>
               <Text style={[styles.dateMonth, isSelected && styles.dateTextSelected]}>
-                {MONTHS_BG[date.getMonth()]}
+                {date.toLocaleDateString(locale, { month: 'short' })}
               </Text>
             </TouchableOpacity>
           );
@@ -124,19 +113,19 @@ export default function TruckBansScreen() {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={NEON} />
-          <Text style={styles.loadingText}>Зареждане...</Text>
+          <Text style={styles.loadingText}>{t('common.loading')}</Text>
         </View>
       ) : error ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>⚠️ {error}</Text>
           <TouchableOpacity onPress={refetch} style={styles.retryBtn}>
-            <Text style={styles.retryText}>Опитай пак</Text>
+            <Text style={styles.retryText}>{t('common.retry')}</Text>
           </TouchableOpacity>
         </View>
       ) : bans.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyIcon}>✅</Text>
-          <Text style={styles.emptyText}>Няма забрани за тази дата</Text>
+          <Text style={styles.emptyText}>{t('bans.empty')}</Text>
         </View>
       ) : (
         <FlatList

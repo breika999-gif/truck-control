@@ -1,5 +1,6 @@
 import React from 'react';
 import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { fmtDistance } from '../api/directions';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -17,12 +18,14 @@ const BusinessResultsPanel: React.FC<BusinessResultsPanelProps> = ({
   onDismiss,
   onNavigate,
 }) => {
+  const { t } = useTranslation();
+
   if (businessResults.length === 0) return null;
 
   return (
     <View style={[styles.bizPanel, { top: searchTop + 58 }]}>
       <View style={styles.parkingPanelHeader}>
-        <Text style={styles.bizPanelTitle}>📍 Намерени места</Text>
+        <Text style={styles.bizPanelTitle}>📍 {t('panels.foundPlaces')}</Text>
         <TouchableOpacity onPress={onDismiss} style={styles.parkingDismissBtn}>
           <Text style={styles.parkingDismissTxt}>✕</Text>
         </TouchableOpacity>
@@ -38,9 +41,9 @@ const BusinessResultsPanel: React.FC<BusinessResultsPanelProps> = ({
             onNavigate([b.lng, b.lat], b.name);
           };
           const statusMsg =
-            b.business_status === 'CLOSED_PERMANENTLY' ? '🔴 Затворено завинаги' :
-            b.business_status === 'CLOSED_TEMPORARILY' ? '🟡 Временно затворено' :
-            '🟡 Затворено в момента';
+            b.business_status === 'CLOSED_PERMANENTLY' ? t('panels.closedPermanent') :
+            b.business_status === 'CLOSED_TEMPORARILY' ? t('panels.closedTemporary') :
+            t('panels.closedNow');
           return (
             <TouchableOpacity
               key={i}
@@ -49,11 +52,11 @@ const BusinessResultsPanel: React.FC<BusinessResultsPanelProps> = ({
               onPress={() => {
                 if (b.needs_confirm) {
                   Alert.alert(
-                    '⚠️ Внимание',
-                    `${b.name}\n\n${statusMsg}\n\nЧертаем маршрут?`,
+                    t('panels.warning'),
+                    t('panels.drawRouteQuestion', { name: b.name, status: statusMsg }),
                     [
-                      { text: 'Отказ', style: 'cancel' },
-                      { text: 'Да, продължи', onPress: doNavigate },
+                      { text: t('common.cancel'), style: 'cancel' },
+                      { text: t('common.yesContinue'), onPress: doNavigate },
                     ],
                   );
                 } else {
@@ -84,7 +87,7 @@ const BusinessResultsPanel: React.FC<BusinessResultsPanelProps> = ({
               {b.review_summary ? (
                 <Text style={styles.bizReviewSummary} numberOfLines={3}>{b.review_summary}</Text>
               ) : null}
-              <Text style={styles.bizGoTxt}>🚀 Маршрут</Text>
+              <Text style={styles.bizGoTxt}>🚀 {t('common.route')}</Text>
             </TouchableOpacity>
           );
         })}

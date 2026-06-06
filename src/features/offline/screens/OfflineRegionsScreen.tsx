@@ -12,17 +12,18 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 
 import { colors, spacing } from '../../../shared/constants/theme';
 import { useOfflineMaps, type OfflinePack } from '../hooks/useOfflineMaps';
 
-const REGIONS: Array<{ name: string; bounds: [number, number, number, number]; note?: string }> = [
-  { name: 'България пълна', bounds: [22.3, 41.2, 28.6, 44.2], note: '~800 MB' },
-  { name: 'Западна България', bounds: [22.3, 41.8, 24.5, 43.8] },
-  { name: 'Румъния', bounds: [22.0, 43.5, 30.0, 48.3] },
-  { name: 'Гърция', bounds: [20.0, 35.0, 26.5, 41.8] },
-  { name: 'Сърбия', bounds: [18.8, 42.2, 23.0, 46.2] },
-  { name: 'Турция (Тракия)', bounds: [26.0, 40.5, 32.0, 42.5] },
+const REGIONS: Array<{ key: string; bounds: [number, number, number, number]; note?: string }> = [
+  { key: 'bulgariaFull', bounds: [22.3, 41.2, 28.6, 44.2], note: '~800 MB' },
+  { key: 'westBulgaria', bounds: [22.3, 41.8, 24.5, 43.8] },
+  { key: 'romania', bounds: [22.0, 43.5, 30.0, 48.3] },
+  { key: 'greece', bounds: [20.0, 35.0, 26.5, 41.8] },
+  { key: 'serbia', bounds: [18.8, 42.2, 23.0, 46.2] },
+  { key: 'turkeyThrace', bounds: [26.0, 40.5, 32.0, 42.5] },
 ];
 
 function formatMb(bytes: number): string {
@@ -30,6 +31,7 @@ function formatMb(bytes: number): string {
 }
 
 const OfflineRegionsScreen: React.FC = () => {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const { packs, downloading, downloadRegion, deleteRegion } = useOfflineMaps();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -41,22 +43,22 @@ const OfflineRegionsScreen: React.FC = () => {
     try {
       await downloadRegion(name, bounds);
     } catch (error) {
-      Alert.alert('Офлайн карти', error instanceof Error ? error.message : 'Свалянето не можа да стартира.');
+      Alert.alert(t('offline.title'), error instanceof Error ? error.message : t('offline.downloadFailed'));
     } finally {
       setBusyName(null);
     }
   };
 
   const removePack = (pack: OfflinePack) => {
-    Alert.alert('Изтрий регион', `Да изтрия ли ${pack.regionName}?`, [
-      { text: 'Отказ', style: 'cancel' },
+    Alert.alert(t('offline.deleteTitle'), t('offline.deleteMessage', { name: pack.regionName }), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Изтрий',
+        text: t('common.delete'),
         style: 'destructive',
         onPress: () => {
           setBusyName(pack.name);
           deleteRegion(pack.name)
-            .catch(error => Alert.alert('Офлайн карти', error instanceof Error ? error.message : 'Регионът не можа да се изтрие.'))
+            .catch(error => Alert.alert(t('offline.title'), error instanceof Error ? error.message : t('offline.deleteFailed')))
             .finally(() => setBusyName(null));
         },
       },
@@ -69,7 +71,7 @@ const OfflineRegionsScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
           <Icon name="arrow-left" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Офлайн карти</Text>
+        <Text style={styles.title}>{t('offline.title')}</Text>
         <TouchableOpacity onPress={() => setPickerOpen(true)} style={styles.iconButton}>
           <Icon name="plus" size={25} color={colors.text} />
         </TouchableOpacity>
@@ -77,7 +79,7 @@ const OfflineRegionsScreen: React.FC = () => {
 
       <View style={styles.notice}>
         <Icon name="information-outline" size={19} color="#F1C40F" />
-        <Text style={styles.noticeText}>България пълна = ~800 MB. Ползвай Wi-Fi преди дълъг курс.</Text>
+        <Text style={styles.noticeText}>{t('offline.notice')}</Text>
       </View>
 
       <FlatList
@@ -87,7 +89,7 @@ const OfflineRegionsScreen: React.FC = () => {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Icon name="map-marker-off-outline" size={44} color={colors.textMuted} />
-            <Text style={styles.emptyText}>Няма свалени региони</Text>
+            <Text style={styles.emptyText}>{t('offline.empty')}</Text>
           </View>
         }
         renderItem={({ item }) => (
@@ -107,7 +109,7 @@ const OfflineRegionsScreen: React.FC = () => {
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${item.percentage}%` }]} />
             </View>
-            <Text style={styles.progressText}>{Math.round(item.percentage)}% · {item.completedTiles} тайла</Text>
+            <Text style={styles.progressText}>{Math.round(item.percentage)}% · {item.completedTiles} {t('offline.tiles')}</Text>
           </View>
         )}
       />
@@ -115,7 +117,7 @@ const OfflineRegionsScreen: React.FC = () => {
       {(downloading || busyName) && (
         <View style={styles.downloading}>
           <ActivityIndicator size="small" color="#00BFFF" />
-          <Text style={styles.downloadingText}>{busyName ?? 'Сваляне на регион...'}</Text>
+          <Text style={styles.downloadingText}>{busyName ?? t('offline.downloading')}</Text>
         </View>
       )}
 
@@ -123,22 +125,24 @@ const OfflineRegionsScreen: React.FC = () => {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Свали регион</Text>
+              <Text style={styles.modalTitle}>{t('offline.downloadRegion')}</Text>
               <TouchableOpacity onPress={() => setPickerOpen(false)}>
                 <Icon name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
-            {REGIONS.map(region => (
+            {REGIONS.map(region => {
+              const regionName = t(`offline.regions.${region.key}`);
+              return (
               <TouchableOpacity
-                key={region.name}
+                key={region.key}
                 style={styles.regionRow}
-                onPress={() => startDownload(region.name, region.bounds)}
+                onPress={() => startDownload(regionName, region.bounds)}
               >
                 <Icon name="download-outline" size={21} color="#00BFFF" />
-                <Text style={styles.regionName}>{region.name}</Text>
+                <Text style={styles.regionName}>{regionName}</Text>
                 {region.note && <Text style={styles.regionNote}>{region.note}</Text>}
               </TouchableOpacity>
-            ))}
+            );})}
           </View>
         </View>
       </Modal>

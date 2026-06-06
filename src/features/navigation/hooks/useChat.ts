@@ -13,6 +13,7 @@ import type { RouteResult } from '../api/directions';
 import { HOS_LIMIT_S, parseBubbleText, voiceText } from '../utils/mapUtils';
 import type { BluetoothTachoState } from '../../tacho/hooks/useTachoBluetooth';
 import { calcWeeklyStatus } from './useTacho';
+import i18n from '../../../i18n';
 
 interface ChatProps {
   userCoords: [number, number] | null;
@@ -97,9 +98,9 @@ export function useChat({
   // ── Helper to speak ───────────────────────────────────────────────────────
   const speak = useCallback((text: string) => {
     if (!voiceMutedRef.current) { Tts.stop(); try { Tts.speak(text); } catch {} }
-  }, []);
+  }, [voiceMutedRef]);
 
-  const cleanAssistantText = useCallback((raw: unknown, fallback = 'Готово.'): string => {
+  const cleanAssistantText = useCallback((raw: unknown, fallback = i18n.t('voice.done')): string => {
     const parsed = parseBubbleText(String(raw ?? ''));
     return parsed.trim() || fallback;
   }, []);
@@ -114,10 +115,7 @@ export function useChat({
     if (shiftSummaryDateRef.current === summaryDate) return;
     shiftSummaryDateRef.current = summaryDate;
 
-    const prompt =
-      'Направи кратко обобщение на смяната и план за утре на български. ' +
-      `Данни: ${JSON.stringify(params)}. ` +
-      'Максимум 3 изречения. Без излишни думи.';
+    const prompt = i18n.t('chat.shiftSummaryPrompt', { data: JSON.stringify(params) });
     const response = await sendGeminiMessage(
       prompt,
       [],
@@ -143,7 +141,7 @@ export function useChat({
       setHistory([...newHistory, { role: 'model', text: displayText }]);
       speak(displayText);
     } else {
-      setHistory([...newHistory, { role: 'model', text: 'Заявката е изпълнена.' }]);
+      setHistory([...newHistory, { role: 'model', text: i18n.t('chat.done') }]);
     }
 
     if (act.action === 'route') {
@@ -226,7 +224,7 @@ export function useChat({
     if (!isMountedRef.current) return;
 
     if (!response.ok) {
-      setGptHistory([...newHistory, { role: 'model', text: 'Грешка: GPT-4o не отговаря.' }]);
+      setGptHistory([...newHistory, { role: 'model', text: i18n.t('chat.gptError') }]);
       setGptLoading(false);
       return;
     }
@@ -242,7 +240,7 @@ export function useChat({
     }
 
     setGptLoading(false);
-  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, route, destinationName, speak, processAction, cleanAssistantText, onReachQuestion]);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, route, destinationName, speak, processAction, cleanAssistantText, onReachQuestion, setGptHistory]);
 
   // ── Gemini logic ──────────────────────────────────────────────────────────
   const sendGeminiText = useCallback(async (text: string) => {
@@ -309,7 +307,9 @@ export function useChat({
     if (!isMountedRef.current) return;
 
     if (!response.ok) {
-      const errText = response.error ? `Грешка: ${response.error}` : 'Грешка: Gemini не отговаря.';
+      const errText = response.error
+        ? i18n.t('chat.errorPrefix', { error: response.error })
+        : i18n.t('chat.geminiError');
       setGeminiHistory([...newHistory, { role: 'model', text: errText }]);
       setGeminiLoading(false);
       return;
@@ -342,7 +342,8 @@ export function useChat({
 
     setGeminiLoading(false);
   }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, tachoSummary, bluetoothTacho,
-      parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction, cleanAssistantText, onReachQuestion]);
+      parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction, cleanAssistantText, onReachQuestion,
+      sendGptText, setGeminiHistory]);
 
   return {
     gptLoading,

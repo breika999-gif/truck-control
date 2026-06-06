@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import i18n from '../../i18n';
 
 const STORAGE_KEY = 'tacho_event_log';
 const KEEP_DAYS = 20;
@@ -155,13 +156,17 @@ export async function checkHosViolations(): Promise<HosViolation[]> {
   if (continuousDrivingMin > 270) {
     violations.push({
       type: 'continuous_driving',
-      message: `Непрекъснато каране ${Math.round(continuousDrivingMin / 60 * 10) / 10}ч — нужна е 45-минутна пауза!`,
+      message: i18n.t('tacho.continuousBreakNeeded', {
+        hours: Math.round(continuousDrivingMin / 60 * 10) / 10,
+      }),
       minutesOver: continuousDrivingMin - 270,
     });
   } else if (continuousDrivingMin > 240) {
     violations.push({
       type: 'continuous_driving',
-      message: `Внимание: ${Math.round(270 - continuousDrivingMin)} мин до задължителна пауза`,
+      message: i18n.t('tacho.continuousBreakWarning', {
+        minutes: Math.round(270 - continuousDrivingMin),
+      }),
     });
   }
 
@@ -170,7 +175,7 @@ export async function checkHosViolations(): Promise<HosViolation[]> {
   if (lastEvent.leftMin !== null && lastEvent.leftMin <= 30) {
     violations.push({
       type: 'daily_limit',
-      message: `Остават само ${lastEvent.leftMin} мин каране за днес!`,
+      message: i18n.t('tacho.dailyDrivingLeft', { minutes: lastEvent.leftMin }),
     });
   }
 

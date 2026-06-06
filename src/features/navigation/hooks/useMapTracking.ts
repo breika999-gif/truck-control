@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import type { RouteResult } from '../api/directions';
 import type { NavPhase } from './useNavigationState';
 import { haversineMeters, ttsSpeak } from '../utils/mapUtils';
+import i18n from '../../../i18n';
 
 type Coords = [number, number];
 
@@ -140,15 +141,15 @@ export function useMapTracking({
     if (now - lastRerouteTimeRef.current < 45_000) return;
     offRouteCountRef.current = 0;
     lastRerouteTimeRef.current = now;
-    if (!voiceMutedRef.current) ttsSpeak('Отклонение! Преизчислявам маршрута.');
+    if (!voiceMutedRef.current) ttsSpeak(i18n.t('alerts.offRoute'));
     navigateTo(destination, destinationName, waypoints, true);
   }, [destination, destinationName, navigateTo, navigating, navPhase, route, simulating, userCoords, userHeading, voiceMutedRef, waypoints]);
 
   const puckScale = useMemo(() => {
-    if (!navigating) return 0.54;
-    if (distToTurn != null && distToTurn < 100) return 0.52;
-    if (speed > 80) return 0.65;
-    return 0.60;
+    if (!navigating) return 0.62;
+    if (distToTurn != null && distToTurn < 100) return 0.82;
+    if (speed > 80) return 0.94;
+    return 0.88;
   }, [distToTurn, navigating, speed]);
 
   return {

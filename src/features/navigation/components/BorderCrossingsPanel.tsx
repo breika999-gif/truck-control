@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { View, Text, TouchableOpacity, Linking } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 
 interface BorderCrossing {
@@ -16,11 +17,13 @@ interface BorderCrossingsPanelProps {
 }
 
 const BorderCrossingsPanel: React.FC<BorderCrossingsPanelProps> = ({ show, crossings, onClose }) => {
+  const { t } = useTranslation();
+
   if (!show || crossings.length === 0) return null;
   return (
     <View style={styles.borderPanel}>
       <View style={styles.borderPanelHeader}>
-        <Text style={styles.borderPanelTitle}>🛂 Гранични преходи</Text>
+        <Text style={styles.borderPanelTitle}>🛂 {t('panels.borderCrossings')}</Text>
         <TouchableOpacity onPress={onClose}>
           <Text style={styles.borderPanelClose}>✕</Text>
         </TouchableOpacity>

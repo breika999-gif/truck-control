@@ -13,35 +13,36 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Image, Animated, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { RestrictionEventPayload } from '../utils/routeAheadEvents';
 
 // ── Asset map (mirrors RestrictionSign.tsx) ───────────────────────────────────
 
-const ICONS: Record<string, { normal: any; exceed: any; unit: string }> = {
+const ICONS: Record<string, { normal: any; exceed: any; unitKey: 'meterShort' | 'tonShort' | null }> = {
   maxheight: {
     normal:  require('../../../../android/app/src/main/res/raw/restriction_height.png'),
     exceed:  require('../../../../android/app/src/main/res/raw/restriction_height_exceed.png'),
-    unit: 'м',
+    unitKey: 'meterShort',
   },
   maxweight: {
     normal:  require('../../../../android/app/src/main/res/raw/restriction_weight.png'),
     exceed:  require('../../../../android/app/src/main/res/raw/restriction_weight_exceed.png'),
-    unit: 'т',
+    unitKey: 'tonShort',
   },
   maxwidth: {
     normal:  require('../../../../android/app/src/main/res/raw/restriction_width.png'),
     exceed:  require('../../../../android/app/src/main/res/raw/restriction_width_exceed.png'),
-    unit: 'м',
+    unitKey: 'meterShort',
   },
   no_trucks: {
     normal:  require('../../../../android/app/src/main/res/raw/restriction_no_trucks.png'),
     exceed:  require('../../../../android/app/src/main/res/raw/restriction_no_trucks_violated.png'),
-    unit: '',
+    unitKey: null,
   },
   hazmat: {
     normal:  require('../../../../android/app/src/main/res/raw/restriction_adr.png'),
     exceed:  require('../../../../android/app/src/main/res/raw/restriction_adr_exceed.png'),
-    unit: '',
+    unitKey: null,
   },
 };
 
@@ -61,6 +62,7 @@ interface SignCellProps {
 }
 
 const SignCell: React.FC<SignCellProps> = ({ restriction, size }) => {
+  const { t } = useTranslation();
   const meta = ICONS[restriction.type] ?? ICONS.no_trucks;
   const icon = restriction.exceeded ? meta.exceed : meta.normal;
   const borderColor = restriction.exceeded ? '#FF6B00' : '#D0021B';
@@ -82,7 +84,7 @@ const SignCell: React.FC<SignCellProps> = ({ restriction, size }) => {
           <Text style={[cell.value, { fontSize, lineHeight: fontSize + 1 }]}>
             {restriction.value_num}
           </Text>
-          <Text style={[cell.unit, { fontSize: unitSize }]}>{meta.unit}</Text>
+          <Text style={[cell.unit, { fontSize: unitSize }]}>{meta.unitKey ? t(`units.${meta.unitKey}`) : ''}</Text>
         </>
       )}
     </View>
@@ -114,15 +116,16 @@ const cell = StyleSheet.create({
 
 // ── Distance label ────────────────────────────────────────────────────────────
 
-function fmtDist(m: number): string {
-  if (m < 50)   return 'СЕГА';
-  if (m < 1000) return `${Math.round(m / 10) * 10} м`;
-  return `${(m / 1000).toFixed(1)} км`;
+function fmtDist(m: number, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (m < 50) return t('restriction.now');
+  if (m < 1000) return `${Math.round(m / 10) * 10} ${t('units.meterShort')}`;
+  return `${(m / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 const CompositeRestrictionSign: React.FC<Props> = ({ restrictions, distanceM, anyExceeded }) => {
+  const { t } = useTranslation();
   const opacity = useRef(new Animated.Value(0)).current;
 
   // Trigger animation when restrictions change
@@ -143,7 +146,7 @@ const CompositeRestrictionSign: React.FC<Props> = ({ restrictions, distanceM, an
   const signSize = count === 1 ? 72 : count === 2 ? 56 : 44;
   const gap      = count === 1 ? 0  : 6;
 
-  const distLabel   = fmtDist(distanceM);
+  const distLabel   = fmtDist(distanceM, t);
   const labelColor  = anyExceeded ? '#FF6B00' : '#D0021B';
   const bgColor     = anyExceeded ? 'rgba(255,107,0,0.15)' : 'rgba(208,2,27,0.12)';
 
@@ -166,7 +169,7 @@ const CompositeRestrictionSign: React.FC<Props> = ({ restrictions, distanceM, an
 
         {/* Exceeded label */}
         {anyExceeded && (
-          <Text style={s.exceededLabel}>ПРЕВИШЕНО</Text>
+          <Text style={s.exceededLabel}>{t('restriction.exceeded')}</Text>
         )}
       </View>
 

@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
 import { View, Text } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 
 interface WakeWordIndicatorProps {
   navigating: boolean;
@@ -9,6 +10,8 @@ interface WakeWordIndicatorProps {
 }
 
 const WakeWordIndicator: React.FC<WakeWordIndicatorProps> = ({ navigating, wakeWordHeard, topInset }) => {
+  const { t } = useTranslation();
+
   if (!navigating) return null;
   return (
     <View style={{
@@ -20,7 +23,7 @@ const WakeWordIndicator: React.FC<WakeWordIndicatorProps> = ({ navigating, wakeW
     }}>
       <Icon name="microphone" size={14} color={wakeWordHeard ? '#fff' : '#4CAF50'} />
       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
-        {wakeWordHeard ? 'Чух те!' : 'Колега...'}
+        {wakeWordHeard ? t('wake.heard') : t('wake.listening')}
       </Text>
     </View>
   );

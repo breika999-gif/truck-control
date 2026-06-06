@@ -12,6 +12,7 @@ import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { loadSavedAccount } from '../../../shared/services/accountManager';
+import i18n from '../../../i18n';
 
 async function requestBlePermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
@@ -54,7 +55,7 @@ const CONTINUOUS_DRIVE_LIMIT_S = 16200;
 const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
 const INITIAL_STATE: TachoBleState = {
   status: 'idle',
-  statusMsg: 'Не е свързан',
+  statusMsg: i18n.t('tacho.notConnected'),
   liveData: null,
   foundDevices: [],
   isConnected: false,
@@ -161,7 +162,7 @@ export function useTachoBluetooth() {
 
     const ok = await requestBlePermissions();
     if (!ok) {
-      handleStatus('error', 'Нямам разрешение за Bluetooth. Провери настройките.');
+      handleStatus('error', i18n.t('tacho.bluetoothPermission'));
       return;
     }
 
@@ -177,7 +178,7 @@ export function useTachoBluetooth() {
     sharedService?.disconnect().catch(() => {/* silent */});
     patchState({
       status: 'idle',
-      statusMsg: 'Прекъснато',
+      statusMsg: i18n.t('tacho.disconnected'),
       isConnected: false,
       liveData: null,
       deviceName: null,

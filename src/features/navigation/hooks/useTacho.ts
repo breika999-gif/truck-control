@@ -12,6 +12,7 @@ import {
 import { checkHosViolations, HosViolation } from '../../tacho/TachoEventLog';
 import { recordDailyStats } from '../utils/driverHabits';
 import { useTachoBluetooth } from '../../tacho/hooks/useTachoBluetooth';
+import i18n from '../../../i18n';
 
 const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
 const DAILY_LIMIT_9H = 32400; // 9h
@@ -307,11 +308,11 @@ export function useTacho(
     // 1. Continuous 4.5h rule
     if (drivingSeconds >= 14400 && !hosWarningRef.current.w30) {
       hosWarningRef.current.w30 = true;
-      speak('Колега, 30 минути до пауза.');
+      speak(i18n.t('tachoAlerts.thirtyMinutesToBreak'));
     }
     if (drivingSeconds >= 15600 && !hosWarningRef.current.w10) {
       hosWarningRef.current.w10 = true;
-      speak('Остават 10 минути каране. Търси паркинг.');
+      speak(i18n.t('tachoAlerts.tenMinutesSearchParking'));
     }
     
     // 2. Daily limits (9h / 10h)
@@ -321,9 +322,9 @@ export function useTacho(
       hosWarningRef.current.daily9h = true;
       const can10h = tachoSummary.daily_limit_h === 10;
       if (can10h) {
-        speak('Достигна 9 часа каране. Имаш още 1 час до максимума за днес.');
+        speak(i18n.t('tachoAlerts.reachedNineHoursCanExtend'));
       } else {
-        speak('Достигна лимита от 9 часа. Трябва да направиш почивка.');
+        speak(i18n.t('tachoAlerts.reachedNineHoursLimit'));
       }
     }
 
@@ -333,7 +334,7 @@ export function useTacho(
       : ((tachoSummary.weekly_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0)));
     if (weeklyTotal >= 194400 && !hosWarningRef.current.weekly56h) {
       hosWarningRef.current.weekly56h = true;
-      speak('Внимание, наближаваш 56-часовия седмичен лимит.');
+      speak(i18n.t('tachoAlerts.weeklyLimitApproaching'));
     }
 
     // 4. Reduced rests check

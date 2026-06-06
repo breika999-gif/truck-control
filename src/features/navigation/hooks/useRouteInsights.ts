@@ -3,6 +3,7 @@ import type { RouteResult } from '../api/directions';
 import { fetchElevationAtPoint } from '../api/tilequery';
 import { fetchPOIsAlongRoute, type POICard } from '../../../shared/services/backendApi';
 import { weatherEmoji, haversineMeters } from '../utils/mapUtils';
+import i18n from '../../../i18n';
 
 export interface RoutePOI {
   type: 'parking' | 'fuel';
@@ -149,10 +150,11 @@ export const useRouteInsights = (
           }
 
           if (grade > 5 && distToUserKm <= 10) {
+            const km = Math.round(distToUserKm);
             warnings.push({
               type: 'hill',
-              text: `⛰️ Стръмен ${elevDiff < 0 ? 'надолнище' : 'наклон'} след ${Math.round(distToUserKm)} км — намали скоростта и провери ретардера`,
-              distKm: Math.round(distToUserKm),
+              text: i18n.t(elevDiff < 0 ? 'route.steepDownAfter' : 'route.steepUpAfter', { km }),
+              distKm: km,
             });
           }
         }
@@ -257,14 +259,14 @@ export const useRouteInsights = (
       const all: RoutePOI[] = [
         ...truckStops.map(p => ({
           type: 'parking' as const,
-          name: p.name || 'Паркинг',
+          name: p.name || i18n.t('poiCategories.parking'),
           distKm: Math.max(1, Math.round(routeDistForPOI(p.lng, p.lat) / 1000)),
           lng: p.lng,
           lat: p.lat,
         })),
         ...fuels.map(p => ({
           type: 'fuel' as const,
-          name: p.name || 'Гориво',
+          name: p.name || i18n.t('poiCategories.gas_station'),
           distKm: Math.max(1, Math.round(routeDistForPOI(p.lng, p.lat) / 1000)),
           lng: p.lng,
           lat: p.lat,
@@ -327,7 +329,7 @@ export const useRouteInsights = (
       // Cache exhausted — fetch a fresh batch for remaining route
       void executePOIFetch(userCoords);
     }
-  }, [userCoords, filterAndSetVisible, executePOIFetch]);
+  }, [userCoords, filterAndSetVisible, executePOIFetch, getUserProgressKm]);
 
   return {
     elevProfile,

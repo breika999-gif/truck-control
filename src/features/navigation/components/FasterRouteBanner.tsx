@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, memo } from 'react';
 import { View, Text, TouchableOpacity, Animated, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import type { FasterRouteOffer } from '../hooks/useFasterRouteCheck';
 import { fmtDistance } from '../api/directions';
 
@@ -12,6 +13,7 @@ interface Props {
 }
 
 const FasterRouteBanner: React.FC<Props> = memo(({ offer, onAccept, onDismiss, top }) => {
+  const { t } = useTranslation();
   const translateY = useRef(new Animated.Value(-120)).current;
   const prevOffer  = useRef<FasterRouteOffer | null>(null);
 
@@ -45,14 +47,14 @@ const FasterRouteBanner: React.FC<Props> = memo(({ offer, onAccept, onDismiss, t
         <Icon name="lightning-bolt" size={22} color="#FFD700" />
       </View>
       <View style={styles.content}>
-        <Text style={styles.title}>По-бърз маршрут</Text>
+        <Text style={styles.title}>{t('panels.fasterRoute')}</Text>
         <Text style={styles.subtitle}>
-          Спести <Text style={styles.highlight}>{offer?.saveMin ?? 0} мин</Text>
+          <Text style={styles.highlight}>{t('panels.saveMinutes', { minutes: offer?.saveMin ?? 0 })}</Text>
           {'  ·  '}{fmtDistance(distKm * 1000)}
         </Text>
       </View>
       <TouchableOpacity style={styles.btnAccept} onPress={onAccept}>
-        <Text style={styles.btnAcceptText}>Използвай</Text>
+        <Text style={styles.btnAcceptText}>{t('panels.useRoute')}</Text>
       </TouchableOpacity>
       <TouchableOpacity style={styles.btnDismiss} onPress={onDismiss}>
         <Icon name="close" size={18} color="rgba(255,255,255,0.5)" />

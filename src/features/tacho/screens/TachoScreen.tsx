@@ -8,10 +8,12 @@ import {
   StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { useTachoBluetooth } from '../hooks/useTachoBluetooth';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 
 const TachoScreen: React.FC = () => {
+  const { t } = useTranslation();
   const {
     status,
     statusMsg,
@@ -45,8 +47,8 @@ const TachoScreen: React.FC = () => {
       <View style={styles.statusCard}>
         <Icon name={icon} size={32} color={color} />
         <View style={styles.statusTextContainer}>
-          <Text style={styles.statusLabel}>Статус на връзката</Text>
-          <Text style={[styles.statusValue, { color }]}>{statusMsg || 'Не е свързан'}</Text>
+          <Text style={styles.statusLabel}>{t('tacho.connectionStatus')}</Text>
+          <Text style={[styles.statusValue, { color }]}>{statusMsg || t('tacho.notConnected')}</Text>
         </View>
       </View>
     );
@@ -88,7 +90,7 @@ const TachoScreen: React.FC = () => {
 
         <View style={styles.speedContainer}>
           <Text style={styles.speedValue}>{liveData.speed}</Text>
-          <Text style={styles.speedUnit}>км/ч</Text>
+          <Text style={styles.speedUnit}>{t('tacho.speedUnit')}</Text>
         </View>
       </View>
     );
@@ -103,18 +105,18 @@ const TachoScreen: React.FC = () => {
     const formatTime = (min: number) => {
       const h = Math.floor(min / 60);
       const m = min % 60;
-      return `${h}ч ${m}мин`;
+      return `${h}${t('tacho.hourShort')} ${m}${t('tacho.minuteShort')}`;
     };
 
     return (
       <View style={styles.progressCard}>
         <View style={styles.timeRow}>
           <View style={styles.timeItem}>
-            <Text style={styles.timeLabel}>Изкарано днес</Text>
+            <Text style={styles.timeLabel}>{t('tacho.drivenToday')}</Text>
             <Text style={styles.timeValue}>{formatTime(liveData.dailyDrivenMin)}</Text>
           </View>
           <View style={styles.timeItem}>
-            <Text style={[styles.timeLabel, { textAlign: 'right' }]}>Оставащо</Text>
+            <Text style={[styles.timeLabel, { textAlign: 'right' }]}>{t('tacho.remaining')}</Text>
             <Text style={[styles.timeValue, { textAlign: 'right', color: colors.warning }]}>
               {formatTime(liveData.drivingTimeLeftMin)}
             </Text>
@@ -126,8 +128,8 @@ const TachoScreen: React.FC = () => {
         </View>
         
         <View style={styles.limitRow}>
-          <Text style={styles.limitText}>0ч</Text>
-          <Text style={styles.limitText}>9ч лимит</Text>
+          <Text style={styles.limitText}>{t('tacho.zeroHours')}</Text>
+          <Text style={styles.limitText}>{t('tacho.dailyLimit')}</Text>
         </View>
       </View>
     );
@@ -138,7 +140,7 @@ const TachoScreen: React.FC = () => {
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
       
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Тахограф</Text>
+        <Text style={styles.headerTitle}>{t('tacho.title')}</Text>
         <Text style={styles.headerSubtitle}>VDO DTCO 4.1 / Smart 2</Text>
       </View>
 
@@ -156,7 +158,7 @@ const TachoScreen: React.FC = () => {
           >
             <Icon name="bluetooth" size={24} color={colors.text} />
             <Text style={styles.buttonText}>
-              {status === 'scanning' ? 'Търся...' : 'Свържи тахограф'}
+              {status === 'scanning' ? t('tacho.scanning') : t('tacho.connect')}
             </Text>
           </TouchableOpacity>
         ) : (
@@ -165,14 +167,14 @@ const TachoScreen: React.FC = () => {
             onPress={disconnect}
           >
             <Icon name="bluetooth-off" size={24} color={colors.text} />
-            <Text style={styles.buttonText}>Прекъсни връзката</Text>
+            <Text style={styles.buttonText}>{t('tacho.disconnect')}</Text>
           </TouchableOpacity>
         )}
 
         {/* Device picker — shown when scan found devices but none auto-matched */}
         {!isConnected && foundDevices.length > 0 && (
           <View style={styles.deviceList}>
-            <Text style={styles.deviceListTitle}>Намерени BLE устройства — избери тахографа:</Text>
+            <Text style={styles.deviceListTitle}>{t('tacho.deviceListTitle')}</Text>
             {foundDevices.map(device => (
               <TouchableOpacity
                 key={device.id}
@@ -181,7 +183,7 @@ const TachoScreen: React.FC = () => {
               >
                 <Icon name="bluetooth" size={18} color={colors.accent} />
                 <View style={styles.deviceInfo}>
-                  <Text style={styles.deviceName}>{device.name ?? device.localName ?? '(без име)'}</Text>
+                  <Text style={styles.deviceName}>{device.name ?? device.localName ?? t('tacho.unnamedDevice')}</Text>
                   <Text style={styles.deviceId}>{device.id}</Text>
                 </View>
                 <Icon name="chevron-right" size={20} color={colors.textMuted} />

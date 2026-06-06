@@ -1,6 +1,7 @@
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { POICard } from '../../../shared/services/backendApi';
 import { fmtDistance } from '../api/directions';
 import { NEON, styles } from '../screens/MapScreen.styles';
@@ -26,12 +27,14 @@ const ParkingResultsPanel: React.FC<ParkingResultsPanelProps> = ({
   onOpenInfo,
   onSpeak,
 }) => {
+  const { t } = useTranslation();
+
   if (parkingResults.length === 0) return null;
 
   return (
     <View style={[styles.parkingPanel, { top: searchTop + 58 }]}>
       <View style={styles.parkingPanelHeader}>
-        <Text style={styles.parkingPanelTitle}>🅿️ Паркинги за камиони</Text>
+        <Text style={styles.parkingPanelTitle}>{t('parking.truckParkings')}</Text>
         <TouchableOpacity onPress={onDismiss} style={styles.parkingDismissBtn}>
           <Text style={styles.parkingDismissTxt}>✕</Text>
         </TouchableOpacity>
@@ -48,7 +51,7 @@ const ParkingResultsPanel: React.FC<ParkingResultsPanelProps> = ({
 
             <View style={styles.parkingBadgeRow}>
               <View style={[styles.parkingBadge, p.paid ? styles.parkingBadgePaid : styles.parkingBadgeFree]}>
-                <Text style={styles.parkingBadgeTxt}>{p.paid ? '💰 Платен' : '🆓 Безплатен'}</Text>
+                <Text style={styles.parkingBadgeTxt}>{p.paid ? `💰 ${t('parking.paid')}` : `🆓 ${t('parking.free')}`}</Text>
               </View>
               {p.showers && (
                 <View style={styles.parkingBadge}><Text style={styles.parkingBadgeTxt}>🚿</Text></View>
@@ -85,7 +88,7 @@ const ParkingResultsPanel: React.FC<ParkingResultsPanelProps> = ({
                 }}
               >
                 <Icon name="navigation-variant" size={12} color="#0a0c1c" />
-                <Text style={styles.parkingGoBtnTxt2}>Маршрут</Text>
+                <Text style={styles.parkingGoBtnTxt2}>{t('parking.route')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.parkingWpBtn}
@@ -97,7 +100,7 @@ const ParkingResultsPanel: React.FC<ParkingResultsPanelProps> = ({
                 }}
               >
                 <Icon name="map-marker-plus" size={12} color={NEON} />
-                <Text style={styles.parkingWpBtnTxt}>+ Спирка</Text>
+                <Text style={styles.parkingWpBtnTxt}>{t('parking.stop')}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -107,7 +110,7 @@ const ParkingResultsPanel: React.FC<ParkingResultsPanelProps> = ({
               >
                 <Icon name={p.transparking_id ? 'comment-text-multiple' : 'open-in-new'} size={12} color={p.transparking_id ? '#00ff88' : NEON} />
                 <Text style={[styles.parkingWebBtnTxt, p.transparking_id && { color: '#00ff88' }]}>
-                  {p.transparking_id ? 'TransParking' : 'Инфо'}
+                  {p.transparking_id ? 'TransParking' : t('parking.info')}
                 </Text>
               </TouchableOpacity>
 

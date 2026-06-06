@@ -13,11 +13,11 @@ export interface TruckPOI {
   travelTime?: number; // travel time from current location in seconds
 }
 
-export const POI_META: Record<POICategory, { emoji: string; label: string; iconName: string }> = {
-  gas_station: { emoji: '⛽', label: 'Горива',   iconName: 'gas-station' },
-  parking:     { emoji: '🅿️', label: 'Паркинг',  iconName: 'parking' },
-  rest_area:   { emoji: '🛏️', label: 'Почивка',  iconName: 'bed' },
-  truck_stop:  { emoji: '🚛', label: 'Камион',   iconName: 'truck' },
+export const POI_META: Record<POICategory, { emoji: string; labelKey: string; iconName: string }> = {
+  gas_station: { emoji: '⛽', labelKey: 'poiCategories.gas_station', iconName: 'gas-station' },
+  parking:     { emoji: '🅿️', labelKey: 'poiCategories.parking',     iconName: 'parking' },
+  rest_area:   { emoji: '🛏️', labelKey: 'poiCategories.rest_area',   iconName: 'bed' },
+  truck_stop:  { emoji: '🚛', labelKey: 'poiCategories.truck_stop',  iconName: 'truck' },
 };
 
 // TomTom search query per category

@@ -17,6 +17,7 @@ import {
   Pressable,
   Image,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { pickGoogleAccount, clearAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 
 // ── constants ──────────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ export default function GoogleAccountModal({
   onConnected,
   onDisconnected,
 }: Props) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
 
@@ -62,12 +64,12 @@ export default function GoogleAccountModal({
     } catch (err: unknown) {
       const msg = (err as Error)?.message ?? String(err);
       if (!msg.includes('CANCELLED')) {
-        setError('Грешка при избор на акаунт. Опитай отново.');
+        setError(t('account.pickError'));
       }
     } finally {
       setLoading(false);
     }
-  }, [onConnected, onClose]);
+  }, [onConnected, onClose, t]);
 
   const handleDisconnect = useCallback(async () => {
     await clearAccount();
@@ -91,7 +93,7 @@ export default function GoogleAccountModal({
             <Image source={LOGO} style={styles.logo} resizeMode="contain" />
             <View>
               <Text style={styles.title}>TruckExpo AI</Text>
-              <Text style={styles.subtitleHeader}>Google Акаунт</Text>
+              <Text style={styles.subtitleHeader}>{t('account.googleAccount')}</Text>
             </View>
           </View>
 
@@ -105,7 +107,7 @@ export default function GoogleAccountModal({
                 </Text>
               </View>
               <Text style={styles.subtitle}>
-                Звездичките ⭐ се пазят за този акаунт.
+                {t('account.savedForAccount')}
               </Text>
 
               <TouchableOpacity
@@ -115,19 +117,19 @@ export default function GoogleAccountModal({
               >
                 {loading
                   ? <ActivityIndicator color={NEON} size="small" />
-                  : <Text style={styles.switchBtnText}>🔄 Смени акаунт</Text>
+                  : <Text style={styles.switchBtnText}>{t('account.switchAccount')}</Text>
                 }
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.disconnectBtn} onPress={handleDisconnect}>
-                <Text style={styles.disconnectBtnText}>🗑 Изключи акаунта</Text>
+                <Text style={styles.disconnectBtnText}>{t('account.disconnectAccount')}</Text>
               </TouchableOpacity>
             </>
           ) : (
             /* Disconnected state */
             <>
               <Text style={styles.subtitle}>
-                Свържи Google акаунт за да пазиш любими места ⭐ per-акаунт.
+                {t('account.connectInfo')}
               </Text>
 
               {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -139,14 +141,14 @@ export default function GoogleAccountModal({
               >
                 {loading
                   ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={styles.connectBtnText}>G  Избери Google акаунт</Text>
+                  : <Text style={styles.connectBtnText}>{t('account.chooseGoogle')}</Text>
                 }
               </TouchableOpacity>
             </>
           )}
 
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Text style={styles.closeBtnText}>✕ Затвори</Text>
+            <Text style={styles.closeBtnText}>✕ {t('common.close')}</Text>
           </TouchableOpacity>
         </Pressable>
       </Pressable>

@@ -12,6 +12,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
 import { listStarred, deletePOI, type SavedPOI } from '../../../shared/services/backendApi';
@@ -21,6 +22,7 @@ import type { RootStackParamList } from '../../../shared/types/navigation';
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'POIList'>;
 
 const POIListScreen = () => {
+  const { t, i18n } = useTranslation();
   const navigation = useNavigation<NavigationProp>();
   const [pois, setPois] = useState<SavedPOI[]>([]);
   const [loading, setLoading] = useState(true);
@@ -51,19 +53,19 @@ const POIListScreen = () => {
 
   const handleDelete = async (id: number) => {
     Alert.alert(
-      'Изтриване',
-      'Сигурни ли сте, че искате да изтриете това място?',
+      t('poi.deleteTitle'),
+      t('poi.deleteMessage'),
       [
-        { text: 'Отказ', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Изтрий',
+          text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
             const success = await deletePOI(id, userEmail ?? undefined);
             if (success) {
               setPois((prev) => prev.filter((p) => p.id !== id));
             } else {
-              Alert.alert('Грешка', 'Неуспешно изтриване.');
+              Alert.alert(t('common.error'), t('poi.deleteFailed'));
             }
           },
         },
@@ -98,7 +100,7 @@ const POIListScreen = () => {
             {item.address || `${item.lat.toFixed(4)}, ${item.lng.toFixed(4)}`}
           </Text>
           <Text style={styles.poiDate}>
-            {new Date(item.created_at).toLocaleDateString('bg-BG')}
+            {new Date(item.created_at).toLocaleDateString(i18n.language === 'bg' ? 'bg-BG' : i18n.language === 'es' ? 'es-ES' : 'en-US')}
           </Text>
         </View>
       </TouchableOpacity>
@@ -120,7 +122,7 @@ const POIListScreen = () => {
         >
           <Icon name="chevron-left" size={30} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>История на местата</Text>
+        <Text style={styles.headerTitle}>{t('poi.history')}</Text>
         <TouchableOpacity onPress={fetchPois} style={styles.refreshButton}>
           <Icon name="refresh" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -133,7 +135,7 @@ const POIListScreen = () => {
       ) : pois.length === 0 ? (
         <View style={styles.center}>
           <Icon name="star-outline" size={64} color={colors.textMuted} />
-          <Text style={styles.emptyText}>Нямате запазени места</Text>
+          <Text style={styles.emptyText}>{t('poi.empty')}</Text>
         </View>
       ) : (
         <FlatList

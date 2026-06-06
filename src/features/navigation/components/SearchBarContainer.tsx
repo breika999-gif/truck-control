@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { View, Text } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 import SearchBar from './SearchBar';
 import type { GeoPlace } from '../api/geocoding';
@@ -21,6 +22,8 @@ const SearchBarContainer: React.FC<SearchBarContainerProps> = ({
   onClear,
   onOriginChange,
 }) => {
+  const { t } = useTranslation();
+
   if (navigating) return null;
   return (
     <View style={[styles.searchContainer, { top: searchTop }]}>
@@ -31,7 +34,7 @@ const SearchBarContainer: React.FC<SearchBarContainerProps> = ({
       />
       {customOriginName ? (
         <View style={styles.originActiveBadge}>
-          <Text style={styles.originActiveTxt}>📍 Начало: {customOriginName}</Text>
+          <Text style={styles.originActiveTxt}>📍 {t('search.originActive', { name: customOriginName })}</Text>
         </View>
       ) : null}
     </View>

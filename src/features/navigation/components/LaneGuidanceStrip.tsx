@@ -1,5 +1,6 @@
 import React from 'react';
 import { Animated, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 import LaneArrow from './LaneArrow';
 
@@ -16,11 +17,13 @@ const LaneGuidanceStrip: React.FC<LaneGuidanceStripProps> = ({
   glowBg,
   glowShadow,
 }) => {
+  const { t } = useTranslation();
+
   if (!visible) return null;
 
   return (
     <View style={styles.laneStrip}>
-      <Text style={styles.laneStripLabel}>ЗАПАЗИ ЛЕНТАТА</Text>
+      <Text style={styles.laneStripLabel}>{t('lane.keepLane')}</Text>
       <View style={styles.laneStripCells}>
         {lanes.map((lane, i) =>
           lane.active ? (

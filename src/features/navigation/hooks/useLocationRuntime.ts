@@ -14,6 +14,7 @@ import { cumulativeRouteDistances, haversineMeters, nearestRouteMatch } from '..
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type * as GeoJSON from 'geojson';
 import type { NavPhase } from './useNavigationState';
+import i18n from '../../../i18n';
 
 interface UseLocationRuntimeProps {
   isMountedRef: MutableRefObject<boolean>;
@@ -114,8 +115,10 @@ function isWarningDismissed(
 
 function formatStructureDistance(meters: number): string {
   const rounded = Math.max(0, Math.round(meters / 10) * 10);
-  if (rounded >= 1000) return `${(rounded / 1000).toFixed(1)} км`;
-  return `${rounded} м`;
+  if (rounded >= 1000) {
+    return i18n.t('directions.distanceKilometersShort', { kilometers: (rounded / 1000).toFixed(1) });
+  }
+  return i18n.t('directions.distanceMetersShort', { meters: rounded });
 }
 
 function routeMatchForStructure(
@@ -201,13 +204,13 @@ function chooseRouteStructureWarning(
   if (nearest.candidate.kind === 'tunnel') {
     return {
       key: nearest.key,
-      message: `⚠️ Тунел след ${distance} — провери клиренс!`,
+      message: i18n.t('alerts.structureTunnel', { distance }),
     };
   }
 
   return {
     key: nearest.key,
-    message: `⚠️ Мост след ${distance} — провери носимост!`,
+    message: i18n.t('alerts.structureBridge', { distance }),
   };
 }
 
@@ -367,10 +370,10 @@ export const useLocationRuntime = ({
       PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
-          title: 'Разрешение за местоположение',
-          message: 'TruckAI Pro се нуждае от GPS за навигация.',
-          buttonPositive: 'Разреши',
-          buttonNegative: 'Откажи',
+          title: i18n.t('alerts.locationPermissionTitle'),
+          message: i18n.t('alerts.locationPermissionMessage'),
+          buttonPositive: i18n.t('alerts.allow'),
+          buttonNegative: i18n.t('alerts.deny'),
         },
       ).then(status => {
         if (status === PermissionsAndroid.RESULTS.GRANTED) startWatch();

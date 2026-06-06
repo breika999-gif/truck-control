@@ -49,7 +49,7 @@ export const styles = StyleSheet.create({
   searchContainer: {
     position: 'absolute',
     left: isTablet ? (screenWidth - Math.min(600, screenWidth - 40)) / 2 : spacing.md,
-    right: isTablet ? undefined : 68, // keep clear of 44px Options btn + spacing.md
+    right: isTablet ? undefined : spacing.md,
     width: isTablet ? Math.min(600, screenWidth - 40) : undefined,
     zIndex: 20,
   },

@@ -8,6 +8,7 @@ import {
 import Contacts, { type Contact } from 'react-native-contacts';
 import RNImmediatePhoneCall from 'react-native-immediate-phone-call';
 import Tts from 'react-native-tts';
+import i18n from '../../../i18n';
 
 import {
   type VoiceAction,
@@ -133,7 +134,7 @@ export function useVoiceDialer(): UseVoiceDialerResult {
 
   const [isListening, setIsListening] = useState(false);
   const [isCalling, setIsCalling] = useState(false);
-  const [statusText, setStatusText] = useState('Кажи с кого да се свържа');
+  const [statusText, setStatusText] = useState(i18n.t('calling.askWho'));
   const [matches, setMatches] = useState<ContactMatch[]>([]);
   const [lastCommand, setLastCommand] = useState<LastCommand | null>(null);
 
@@ -190,16 +191,16 @@ export function useVoiceDialer(): UseVoiceDialerResult {
     SpeechModule?.stopListening?.();
     setListeningState(false);
     setIsCalling(false);
-    setStatusText('Отказано');
+    setStatusText(i18n.t('calling.cancelled'));
     Tts.stop();
   }, [clearMatches, clearRetry, clearSelectionListening, setListeningState]);
 
   const executeAction = useCallback(async (contact: ContactMatch, action: VoiceAction) => {
-    const displayName = contact.displayName || 'контакта';
+    const displayName = contact.displayName || i18n.t('calling.contactFallback');
     const normalizedPhone = normalizePhoneForCall(contact.phoneNumbers[0]?.number ?? '');
     if (!normalizedPhone) {
-      setStatusText('Контактът няма валиден номер');
-      speak('Контактът няма валиден номер');
+      setStatusText(i18n.t('calling.invalidNumber'));
+      speak(i18n.t('calling.invalidNumber'));
       return;
     }
 
@@ -220,14 +221,14 @@ export function useVoiceDialer(): UseVoiceDialerResult {
     if (action === 'whatsapp_call') {
       const whatsappPhone = normalizePhoneForWhatsApp(normalizedPhone);
       try {
-        speak(`Звъня по WhatsApp на ${displayName}`);
-        setStatusText(`Свързвам по WhatsApp с ${displayName}...`);
+        speak(i18n.t('calling.whatsappCalling', { name: displayName }));
+        setStatusText(i18n.t('calling.whatsappConnecting', { name: displayName }));
         await WhatsAppCallModule?.startVoiceCall?.(whatsappPhone, contact.recordID || null);
         return;
       } catch {
         setIsCalling(false);
-        setStatusText('Не намерих WhatsApp обаждане за този контакт');
-        speak('Не намерих WhatsApp обаждане за този контакт');
+        setStatusText(i18n.t('calling.whatsappNotFound'));
+        speak(i18n.t('calling.whatsappNotFound'));
         return;
       }
     }
@@ -238,17 +239,17 @@ export function useVoiceDialer(): UseVoiceDialerResult {
       );
       if (callPermission !== PermissionsAndroid.RESULTS.GRANTED) {
         setIsCalling(false);
-        setStatusText('Липсва достъп за обаждания');
-        speak('Липсва достъп за обаждания');
+        setStatusText(i18n.t('calling.callPermissionMissing'));
+        speak(i18n.t('calling.callPermissionMissing'));
         return;
       }
-      speak(`Набирам ${displayName}`);
-      setStatusText(`Свързвам с ${displayName}...`);
+      speak(i18n.t('calling.dialing', { name: displayName }));
+      setStatusText(i18n.t('calling.connecting', { name: displayName }));
       RNImmediatePhoneCall.immediatePhoneCall(normalizedPhone);
     } catch {
       setIsCalling(false);
-      setStatusText('Не успях да набера');
-      speak('Не успях да набера');
+      setStatusText(i18n.t('calling.dialFailed'));
+      speak(i18n.t('calling.dialFailed'));
     }
   }, [bumpContactUsage, clearMatches, clearRetry, clearSelectionListening, persistLastCommand, setListeningState, speak]);
 
@@ -309,7 +310,7 @@ export function useVoiceDialer(): UseVoiceDialerResult {
   }, []);
 
   const findContact = useCallback(async (name: string, action: VoiceAction) => {
-    setStatusText(`Търся ${name}...`);
+    setStatusText(i18n.t('calling.searching', { name }));
     try {
       const contacts = (await Contacts.getAll()).map(toContactMatch);
       const found = rankContacts(contacts, name).map(item => item.contact);
@@ -322,24 +323,24 @@ export function useVoiceDialer(): UseVoiceDialerResult {
         pendingActionRef.current = action;
         setMatches(found);
         const prompt = buildContactChoicesPrompt(found);
-        setStatusText('Избери контакт');
+        setStatusText(i18n.t('calling.chooseContact'));
         speak(prompt);
         scheduleSelectionListening(prompt);
         return;
       }
-      setStatusText('Не намерих контакт. Кажи пак.');
-      speak('Не намерих контакт');
-      retryRef.current('Не намерих контакт. Слушам пак...');
+      setStatusText(i18n.t('calling.noContactRetry'));
+      speak(i18n.t('calling.noContact'));
+      retryRef.current(i18n.t('calling.noContactListenAgain'));
     } catch {
-      setStatusText('Грешка при четене на контактите');
+      setStatusText(i18n.t('calling.contactsReadError'));
     }
   }, [executeAction, rankContacts, scheduleSelectionListening, speak]);
 
   const repeatLastCommand = useCallback(async () => {
     const command = lastCommandRef.current;
     if (!command) {
-      setStatusText('Няма последно обаждане');
-      speak('Няма последно обаждане');
+      setStatusText(i18n.t('calling.noLastCall'));
+      speak(i18n.t('calling.noLastCall'));
       return;
     }
     await executeAction({
@@ -372,8 +373,8 @@ export function useVoiceDialer(): UseVoiceDialerResult {
     if (parsed?.type === 'name') {
       const action = parsed.action === 'whatsapp_call' ? 'whatsapp_call' : 'call';
       if (CALL_ONLY_MODE && hasExplicitVoiceAction(text) && parsed.action !== action) {
-        setStatusText('Режимът е само за обаждания');
-        speak('Режимът е само за обаждания');
+        setStatusText(i18n.t('calling.callsOnlyMode'));
+        speak(i18n.t('calling.callsOnlyMode'));
         return;
       }
       await findContact(parsed.name, action);
@@ -383,14 +384,14 @@ export function useVoiceDialer(): UseVoiceDialerResult {
       await findContact(normalized, 'call');
       return;
     }
-    setStatusText('Кажи име за обаждане');
-    retryRef.current('Кажи име за обаждане. Слушам пак...');
+    setStatusText(i18n.t('calling.sayCallName'));
+    retryRef.current(i18n.t('calling.sayCallNameRetry'));
   }, [cancel, executeAction, findContact, repeatLastCommand, speak]);
 
   const startListeningSession = useCallback(async () => {
     if (isListeningRef.current || isCalling) return;
     if (!SpeechModule?.startListening) {
-      setStatusText('Speech модулът не е зареден');
+      setStatusText(i18n.t('calling.speechNotLoaded'));
       return;
     }
     clearRetry();
@@ -400,15 +401,15 @@ export function useVoiceDialer(): UseVoiceDialerResult {
       PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
     ]);
     if (granted[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] !== PermissionsAndroid.RESULTS.GRANTED) {
-      setStatusText('Липсва достъп до микрофона');
+      setStatusText(i18n.t('calling.micPermissionMissing'));
       return;
     }
     if (granted[PermissionsAndroid.PERMISSIONS.READ_CONTACTS] !== PermissionsAndroid.RESULTS.GRANTED) {
-      setStatusText('Липсва достъп до контактите');
+      setStatusText(i18n.t('calling.contactsPermissionMissing'));
       return;
     }
     setListeningState(true);
-    setStatusText(matchesRef.current.length > 0 ? 'Кажи номер или име' : 'Слушам...');
+    setStatusText(matchesRef.current.length > 0 ? i18n.t('calling.sayNumberOrName') : i18n.t('calling.listening'));
     SpeechModule.startListening('bg-BG');
   }, [clearRetry, clearSelectionListening, isCalling, setListeningState]);
 
@@ -417,7 +418,7 @@ export function useVoiceDialer(): UseVoiceDialerResult {
     clearSelectionListening();
     SpeechModule?.stopListening?.();
     setListeningState(false);
-    setStatusText('Спряно');
+    setStatusText(i18n.t('calling.stopped'));
   }, [clearRetry, clearSelectionListening, setListeningState]);
 
   const selectMatch = useCallback((index: number) => {
@@ -459,22 +460,22 @@ export function useVoiceDialer(): UseVoiceDialerResult {
 
     const speechStart = DeviceEventEmitter.addListener('onSpeechStart', () => {
       setListeningState(true);
-      setStatusText('Слушам...');
+      setStatusText(i18n.t('calling.listening'));
     });
     const speechEnd = DeviceEventEmitter.addListener('onSpeechEnd', () => {
-      setStatusText('Разпознавам...');
+      setStatusText(i18n.t('calling.recognizing'));
     });
     const speechResults = DeviceEventEmitter.addListener('onSpeechResults', event => {
       setListeningState(false);
       const text = event?.value?.[0];
       if (typeof text === 'string' && text.trim()) void processVoiceCommandRef.current(text);
-      else retryRef.current('Не чух. Слушам пак...');
+      else retryRef.current(i18n.t('calling.didNotHearRetry'));
     });
     const speechError = DeviceEventEmitter.addListener('onSpeechError', (event: SpeechErrorEvent) => {
       setListeningState(false);
-      const message = event?.message ?? 'Гласова грешка';
+      const message = event?.message ?? i18n.t('calling.voiceError');
       if (typeof event?.code === 'number' && AUTO_RETRY_ERROR_CODES.has(event.code)) {
-        retryRef.current(`${message} Слушам пак...`);
+        retryRef.current(i18n.t('calling.listenAgainSuffix', { message }));
       } else {
         setStatusText(message);
       }

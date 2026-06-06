@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useTranslation } from 'react-i18next';
 import { POICard } from '../../../shared/services/backendApi';
 import { styles, NEON } from '../screens/MapScreen.styles';
 import { fmtDistance, ttsSpeak, openInBrowser, getTransParkingUrl } from '../utils/mapUtils';
@@ -31,6 +32,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   hosLimitS,
   topOffset,
 }) => {
+  const { t } = useTranslation();
   const navigation = useNavigation<NavProp>();
   const remainAfterTravel = hosLimitS - drivingSeconds - (parking.travel_time ?? 0);
   const [tpLoading, setTpLoading] = useState(false);
@@ -61,7 +63,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
             remainAfterTravel < 0   && { borderColor: '#F44336', borderWidth: 1 },
           ]}>
             <Text style={[styles.pkBadgeTxt, { fontSize: 11 }]}>
-              🕐 {Math.round(parking.travel_time / 60)} мин
+              🕐 {Math.round(parking.travel_time / 60)} {t('parking.minutesShort')}
             </Text>
           </View>
         )}
@@ -76,21 +78,21 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
                                     { color: '#F44336' },
         ]}>
           {remainAfterTravel > 0
-            ? `Остават: ${Math.round(remainAfterTravel / 60)} мин`
-            : `Закъснение: превишаваш с ${Math.round(-remainAfterTravel / 60)} мин!`}
+            ? t('parking.remainingAfter', { minutes: Math.round(remainAfterTravel / 60) })
+            : t('parking.lateBy', { minutes: Math.round(-remainAfterTravel / 60) })}
         </Text>
       )}
 
       {/* Amenity badges */}
       <View style={styles.parkingBubbleBadgeRow}>
         <View style={[styles.pkBadge, parking.paid ? styles.pkBadgePaid : styles.pkBadgeFree]}>
-          <Text style={styles.pkBadgeTxt}>{parking.paid ? '💳 Платен' : '✅ Безплатен'}</Text>
+          <Text style={styles.pkBadgeTxt}>{parking.paid ? `💳 ${t('parking.paid')}` : `✅ ${t('parking.free')}`}</Text>
         </View>
         {parking.showers  && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚿</Text></View>}
         {parking.toilets  && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🚽</Text></View>}
         {parking.wifi     && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>📶 WiFi</Text></View>}
-        {parking.security && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔒 Охрана</Text></View>}
-        {parking.lighting && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>💡 Осветен</Text></View>}
+        {parking.security && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>🔒 {t('parking.security')}</Text></View>}
+        {parking.lighting && <View style={styles.pkBadge}><Text style={styles.pkBadgeTxt}>💡 {t('parking.lighted')}</Text></View>}
         {parking.capacity != null && (
           <View style={styles.pkBadge}>
             <Text style={styles.pkBadgeTxt}>🚛 {parking.capacity}</Text>
@@ -106,7 +108,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
           onPress={() => { onClose(); onClearResults(); onNavigate([parking.lng, parking.lat], parking.name); }}
         >
           <Icon name="navigation-variant" size={16} color="#0a0c1c" />
-          <Text style={styles.parkingBubbleNavBtnTxt}>Навигация</Text>
+          <Text style={styles.parkingBubbleNavBtnTxt}>{t('parking.navigation')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -115,7 +117,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
           onPress={() => { onClose(); onClearResults(); onAddWaypoint([parking.lng, parking.lat], parking.name); }}
         >
           <Icon name="map-marker-plus" size={16} color={NEON} />
-          <Text style={styles.parkingBubbleWpBtnTxt}>+ Спирка</Text>
+          <Text style={styles.parkingBubbleWpBtnTxt}>{t('parking.stop')}</Text>
         </TouchableOpacity>
 
         {parking.transparking_id ? (
@@ -145,7 +147,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
             onPress={() => openInBrowser(parking.website!)}
           >
             <Icon name="open-in-new" size={12} color={NEON} />
-            <Text style={styles.pkWebBtnTxt}>Уеб</Text>
+            <Text style={styles.pkWebBtnTxt}>Web</Text>
           </TouchableOpacity>
         ) : null}
 

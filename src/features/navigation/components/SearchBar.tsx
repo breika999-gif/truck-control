@@ -10,6 +10,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { colors, spacing, typography } from '../../../shared/constants/theme';
+import { useTranslation } from 'react-i18next';
 import {
   suggestPlaces,
   suggestPlacesGoogle,
@@ -35,6 +36,7 @@ interface Props {
 }
 
 export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) {
+  const { t } = useTranslation();
   const [query, setQuery]           = useState('');
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -243,7 +245,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
               <TextInput
                 ref={originInputRef}
                 style={styles.originInput}
-                placeholder="Начална точка..."
+                placeholder={t('search.origin')}
                 placeholderTextColor={colors.textMuted}
                 value={originQuery}
                 onChangeText={handleOriginChange}
@@ -254,7 +256,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
             ) : (
               <TouchableOpacity style={{ flex: 1 }} onPress={focusOrigin}>
                 <Text style={styles.originLabel} numberOfLines={1}>
-                  {originLabel ?? 'Моето местоположение'}
+                  {originLabel ?? t('search.myLocation')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -293,7 +295,7 @@ export default function SearchBar({ onSelect, onClear, onOriginChange }: Props) 
 
         <TextInput
           style={styles.input}
-          placeholder="Търси дестинация..."
+          placeholder={t('search.destination')}
           placeholderTextColor={colors.textMuted}
           value={query}
           onChangeText={handleChange}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import i18n from '../../../i18n';
 
 export interface Ban {
   flag: string;
@@ -43,7 +44,7 @@ export function useTruckBans(date: string) {
       const key = keyData.key;
 
       if (!key) {
-        throw new Error('Неуспешно извличане на ключ за сесия');
+        throw new Error(i18n.t('bans.sessionKeyFailed'));
       }
 
       // 4. Fetch the actual bans using the dynamic param and key
@@ -52,7 +53,7 @@ export function useTruckBans(date: string) {
       const rawBans = await bansResp.json();
 
       if (!Array.isArray(rawBans)) {
-        throw new Error('Невалиден формат на данните от източника');
+        throw new Error(i18n.t('bans.invalidData'));
       }
 
       const formatted: Ban[] = rawBans.map((b: any) => ({
@@ -60,12 +61,12 @@ export function useTruckBans(date: string) {
         country: b.cr || '',
         time: b.tm || '',
         alert: !!b.al,
-        note: b.al ? 'Важна забрана' : '',
+        note: b.al ? i18n.t('bans.important') : '',
       }));
 
       setBans(formatted);
     } catch (err: any) {
-      setError(err.message || 'Грешка при връзка със сървъра за забрани');
+      setError(err.message || i18n.t('bans.serverError'));
     } finally {
       setLoading(false);
     }

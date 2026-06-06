@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -22,12 +23,14 @@ const MapLongPressMenu: React.FC<MapLongPressMenuProps> = ({
   onAddWaypoint,
   onStar,
 }) => {
+  const { t } = useTranslation();
+
   return (
     <View style={styles.longPressPopup}>
       {/* Header row */}
       <View style={styles.longPressHeader}>
         <Icon name="map-marker" size={18} color="#00bfff" />
-        <Text style={styles.longPressTitle}> Избрана точка</Text>
+        <Text style={styles.longPressTitle}> {t('mapLongPress.selectedPoint')}</Text>
         <TouchableOpacity style={styles.longPressCloseBtn} activeOpacity={0.7} onPress={onClose}>
           <Icon name="close" size={18} color="rgba(255,255,255,0.6)" />
         </TouchableOpacity>
@@ -49,7 +52,7 @@ const MapLongPressMenu: React.FC<MapLongPressMenuProps> = ({
         >
           <View style={styles.longPressBtnInner}>
             <Icon name="navigation" size={20} color="#0a0c1c" />
-            <Text style={styles.longPressBtnTxt}>Навигация</Text>
+            <Text style={styles.longPressBtnTxt}>{t('mapLongPress.navigation')}</Text>
           </View>
         </TouchableOpacity>
 
@@ -59,12 +62,12 @@ const MapLongPressMenu: React.FC<MapLongPressMenuProps> = ({
             activeOpacity={0.75}
             onPress={() => {
               onClose();
-              onAddWaypoint(coord, `Спирка ${waypointCount + 1}`);
+              onAddWaypoint(coord, t('mapLongPress.stopName', { number: waypointCount + 1 }));
             }}
           >
             <View style={styles.longPressBtnInner}>
               <Icon name="map-marker-plus" size={20} color="#0a0c1c" />
-              <Text style={styles.longPressBtnTxt}>Добави спирка</Text>
+              <Text style={styles.longPressBtnTxt}>{t('mapLongPress.addStop')}</Text>
             </View>
           </TouchableOpacity>
         )}
@@ -76,7 +79,7 @@ const MapLongPressMenu: React.FC<MapLongPressMenuProps> = ({
         >
           <View style={styles.longPressBtnInner}>
             <Text style={{ fontSize: 18 }}>⭐</Text>
-            <Text style={styles.longPressBtnTxt}>Запази</Text>
+            <Text style={styles.longPressBtnTxt}>{t('mapLongPress.save')}</Text>
           </View>
         </TouchableOpacity>
       </View>

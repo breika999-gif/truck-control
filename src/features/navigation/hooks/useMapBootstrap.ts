@@ -13,6 +13,7 @@ import {
   isReachQuestion,
   truckCappedRouteDurationS,
 } from '../utils/mapScreenUtils';
+import i18n from '../../../i18n';
 
 type CameraRef = MutableRefObject<any>;
 
@@ -97,7 +98,12 @@ export function useMapBootstrap({
     const targetM = Math.min(route.distance, route.distance * ((requestedMin * 60) / cappedDurationS));
     const point = coordinateAtRouteDistance(route.geometry.coordinates as [number, number][], targetM);
     if (!point) return;
-    setReachMarker({ coords: point, label: targetM >= route.distance ? 'Стигаш' : `Дотук ${Math.round(targetM / 1000)}км` });
+    setReachMarker({
+      coords: point,
+      label: targetM >= route.distance
+        ? i18n.t('route.reachDestination')
+        : i18n.t('route.reachDistanceKm', { km: Math.round(targetM / 1000) }),
+    });
     cameraRef.current?.animateToRegion({
       latitude: point[1],
       longitude: point[0],

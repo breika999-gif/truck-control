@@ -1,5 +1,6 @@
 import React from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 interface HGVSpeedSignProps {
   speedKmh: number;
@@ -7,11 +8,11 @@ interface HGVSpeedSignProps {
   isCurrent?: boolean;
 }
 
-function formatDistance(distanceM: number): string {
+function formatDistance(distanceM: number, t: (key: string) => string): string {
   if (distanceM < 1000) {
-    return `${Math.round(distanceM / 10) * 10} м`;
+    return `${Math.round(distanceM / 10) * 10} ${t('units.meterShort')}`;
   }
-  return `${(distanceM / 1000).toFixed(1)} км`;
+  return `${(distanceM / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
 }
 
 const HGVSpeedSign: React.FC<HGVSpeedSignProps> = ({
@@ -19,6 +20,7 @@ const HGVSpeedSign: React.FC<HGVSpeedSignProps> = ({
   distanceM,
   isCurrent = false,
 }) => {
+  const { t } = useTranslation();
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
   React.useEffect(() => {
@@ -39,7 +41,7 @@ const HGVSpeedSign: React.FC<HGVSpeedSignProps> = ({
     <Animated.View style={[speedStyles.wrap, animatedStyle]}>
       {!isCurrent && (
         <View style={speedStyles.badge}>
-          <Text style={speedStyles.badgeText}>{formatDistance(distanceM)}</Text>
+          <Text style={speedStyles.badgeText}>{formatDistance(distanceM, t)}</Text>
         </View>
       )}
       <View style={speedStyles.sign}>

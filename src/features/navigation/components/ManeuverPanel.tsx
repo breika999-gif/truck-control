@@ -6,6 +6,7 @@ import {
   Animated,
   StyleSheet,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import { fmtDistance, type RouteStep } from '../api/directions';
 
@@ -86,15 +87,15 @@ function progressColor(ratio: number): string {
   return '#F44336';                  // red — close
 }
 
-function resolveInstruction(type: string, modifier: string | undefined, original: string): string {
+function resolveInstruction(type: string, modifier: string | undefined, original: string, stayCurrent: string): string {
   // Fork/merge: slight deviation = keep current lane, no lane change needed
   if ((type === 'fork' || type === 'merge') &&
       (modifier === 'slight left' || modifier === 'slight right')) {
-    return 'Остани в текущата лента';
+    return stayCurrent;
   }
   // On-ramp with straight = stay on current road, not taking ramp
   if (type === 'on ramp' && modifier === 'straight') {
-    return 'Остани в текущата лента';
+    return stayCurrent;
   }
   return original;
 }
@@ -105,6 +106,7 @@ const ManeuverPanel: React.FC<ManeuverPanelProps> = ({
   distToTurn,
   bottom,
 }) => {
+  const { t } = useTranslation();
   const flashOpacity = useRef(new Animated.Value(1)).current;
   const progressAnim = useRef(new Animated.Value(1)).current;
   const icon = getManeuverIcon(step.maneuver.type, step.maneuver.modifier);
@@ -176,7 +178,7 @@ const ManeuverPanel: React.FC<ManeuverPanelProps> = ({
         />
         <View style={s.textCol}>
           <Text style={s.instruction} numberOfLines={2}>
-            {resolveInstruction(step.maneuver.type, step.maneuver.modifier, step.maneuver.instruction)}
+            {resolveInstruction(step.maneuver.type, step.maneuver.modifier, step.maneuver.instruction, t('lane.stayCurrent'))}
           </Text>
           <Text style={s.distance}>{fmtDistance(distToTurn)}</Text>
         </View>
@@ -186,7 +188,7 @@ const ManeuverPanel: React.FC<ManeuverPanelProps> = ({
         <>
           <View style={s.divider} />
           <View style={s.nextRow}>
-            <Text style={s.thenLabel}>след ▸</Text>
+            <Text style={s.thenLabel}>{t('ahead.after', { distance: '▸' })}</Text>
             {nextIcon ? (
               <Image source={nextIcon} style={s.nextArrow} resizeMode="contain" />
             ) : null}

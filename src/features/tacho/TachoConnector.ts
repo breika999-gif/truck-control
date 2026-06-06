@@ -15,6 +15,7 @@ import RNBluetoothClassic, {
   BluetoothDevice as ClassicDevice,
 } from 'react-native-bluetooth-classic';
 import { BleManager, Device as BleDevice } from 'react-native-ble-plx';
+import i18n from '../../i18n';
 
 // ── Stoneridge device name patterns (Classic BT) ──────────────────────────
 const STONERIDGE_PATTERNS = ['SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'TachoLink', 'Tacho Link'];
@@ -65,7 +66,7 @@ export class TachoConnector {
   // ── Scan both Classic BT (Stoneridge) and BLE (VDO) ──────────────────────
   async startScan(cb: ScanCallbacks, timeoutMs = 15000): Promise<void> {
     this.foundIds.clear();
-    cb.onStatus('scanning', 'Търся тахографи (Stoneridge + VDO)...');
+    cb.onStatus('scanning', i18n.t('tacho.scanAll'));
 
     // Track A: Classic Bluetooth (Stoneridge)
     this._scanClassic(cb);
@@ -75,7 +76,7 @@ export class TachoConnector {
 
     this.scanTimeout = setTimeout(() => {
       this.stopScan();
-      cb.onStatus('idle', 'Сканирането приключи.');
+      cb.onStatus('idle', i18n.t('tacho.scanDone'));
     }, timeoutMs);
   }
 
@@ -132,7 +133,7 @@ export class TachoConnector {
     device: TachoDevice,
     onStatus: (status: ScanStatus, msg?: string) => void,
   ): Promise<'classic' | 'ble' | null> {
-    onStatus('connecting', `Свързване с ${device.name}...`);
+    onStatus('connecting', i18n.t('tacho.connectingDevice', { device: device.name }));
 
     if (device.classicDevice) {
       return this._connectClassic(device, onStatus);
@@ -149,9 +150,9 @@ export class TachoConnector {
   ): Promise<'classic'> {
     const connected = await device.classicDevice!.connect();
     if (connected) {
-      onStatus('connected', `Свързан с ${device.name} (Classic BT)`);
+      onStatus('connected', i18n.t('tacho.connectedClassic', { device: device.name }));
     } else {
-      onStatus('error', `Неуспешно свързване с ${device.name}`);
+      onStatus('error', i18n.t('tacho.connectionFailedDevice', { device: device.name }));
     }
     return 'classic';
   }
@@ -162,7 +163,7 @@ export class TachoConnector {
   ): Promise<'ble'> {
     const connected = await device.bleDevice!.connect({ timeout: 10000 });
     await connected.discoverAllServicesAndCharacteristics();
-    onStatus('connected', `Свързан с ${device.name} (BLE)`);
+    onStatus('connected', i18n.t('tacho.connectedBle', { device: device.name }));
     return 'ble';
   }
 

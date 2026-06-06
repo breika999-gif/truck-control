@@ -12,6 +12,7 @@ import {
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigation } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
 import {
   VehicleProfile,
   VehicleProfileSchema,
@@ -22,35 +23,6 @@ import {
 } from '../../../shared/types/vehicle';
 import { useVehicleStore } from '../../../store/vehicleStore';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
-
-const FUEL_OPTIONS: { label: string; value: FuelType }[] = [
-  { label: 'Дизел', value: 'diesel' },
-  { label: 'LPG', value: 'lpg' },
-  { label: 'Електрически', value: 'electric' },
-  { label: 'Хибрид', value: 'hybrid' },
-  { label: 'CNG', value: 'cng' },
-];
-
-const HAZMAT_OPTIONS: { label: string; value: HazmatClass }[] = [
-  { label: 'Без ADR', value: 'none' },
-  { label: 'Клас 1 – Взривни', value: '1' },
-  { label: 'Клас 2 – Газове', value: '2' },
-  { label: 'Клас 3 – Запалими течности', value: '3' },
-  { label: 'Клас 4 – Запалими твърди', value: '4' },
-  { label: 'Клас 5 – Оксиданти', value: '5' },
-  { label: 'Клас 6 – Отровни', value: '6' },
-  { label: 'Клас 7 – Радиоактивни', value: '7' },
-  { label: 'Клас 8 – Корозивни', value: '8' },
-  { label: 'Клас 9 – Разни', value: '9' },
-];
-
-const ADR_TUNNEL_OPTIONS: { label: string; value: AdrTunnelCode }[] = [
-  { label: 'Няма', value: 'none' },
-  { label: 'B', value: 'B' },
-  { label: 'C', value: 'C' },
-  { label: 'D', value: 'D' },
-  { label: 'E', value: 'E' },
-];
 
 function FieldLabel({ label }: { label: string }) {
   return <Text style={styles.label}>{label}</Text>;
@@ -118,8 +90,35 @@ function SegmentedPicker<T extends string>({
 }
 
 export default function VehicleProfileScreen() {
+  const { t } = useTranslation();
   const navigation = useNavigation();
   const { profile, setProfile } = useVehicleStore();
+  const fuelOptions = React.useMemo<{ label: string; value: FuelType }[]>(() => [
+    { label: t('vehicle.diesel'), value: 'diesel' },
+    { label: 'LPG', value: 'lpg' },
+    { label: t('vehicle.electric'), value: 'electric' },
+    { label: t('vehicle.hybrid'), value: 'hybrid' },
+    { label: 'CNG', value: 'cng' },
+  ], [t]);
+  const hazmatOptions = React.useMemo<{ label: string; value: HazmatClass }[]>(() => [
+    { label: t('vehicle.noAdr'), value: 'none' },
+    { label: t('vehicle.hazmat1'), value: '1' },
+    { label: t('vehicle.hazmat2'), value: '2' },
+    { label: t('vehicle.hazmat3'), value: '3' },
+    { label: t('vehicle.hazmat4'), value: '4' },
+    { label: t('vehicle.hazmat5'), value: '5' },
+    { label: t('vehicle.hazmat6'), value: '6' },
+    { label: t('vehicle.hazmat7'), value: '7' },
+    { label: t('vehicle.hazmat8'), value: '8' },
+    { label: t('vehicle.hazmat9'), value: '9' },
+  ], [t]);
+  const adrTunnelOptions = React.useMemo<{ label: string; value: AdrTunnelCode }[]>(() => [
+    { label: t('vehicle.none'), value: 'none' },
+    { label: 'B', value: 'B' },
+    { label: 'C', value: 'C' },
+    { label: 'D', value: 'D' },
+    { label: 'E', value: 'E' },
+  ], [t]);
 
   const {
     control,
@@ -145,9 +144,9 @@ export default function VehicleProfileScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.sectionTitle}>{'Основни данни'}</Text>
+        <Text style={styles.sectionTitle}>{t('vehicle.basicData')}</Text>
 
-        <FieldLabel label="Наименование" />
+        <FieldLabel label={t('vehicle.name')} />
         <Controller
           control={control}
           name="name"
@@ -158,7 +157,7 @@ export default function VehicleProfileScreen() {
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
-                placeholder="напр. Влекач МИН"
+                placeholder={t('vehicle.namePlaceholder')}
                 placeholderTextColor={colors.textMuted}
               />
               <ErrorText msg={errors.name?.message} />
@@ -166,7 +165,7 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <FieldLabel label="Регистрационен номер" />
+        <FieldLabel label={t('vehicle.plate')} />
         <Controller
           control={control}
           name="plate"
@@ -177,7 +176,7 @@ export default function VehicleProfileScreen() {
                 value={value}
                 onChangeText={(t) => onChange(t.toUpperCase())}
                 onBlur={onBlur}
-                placeholder="МИ 1234 ИБ"
+                placeholder={t('vehicle.platePlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="characters"
               />
@@ -186,11 +185,11 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <Text style={styles.sectionTitle}>{'Размери и маса'}</Text>
+        <Text style={styles.sectionTitle}>{t('vehicle.dimensions')}</Text>
 
         <View style={styles.row}>
           <View style={styles.halfField}>
-            <FieldLabel label="Височина (м)" />
+            <FieldLabel label={t('vehicle.height')} />
             <Controller
               control={control}
               name="height_m"
@@ -205,7 +204,7 @@ export default function VehicleProfileScreen() {
             />
           </View>
           <View style={styles.halfField}>
-            <FieldLabel label="Ширина (м)" />
+            <FieldLabel label={t('vehicle.width')} />
             <Controller
               control={control}
               name="width_m"
@@ -223,7 +222,7 @@ export default function VehicleProfileScreen() {
 
         <View style={styles.row}>
           <View style={styles.halfField}>
-            <FieldLabel label="Дължина (м)" />
+            <FieldLabel label={t('vehicle.length')} />
             <Controller
               control={control}
               name="length_m"
@@ -238,7 +237,7 @@ export default function VehicleProfileScreen() {
             />
           </View>
           <View style={styles.halfField}>
-            <FieldLabel label="Тегло (т)" />
+            <FieldLabel label={t('vehicle.weight')} />
             <Controller
               control={control}
               name="weight_t"
@@ -254,7 +253,7 @@ export default function VehicleProfileScreen() {
           </View>
         </View>
 
-        <FieldLabel label="Брой оси" />
+        <FieldLabel label={t('vehicle.axles')} />
         <Controller
           control={control}
           name="axle_count"
@@ -276,35 +275,35 @@ export default function VehicleProfileScreen() {
           )}
         />
 
-        <Text style={styles.sectionTitle}>{'Тип гориво'}</Text>
+        <Text style={styles.sectionTitle}>{t('vehicle.fuelType')}</Text>
         <Controller
           control={control}
           name="fuel_type"
           render={({ field: { value, onChange } }) => (
-            <SegmentedPicker options={FUEL_OPTIONS} value={value} onChange={onChange} />
+            <SegmentedPicker options={fuelOptions} value={value} onChange={onChange} />
           )}
         />
 
-        <Text style={styles.sectionTitle}>{'ADR клас (опционален)'}</Text>
+        <Text style={styles.sectionTitle}>{t('vehicle.adrClass')}</Text>
         <Controller
           control={control}
           name="hazmat_class"
           render={({ field: { value, onChange } }) => (
             <SegmentedPicker
-              options={HAZMAT_OPTIONS}
+              options={hazmatOptions}
               value={(value ?? 'none') as HazmatClass}
               onChange={onChange}
             />
           )}
         />
 
-        <Text style={styles.sectionTitle}>{'ADR тунел код'}</Text>
+        <Text style={styles.sectionTitle}>{t('vehicle.adrTunnel')}</Text>
         <Controller
           control={control}
           name="adr_tunnel"
           render={({ field: { value, onChange } }) => (
             <SegmentedPicker
-              options={ADR_TUNNEL_OPTIONS}
+              options={adrTunnelOptions}
               value={(value ?? 'none') as AdrTunnelCode}
               onChange={onChange}
             />
@@ -312,7 +311,7 @@ export default function VehicleProfileScreen() {
         />
 
         <TouchableOpacity style={styles.saveButton} onPress={handleSubmit(onSave)}>
-          <Text style={styles.saveButtonText}>{'Запази профила'}</Text>
+          <Text style={styles.saveButtonText}>{t('vehicle.save')}</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

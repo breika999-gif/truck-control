@@ -6,6 +6,7 @@ import Mapbox, { UserTrackingMode } from '@rnmapbox/maps';
 import { MAP_CENTER } from '../../../shared/constants/config';
 import type { MapAction } from '../../../shared/services/backendApi';
 import type { POICategory } from '../api/poi';
+import i18n from '../../../i18n';
 
 // ── Asset requires ────────────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -98,6 +99,19 @@ export const POI_CATEGORIES: POICategory[] = [
 
 export const DEPART_LABELS = ['СЕГА', '+1 ч', '+2 ч', 'Утре 08:00'] as const;
 export type DepartLabel = (typeof DEPART_LABELS)[number];
+
+export function departLabelText(label: DepartLabel): string {
+  switch (label) {
+    case '+1 ч':
+      return i18n.t('route.departOneHour');
+    case '+2 ч':
+      return i18n.t('route.departTwoHours');
+    case 'Утре 08:00':
+      return i18n.t('route.departTomorrowMorning');
+    default:
+      return i18n.t('route.departNow');
+  }
+}
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
@@ -200,20 +214,27 @@ export function parseBubbleText(raw: string): string {
     const explicit = String(obj.text ?? obj.message ?? obj.reply?.text ?? obj.reply ?? '').trim();
     if (explicit && explicit !== '[object Object]') return explicit;
 
-    const dest = String(obj.destination ?? obj.dest_name ?? 'дестинацията');
+    const dest = String(obj.destination ?? obj.dest_name ?? i18n.t('voice.destinationFallback'));
     const action = String(obj.action ?? '');
 
     switch (action) {
-      case 'route':       return `Пътуваме към ${dest}. Приятен път!`;
-      case 'show_routes': return `Варианти за маршрут до ${dest}.`;
-      case 'show_pois':   return `Търся ${obj.category === 'fuel' ? 'бензиностанции' : 'места за спиране'} наблизо…`;
-      case 'tachograph':  return 'Проверка на тахографа и времето за почивка.';
-      case 'add_waypoint': return `Добавям ${obj.name ?? 'спирка'} към маршрута.`;
+      case 'route':
+        return i18n.t('voice.travelTo', { destination: dest });
+      case 'show_routes':
+        return i18n.t('voice.routeOptionsTo', { destination: dest });
+      case 'show_pois':
+        return i18n.t('voice.searchingPois', {
+          category: obj.category === 'fuel' ? i18n.t('voice.poiFuel') : i18n.t('voice.poiStops'),
+        });
+      case 'tachograph':
+        return i18n.t('voice.tachographCheck');
+      case 'add_waypoint':
+        return i18n.t('voice.addingWaypoint', { name: obj.name ?? i18n.t('common.stop') });
       default:
         // If it's a message action but text was missing
-        if (action === 'message' && !explicit) return 'Как мога да помогна?';
+        if (action === 'message' && !explicit) return i18n.t('voice.howHelp');
         // Unknown action — hide raw JSON, show generic confirmation
-        return explicit || 'Готово.';
+        return explicit || i18n.t('voice.done');
     }
   }
 
@@ -231,29 +252,29 @@ export function voiceText(act: MapAction): string {
       const count = act.cards?.length ?? 0;
       const nearest =
         'nearest_m' in act && typeof act.nearest_m === 'number' && act.nearest_m > 0
-          ? `, най-близката на ${Math.round(act.nearest_m)} метра`
+          ? i18n.t('voice.nearestMeters', { meters: Math.round(act.nearest_m) })
           : '';
       switch (act.category) {
-        case 'truck_stop':   return `Намерих ${count} паркинга за камиони.`;
-        case 'fuel':         return `Намерих ${count} горивни станции.`;
-        case 'speed_camera': return `Внимание, ${count} камери в района${nearest}.`;
-        case 'business':     return `Намерих ${count} места. Показвам на картата.`;
-        default:             return `Намерих ${count} резултата.`;
+        case 'truck_stop':   return i18n.t('voice.foundTruckParkings', { count });
+        case 'fuel':         return i18n.t('voice.foundFuelStations', { count });
+        case 'speed_camera': return i18n.t('voice.camerasNearby', { count, nearest });
+        case 'business':     return i18n.t('voice.foundPlaces', { count });
+        default:             return i18n.t('voice.foundResults', { count });
       }
     }
     case 'add_waypoint':
-      return `Добавена спирка ${act.name}. Преизчислявам маршрута.`;
+      return i18n.t('voice.waypointAdded', { name: act.name });
     case 'route':
-      return `Прокладвам маршрут до ${act.destination}.`;
+      return i18n.t('voice.calculatingRouteTo', { destination: act.destination });
     case 'show_routes': {
       const count = act.options?.length ?? 0;
-      return `Намерих ${count} варианта за ${act.destination}. Избери маршрут.`;
+      return i18n.t('voice.foundRouteOptions', { count, destination: act.destination });
     }
     case 'tachograph': {
       const rem = act.remaining_hours ?? 0;
-      if (act.break_needed) return 'Достигнат лимит. Задължителна 45-минутна почивка.';
-      if (rem < 0.5)         return `${Math.round(rem * 60)} минути до почивка. Спри скоро.`;
-      return `Остават ${rem.toFixed(1)} часа до задължителна почивка.`;
+      if (act.break_needed) return i18n.t('voice.breakLimit');
+      if (rem < 0.5) return i18n.t('voice.minutesUntilBreak', { minutes: Math.round(rem * 60) });
+      return i18n.t('voice.hoursUntilBreak', { hours: rem.toFixed(1) });
     }
     case 'message':
       return act.text ?? '';
@@ -262,12 +283,8 @@ export function voiceText(act: MapAction): string {
   }
 }
 
-/** Format distance in meters to human-readable string (e.g. "1.2 km", "350 м") */
-export function fmtDistance(m: number | null | undefined): string {
-  if (m == null) return '';
-  if (m >= 1000) return `${(m / 1000).toFixed(1)} км`;
-  return `${Math.round(m)} м`;
-}
+// fmtDistance and fmtDuration are now imported from ../api/directions
+export { fmtDistance, fmtDuration } from '../api/directions';
 
 /** Remaining HOS time formatted as H:MM */
 export function fmtHOS(drivenSeconds: number): string {
@@ -419,6 +436,7 @@ interface StableCameraProps {
   cameraRef: React.RefObject<any>;
   navigating: boolean;
   mapLoaded: boolean;
+  idlePitch?: number;
   speed?: number;
   isTracking?: boolean;
   userCoords?: [number, number] | null;
@@ -440,7 +458,7 @@ function paddingObjectToArray(padding?: { top?: number; right?: number; bottom?:
 }
 
 export const StableCamera = React.memo(
-  ({ cameraRef, navigating, mapLoaded, speed, isTracking, userCoords, distToTurn }: StableCameraProps) => {
+  ({ cameraRef, navigating, mapLoaded, idlePitch = 0, speed, isTracking, userCoords, distToTurn }: StableCameraProps) => {
     const nativeCameraRef = React.useRef<any>(null);
     const speedKmh = speed ?? 0;
     const isCourseTracking = speedKmh >= 1;
@@ -457,6 +475,7 @@ export const StableCamera = React.memo(
       return 16.2;
     })();
     const followPitch = (() => {
+      if (!navigating) return Math.max(0, Math.min(idlePitch, 60));
       // Near turn: increase pitch for 3D city feel
       if (distToTurn != null && distToTurn < 300) return 62;
       // Highway: flatten for bird's eye

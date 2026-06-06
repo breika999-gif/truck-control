@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import { POICard } from '../../../shared/services/backendApi';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -12,6 +13,8 @@ interface FuelPanelProps {
 }
 
 const FuelPanel: React.FC<FuelPanelProps> = ({ fuel, onClose, onAddWaypoint, topOffset }) => {
+  const { t } = useTranslation();
+
   return (
     <View style={[styles.fuelBubble, { top: topOffset }]}>
       {/* Header */}
@@ -26,20 +29,20 @@ const FuelPanel: React.FC<FuelPanelProps> = ({ fuel, onClose, onAddWaypoint, top
 
       {/* Distance */}
       <Text style={styles.parkingBubbleDist}>
-        {fuel.distance_m > 0 ? `${(fuel.distance_m / 1000).toFixed(1)} km по маршрута` : 'Близо до маршрута'}
+        {fuel.distance_m > 0 ? `${(fuel.distance_m / 1000).toFixed(1)} ${t('panels.alongRouteKm')}` : t('panels.nearRoute')}
       </Text>
 
       {/* Info Row */}
       <View style={styles.parkingBubbleBadgeRow}>
         <View style={styles.fuelBadge}>
           <Text style={styles.fuelBadgeTxt}>
-            💰 {fuel.price || 'Цена неизвестна'}
+            💰 {fuel.price || t('panels.unknownPrice')}
           </Text>
         </View>
         
         <View style={[styles.fuelBadge, fuel.truck_lane ? { borderColor: '#4cff91' } : {}]}>
           <Text style={[styles.fuelBadgeTxt, fuel.truck_lane ? { color: '#4cff91' } : {}]}>
-            {fuel.truck_lane ? '✅ Камион лента' : '❌ Няма специална лента'}
+            {fuel.truck_lane ? `✅ ${t('panels.hasTruckLane')}` : `❌ ${t('panels.noTruckLane')}`}
           </Text>
         </View>
 
@@ -58,7 +61,7 @@ const FuelPanel: React.FC<FuelPanelProps> = ({ fuel, onClose, onAddWaypoint, top
           onPress={() => onAddWaypoint([fuel.lng, fuel.lat], fuel.name)}
         >
           <Icon name="map-marker-plus" size={16} color="#0a0c1c" />
-          <Text style={styles.parkingBubbleNavBtnTxt}>Добави спирка</Text>
+          <Text style={styles.parkingBubbleNavBtnTxt}>{t('panels.addStop')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -66,7 +69,7 @@ const FuelPanel: React.FC<FuelPanelProps> = ({ fuel, onClose, onAddWaypoint, top
           activeOpacity={0.8}
           onPress={onClose}
         >
-          <Text style={styles.parkingBubbleWebBtnTxt}>Затвори</Text>
+          <Text style={styles.parkingBubbleWebBtnTxt}>{t('common.close')}</Text>
         </TouchableOpacity>
       </View>
     </View>

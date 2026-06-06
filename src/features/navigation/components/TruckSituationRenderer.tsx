@@ -14,6 +14,7 @@
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import CompositeRestrictionSign from './CompositeRestrictionSign';
 import HGVSpeedSign from './HGVSpeedSign';
 import type {
@@ -31,9 +32,10 @@ interface Props {
 // ── Tunnel chip ───────────────────────────────────────────────────────────────
 
 const TunnelChip: React.FC<{ s: TunnelAheadSituation }> = ({ s: sit }) => {
+  const { t } = useTranslation();
   const dist = sit.distanceM < 1000
-    ? `${Math.round(sit.distanceM / 10) * 10} м`
-    : `${(sit.distanceM / 1000).toFixed(1)} км`;
+    ? `${Math.round(sit.distanceM / 10) * 10} ${t('units.meterShort')}`
+    : `${(sit.distanceM / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
   const color = sit.adrRelevant ? '#FF3B30' : '#4cff91';
   const bg    = sit.adrRelevant ? 'rgba(255,59,48,0.20)' : 'rgba(76,255,145,0.12)';
   const icon  = sit.adrRelevant ? '☢️' : '🚇';
@@ -43,9 +45,9 @@ const TunnelChip: React.FC<{ s: TunnelAheadSituation }> = ({ s: sit }) => {
       <Text style={[chip.icon]}>{icon}</Text>
       <View style={chip.body}>
         <Text style={[chip.title, { color }]}>
-          {sit.adrRelevant ? 'ADR ЗАБРАНЕН ТУНЕЛ' : 'ТУНЕЛ'}
+          {sit.adrRelevant ? t('truckSituation.adrForbiddenTunnel') : t('truckSituation.tunnel')}
         </Text>
-        <Text style={[chip.sub, { color }]}>{sit.name} · след {dist}</Text>
+        <Text style={[chip.sub, { color }]}>{sit.name} · {t('ahead.after', { distance: dist })}</Text>
       </View>
     </View>
   );
@@ -54,6 +56,7 @@ const TunnelChip: React.FC<{ s: TunnelAheadSituation }> = ({ s: sit }) => {
 // ── Tacho chip ────────────────────────────────────────────────────────────────
 
 const TachoChip: React.FC<{ s: TachoBreakSituation }> = ({ s: sit }) => {
+  const { t } = useTranslation();
   const remMin = Math.round(sit.remainingDriveSec / 60);
   const critical = remMin < 30;
   const color = critical ? '#FF3B30' : '#FF9500';
@@ -63,8 +66,8 @@ const TachoChip: React.FC<{ s: TachoBreakSituation }> = ({ s: sit }) => {
     <View style={[chip.wrap, { backgroundColor: bg, borderColor: color, right: 12, top: 80 }]}>
       <Text style={chip.icon}>⏱</Text>
       <View style={chip.body}>
-        <Text style={[chip.title, { color }]}>ПАУЗА СЛЕД {sit.breakDistKm} КМ</Text>
-        <Text style={[chip.sub, { color }]}>Остават {remMin} мин шофиране</Text>
+        <Text style={[chip.title, { color }]}>{t('truckSituation.pauseAfter', { km: sit.breakDistKm })}</Text>
+        <Text style={[chip.sub, { color }]}>{t('truckSituation.remainingDriving', { minutes: remMin })}</Text>
       </View>
     </View>
   );

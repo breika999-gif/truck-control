@@ -1,5 +1,6 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { RouteAheadEvent, RestrictionEventPayload } from '../utils/routeAheadEvents';
 
 interface AheadPreviewQueueProps {
@@ -19,11 +20,11 @@ const MAX_CHIPS = 4;
 const MAX_DISTANCE_M = 15000;
 const ACTIVE_SKIP_M = 80;
 
-function formatDistance(distanceM: number): string {
+function formatDistance(distanceM: number, t: (key: string) => string): string {
   if (distanceM < 1000) {
-    return `${Math.round(distanceM / 10) * 10} м`;
+    return `${Math.round(distanceM / 10) * 10} ${t('units.meterShort')}`;
   }
-  return `${(distanceM / 1000).toFixed(1)} км`;
+  return `${(distanceM / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
 }
 
 function restrictionIcon(payload: RestrictionEventPayload): string {
@@ -79,6 +80,7 @@ function shouldSkipEvent(
 function previewChips(
   events: RouteAheadEvent[],
   activeSituationDistanceM?: number,
+  t?: (key: string) => string,
 ): PreviewChip[] {
   return events
     .filter(event => !shouldSkipEvent(event, activeSituationDistanceM))
@@ -88,7 +90,7 @@ function previewChips(
       return {
         key: `${event.type}-${Math.round(event.distanceM)}-${index}`,
         icon,
-        distance: formatDistance(event.distanceM),
+        distance: formatDistance(event.distanceM, t ?? ((key: string) => key)),
         priority: event.priority,
       } satisfies PreviewChip;
     })
@@ -112,9 +114,10 @@ const AheadPreviewQueue: React.FC<AheadPreviewQueueProps> = ({
   events,
   activeSituationDistanceM,
 }) => {
+  const { t } = useTranslation();
   const chips = React.useMemo(
-    () => previewChips(events, activeSituationDistanceM),
-    [events, activeSituationDistanceM],
+    () => previewChips(events, activeSituationDistanceM, t),
+    [events, activeSituationDistanceM, t],
   );
 
   if (!chips.length) return null;

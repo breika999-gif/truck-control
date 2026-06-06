@@ -1,3 +1,5 @@
+import i18n from '../../../i18n';
+
 export type VoiceAction = 'call' | 'whatsapp_chat' | 'whatsapp_call' | 'sms';
 
 export type ParsedVoiceCommand =
@@ -525,10 +527,14 @@ export function buildContactChoicesPrompt(
     .slice(0, 3);
 
   if (spokenNames.length === 0) {
-    return `Намерих ${count} контакта. Кажи номер или цялото име.`;
+    return i18n.t('calling.foundContactsAsk', { count });
   }
 
   const moreCount = count - spokenNames.length;
-  const moreText = moreCount > 0 ? ` и още ${moreCount}` : '';
-  return `Намерих ${count} контакта: ${spokenNames.join(', ')}${moreText}. Кажи номер или име.`;
+  const moreText = moreCount > 0 ? i18n.t('calling.moreContacts', { count: moreCount }) : '';
+  return i18n.t('calling.foundContactsList', {
+    count,
+    names: spokenNames.join(', '),
+    more: moreText,
+  });
 }
