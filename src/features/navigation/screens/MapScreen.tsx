@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { View } from 'react-native';
 import Mapbox, { CustomLocationProvider, LocationPuck } from '@rnmapbox/maps';
+import { useTranslation } from 'react-i18next';
 
 import { useVoice } from '../hooks/useVoice';
 import { useTacho } from '../hooks/useTacho';
@@ -24,7 +25,7 @@ import {
   type POICard,
   type TachoSummary,
 } from '../../../shared/services/backendApi';
-import { styles, NEON } from './MapScreen.styles';
+import { styles } from './MapScreen.styles';
 import {
   NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
   ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_DESTINATION, ICON_BIZ, ICON_NO_OVERTAKING,
@@ -67,6 +68,7 @@ const NAV_PUCK_GLOW = '#6D3DFF';
 // ── Component ────────────────────────────────────────────────────────
 
 const MapScreen: React.FC = () => {
+  const { t } = useTranslation();
   const navigation = useNavigation<MapNavProp>();
   const screenRoute = useRoute<MapRouteProp>();
   const insets = useSafeAreaInsets();
@@ -278,7 +280,7 @@ const MapScreen: React.FC = () => {
   } = useTacho(
     navigating, isDrivingRef, googleUserRef, userCoordsRef, speak, onEndOfDay,
     (remMin) => {
-      ttsSpeak(`Колега, остават ${remMin} минути каране. Търся паркинг...`);
+      ttsSpeak(t('tachoAlerts.remainingDrivingSearchParking', { minutes: remMin }));
       if (userCoords) {
         searchNearbyParking(userCoords[1], userCoords[0], 20000)
           .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5)); })
@@ -361,6 +363,7 @@ const MapScreen: React.FC = () => {
   });
 
   const [customOriginName, setCustomOriginName] = useState('');
+  const [routeControlsVisible, setRouteControlsVisible] = useState(true);
   const mapIsLoaded = mapLoaded;
   const {
     isTracking, lastMapTouchAtRef, mapPitch, puckScale, setAutoRetrackNonce,
@@ -406,6 +409,16 @@ const MapScreen: React.FC = () => {
       }, 1000);
     }
   }, [parkingResults, businessResults, navigating]);
+
+  useEffect(() => {
+    setRouteControlsVisible(true);
+  }, [navigating, route?.distance]);
+
+  useEffect(() => {
+    if (!navigating || !routeControlsVisible) return;
+    const timer = setTimeout(() => setRouteControlsVisible(false), 5000);
+    return () => clearTimeout(timer);
+  }, [navigating, routeControlsVisible]);
 
   const searchTop = insets.top + 18;
   const isSearchingAlongRoute = loadingPOI && sarMode;
@@ -613,6 +626,7 @@ const MapScreen: React.FC = () => {
           }
         }}
         onPress={() => {
+          if (navigating) setRouteControlsVisible((visible) => !visible);
           if (gptChatOpen) setGptChatOpen(false);
           if (geminiChatOpen) setGeminiChatOpen(false);
           if (longPressCoord) setLongPressCoord(null);
@@ -636,6 +650,7 @@ const MapScreen: React.FC = () => {
           cameraRef={cameraRef}
           navigating={navigating}
           mapLoaded={mapIsLoaded}
+          idlePitch={mapPitch}
           speed={speed}
           isTracking={isTracking}
           userCoords={displayCoords}
@@ -701,7 +716,7 @@ const MapScreen: React.FC = () => {
         handleDestinationSelect, handleClear, handleOriginChange, tunnelWarning, insets,
         handleTunnelWarningDismiss, stepToShow, nextStep, distToTurn, currentLanes,
         aheadEvents, truckSituation, displayLanes, laneGlowBg, laneGlowShadow,
-        route, navPhase, routeAheadPOIs, handleRouteTimelinePOIPress, trafficSegments,
+        route, routeControlsVisible, navPhase, routeAheadPOIs, handleRouteTimelinePOIPress, trafficSegments,
         fasterOffer, handleAcceptFasterRoute, dismissOffer, optionsOpen, setOptionsOpen,
         mapMode, setMapMode, lightMode, setLightMode, voiceMuted, setVoiceMuted,
         mapLayers, toggleLayer, avoidUnpaved, setAvoidUnpaved, simulating, startSim, stopSim,

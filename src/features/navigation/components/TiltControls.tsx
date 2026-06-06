@@ -7,6 +7,7 @@ interface TiltControlsProps {
   visible: boolean;
   mapPitch: number;
   bottomOffset: number;
+  position?: 'bottomRight' | 'middleLeft';
   onTiltUp: () => void;
   onTiltDown: () => void;
 }
@@ -14,13 +15,18 @@ interface TiltControlsProps {
 const TiltControls: React.FC<TiltControlsProps> = ({
   visible,
   bottomOffset,
+  position = 'bottomRight',
   onTiltUp,
   onTiltDown,
 }) => {
   if (!visible) return null;
 
+  const positionStyle = position === 'middleLeft'
+    ? { left: 14, right: undefined, top: '46%' as const, bottom: undefined, transform: [{ translateY: -46 }] }
+    : { bottom: bottomOffset };
+
   return (
-    <View style={[styles.tiltBtnCol, { bottom: bottomOffset }]}>
+    <View style={[styles.tiltBtnCol, positionStyle]}>
       <TouchableOpacity
         style={styles.tiltBtn}
         activeOpacity={0.8}

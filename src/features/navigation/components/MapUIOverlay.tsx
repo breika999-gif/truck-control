@@ -1,5 +1,6 @@
 import React, { memo, type MutableRefObject } from 'react';
 import { Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import Tts from 'react-native-tts';
 
 import { spacing } from '../../../shared/constants/theme';
@@ -67,6 +68,7 @@ export interface MapUIOverlayProps {
   laneGlowBg: Loose;
   laneGlowShadow: Loose;
   route: Loose;
+  routeControlsVisible: boolean;
   navPhase: Loose;
   routeAheadPOIs: Loose[];
   handleRouteTimelinePOIPress: Loose;
@@ -224,6 +226,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   laneGlowBg,
   laneGlowShadow,
   route,
+  routeControlsVisible,
   navPhase,
   routeAheadPOIs,
   handleRouteTimelinePOIPress,
@@ -358,6 +361,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   isMountedRef,
   setStarredPOIs,
 }) => {
+  const { t } = useTranslation();
   const [callingOpen, setCallingOpen] = React.useState(false);
   const [driveLegendVisible, setDriveLegendVisible] = React.useState(true);
   const tabletFabOffset = isTablet ? 20 * uiScale : 0;
@@ -367,17 +371,18 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   }, [navigating]);
 
   const hasDriveLegend = navigating && driveSegments && driveSegments.gradientStops.length > 0;
+  const routeUiCollapsed = navigating && !routeControlsVisible;
 
   return (
     <>
     <OfflineBanner backendOnline={backendOnline} />
 
-    {hasDriveLegend && driveLegendVisible && (
+    {!routeUiCollapsed && hasDriveLegend && driveLegendVisible && (
       <View
         style={[overlayStyles.driveLegend, { bottom: 360 + insets.bottom }]}
       >
         <Pressable
-          accessibilityLabel="Скрий тахографската легенда"
+          accessibilityLabel={t('overlay.hideTachoLegend')}
           hitSlop={8}
           onPress={() => setDriveLegendVisible(false)}
           style={overlayStyles.driveLegendClose}
@@ -385,21 +390,21 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
           <Text style={overlayStyles.driveLegendCloseText}>×</Text>
         </Pressable>
         <Text style={[overlayStyles.driveLegendText, overlayStyles.driveLegendCurrent]}>
-          ■ До пауза · 4.5ч
+          {t('overlay.untilBreak')}
         </Text>
         <Text style={[overlayStyles.driveLegendText, overlayStyles.driveLegendAfterBreak]}>
-          ■ След пауза
+          {t('overlay.afterBreak')}
         </Text>
         {tachoSummary?.daily_limit_h === 10 && (
           <Text style={[overlayStyles.driveLegendText, overlayStyles.driveLegendExtended]}>
-            ■ Разширен час
+            {t('overlay.extendedHour')}
           </Text>
         )}
         <Text style={[overlayStyles.driveLegendText, overlayStyles.driveLegendDailyLimit]}>
-          ■ Дневен лимит · {tachoSummary?.daily_limit_h ?? 9}ч
+          {t('overlay.dailyLimit', { hours: tachoSummary?.daily_limit_h ?? 9 })}
         </Text>
         <Pressable
-          accessibilityLabel={bluetoothTacho.connected ? 'Изключи Bluetooth тахограф' : 'Свържи Bluetooth тахограф'}
+          accessibilityLabel={bluetoothTacho.connected ? t('overlay.disconnectTacho') : t('overlay.connectTacho')}
           onPress={bluetoothTacho.connected ? bluetoothTacho.disconnect : bluetoothTacho.startScan}
           style={overlayStyles.bluetoothTachoButton}
         >
@@ -412,15 +417,15 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
             ]}
           />
           <Text style={overlayStyles.bluetoothTachoText}>
-            {bluetoothTacho.connected ? bluetoothTacho.deviceName ?? 'Тахограф' : 'Свържи тахограф'}
+            {bluetoothTacho.connected ? bluetoothTacho.deviceName ?? t('overlay.tacho') : t('overlay.connectTacho')}
           </Text>
         </Pressable>
       </View>
     )}
 
-    {hasDriveLegend && !driveLegendVisible && (
+    {!routeUiCollapsed && hasDriveLegend && !driveLegendVisible && (
       <Pressable
-        accessibilityLabel="Покажи тахографската легенда"
+        accessibilityLabel={t('overlay.showTachoLegend')}
         onPress={() => setDriveLegendVisible(true)}
         style={[overlayStyles.driveLegendToggle, { bottom: 360 + insets.bottom }]}
       >
@@ -429,23 +434,25 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Search bar (hidden during navigation) ── */}
-    <SearchBarContainer
-      navigating={navigating}
-      searchTop={searchTop}
-      customOriginName={customOriginName}
-      onSelect={handleDestinationSelect}
-      onClear={handleClear}
-      onOriginChange={handleOriginChange}
-    />
+    {!routeUiCollapsed && (
+      <SearchBarContainer
+        navigating={navigating}
+        searchTop={searchTop}
+        customOriginName={customOriginName}
+        onSelect={handleDestinationSelect}
+        onClear={handleClear}
+        onOriginChange={handleOriginChange}
+      />
+    )}
 
     <TunnelWarningBanner
       message={tunnelWarning}
-      visible={!!tunnelWarning && navigating}
+      visible={!routeUiCollapsed && !!tunnelWarning && navigating}
       topOffset={insets.top}
       onDismiss={handleTunnelWarningDismiss}
     />
 
-    {stepToShow && (
+    {!routeUiCollapsed && stepToShow && (
       <NavigationTopPanel
         visible={navigating && !!stepToShow}
         step={stepToShow}
@@ -460,14 +467,14 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     <LaneGuidanceStrip
-      visible={navigating && distToTurn != null && distToTurn < 500 && displayLanes.length > 0}
+      visible={!routeUiCollapsed && navigating && distToTurn != null && distToTurn < 500 && displayLanes.length > 0}
       lanes={displayLanes}
       glowBg={laneGlowBg}
       glowShadow={laneGlowShadow}
     />
 
     {/* ── Route Timeline ── */}
-    {route && (navigating || navPhase === 'ROUTE_PREVIEW') && (
+    {!routeUiCollapsed && route && (navigating || navPhase === 'ROUTE_PREVIEW') && (
       <RouteTimeline
         routeAheadPOIs={routeAheadPOIs}
         totalDistM={route.distance}
@@ -478,14 +485,14 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
 
     {/* ── Faster route banner ── */}
     <FasterRouteBanner
-      offer={fasterOffer}
+      offer={routeUiCollapsed ? null : fasterOffer}
       onAccept={handleAcceptFasterRoute}
       onDismiss={dismissOffer}
       top={insets.top + 8}
     />
 
     {/* ── Options Panel ── */}
-    <OptionsPanel
+    {!routeUiCollapsed && <OptionsPanel
       optionsOpen={optionsOpen}
       setOptionsOpen={setOptionsOpen}
       mapMode={mapMode}
@@ -521,17 +528,17 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       drivingSeconds={drivingSeconds}
       onReportCamera={handleReportCamera}
       backendOnline={backendOnline}
-    />
+    />}
 
-    <StatusChips gpsReady={gpsReady || simulating} rerouting={rerouting} loadingRoute={loadingRoute} />
+    {!routeUiCollapsed && <StatusChips gpsReady={gpsReady || simulating} rerouting={rerouting} loadingRoute={loadingRoute} />}
 
-    <BorderCrossingsPanel
+    {!routeUiCollapsed && <BorderCrossingsPanel
       show={showBorderPanel}
       crossings={borderCrossings}
       onClose={() => setShowBorderPanel(false)}
-    />
+    />}
 
-    <VehicleBadge plate={profile?.plate} navigating={navigating} searchTop={searchTop} />
+    {!routeUiCollapsed && <VehicleBadge plate={profile?.plate} navigating={navigating} searchTop={searchTop} />}
 
     {/* ── POI / SAR results horizontal scroll ── */}
     {!navigating && (poiResults.length > 0 || loadingPOI) && (!route || sarMode) && (
@@ -579,7 +586,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Tachograph card from GPT-4o ── */}
-    {tachographResult && (
+    {!routeUiCollapsed && tachographResult && (
       <TachoResultCard
         result={tachographResult}
         tachoSummary={tachoSummary}
@@ -622,7 +629,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Parking bubble ── */}
-    {selectedParking && (
+    {!routeUiCollapsed && selectedParking && (
       <ParkingBubble
         parking={selectedParking}
         onClose={() => setSelectedParking(null)}
@@ -636,7 +643,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Fuel panel ── */}
-    {selectedFuel && (
+    {!routeUiCollapsed && selectedFuel && (
       <FuelPanel
         fuel={selectedFuel}
         onClose={() => setSelectedFuel(null)}
@@ -646,9 +653,9 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Truck Situation Renderer (composite restrictions / tunnel / tacho) ── */}
-    {navigating && <TruckSituationRenderer situation={truckSituation} />}
+    {!routeUiCollapsed && navigating && <TruckSituationRenderer situation={truckSituation} />}
 
-    <WakeWordIndicator navigating={navigating} wakeWordHeard={wakeWordHeard} topInset={insets.top} />
+    {!routeUiCollapsed && <WakeWordIndicator navigating={navigating} wakeWordHeard={wakeWordHeard} topInset={insets.top} />}
 
     {/* ── Navigation HUD ── */}
     {!(routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW') && (
@@ -693,11 +700,12 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
         proximityAlerts={proximityAlerts}
         nearestParkingM={nearestParkingM}
         hillWarnings={hillWarnings}
+        compactOnly={routeUiCollapsed}
       />
     )}
 
     <SpeedCameraHUD
-      visible={navigating && !!cameraAlert}
+      visible={!routeUiCollapsed && navigating && !!cameraAlert}
       distM={cameraAlert?.dist ?? 0}
       bottomOffset={320 + insets.bottom}
       flashAnim={cameraFlashAnim}
@@ -707,6 +715,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       visible={!navigating}
       mapPitch={mapPitch}
       bottomOffset={insets.bottom + 100}
+      position="middleLeft"
       onTiltUp={() => {
         const next = Math.min(mapPitch + 15, 60);
         setMapPitch(next);
@@ -740,7 +749,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     />
 
     <RecenterButton
-      visible={navigating && !isTracking}
+      visible={!routeUiCollapsed && navigating && !isTracking}
       bottomOffset={insets.bottom + 100}
       onPress={() => {
         suppressPanUntilRef.current = Date.now() + 1500;
@@ -749,7 +758,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     />
 
     {/* ── Mute бутон ── */}
-    <TouchableOpacity
+    {!routeUiCollapsed && <TouchableOpacity
       onPress={() => { setVoiceMuted((v: boolean) => !v); if (!voiceMuted) Tts.stop(); }}
       style={{
         position: 'absolute',
@@ -765,10 +774,10 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       activeOpacity={0.75}
     >
       <Text style={{ fontSize: 20 }}>{voiceMuted ? '🔇' : '🔊'}</Text>
-    </TouchableOpacity>
+    </TouchableOpacity>}
 
     {/* ── Hands-free calling FAB ── */}
-    <TouchableOpacity
+    {!routeUiCollapsed && <TouchableOpacity
       onPress={() => setCallingOpen((open: boolean) => !open)}
       style={{
         position: 'absolute',
@@ -784,10 +793,10 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       activeOpacity={0.75}
     >
       <Text style={{ fontSize: 20 }}>📞</Text>
-    </TouchableOpacity>
+    </TouchableOpacity>}
 
     {/* ── Докладвай камера FAB — само при активен маршут ── */}
-    {route && (
+    {!routeUiCollapsed && route && (
       <TouchableOpacity
         onPress={handleReportCamera}
         style={{
@@ -809,7 +818,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     )}
 
     {/* ── Chat Panels ── */}
-    <ChatPanel
+    {!routeUiCollapsed && <ChatPanel
       gptChatOpen={gptChatOpen}
       geminiChatOpen={geminiChatOpen}
       gptHistory={gptHistory}
@@ -829,10 +838,10 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       insets={insets}
       micLoading={micLoading}
       onClose={() => { setGptChatOpen(false); setGeminiChatOpen(false); }}
-    />
+    />}
 
     {/* ── Google Account Modal ── */}
-    <GoogleAccountModal
+    {!routeUiCollapsed && <GoogleAccountModal
       visible={showAccountModal}
       onClose={() => setShowAccountModal(false)}
       currentAccount={googleUser}
@@ -846,8 +855,8 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
         setGoogleUser(null);
         setStarredPOIs([]);
       }}
-    />
-    <CallingPanel visible={callingOpen} onClose={() => setCallingOpen(false)} />
+    />}
+    {!routeUiCollapsed && <CallingPanel visible={callingOpen} onClose={() => setCallingOpen(false)} />}
     </>
   );
 });

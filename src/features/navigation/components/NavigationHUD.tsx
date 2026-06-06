@@ -12,6 +12,7 @@ import {
 
 const HANDLE_H = 92; // handle + infoRow + destName always visible when collapsed
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTranslation } from 'react-i18next';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles } from '../screens/MapScreen.styles';
 import { spacing } from '../../../shared/constants/theme';
@@ -22,6 +23,7 @@ import {
 import {
   fmtHOS,
   DEPART_LABELS,
+  departLabelText,
   type DepartLabel,
 } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
@@ -66,6 +68,7 @@ interface NavigationHUDProps {
   onFetchElevation?: () => void;
   onFetchWeather?: () => void;
   onOptimize?: () => void;
+  compactOnly?: boolean;
 }
 
 const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
@@ -107,7 +110,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   onFetchElevation,
   onFetchWeather,
   onOptimize,
+  compactOnly = false,
 }) => {
+  const { t, i18n } = useTranslation();
+  const routeDistance = route?.distance;
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
   const panelHeightRef       = useRef(0);
   const translateY           = useRef(new Animated.Value(0)).current;
@@ -147,10 +153,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
 
   // Allow re-init on new route
   useEffect(() => {
-    if (route) {
+    if (routeDistance != null) {
       initializedRef.current = false;
     }
-  }, [route?.distance]);
+  }, [routeDistance]);
 
   const panResponder = useRef(PanResponder.create({
     onMoveShouldSetPanResponder: (_, gs) =>
@@ -174,12 +180,14 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
     },
   })).current;
 
+  const clockLocale = i18n.language === 'bg' ? 'bg-BG' : i18n.language === 'es' ? 'es-ES' : 'en-US';
+
   const eta = useMemo(() => {
     if (!route) return null;
     const secs = navigating && remainingSeconds > 0 ? remainingSeconds : route.duration;
     const arrival = new Date(Date.now() + secs * 1000);
-    return arrival.toLocaleTimeString('bg-BG', { hour: '2-digit', minute: '2-digit' });
-  }, [route, navigating, remainingSeconds]);
+    return arrival.toLocaleTimeString(clockLocale, { hour: '2-digit', minute: '2-digit' });
+  }, [route, navigating, remainingSeconds, clockLocale]);
 
   const hosWarning = useMemo(() => {
     if (!navigating || !route) return null;
@@ -194,27 +202,32 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   const hosWarningColor = hosWarning === 'tight' ? '#FF9500' : '#FF3B30';
   const hosWarningLabel =
     hosWarning === 'break_required'
-      ? 'СТОП · Почивка сега'
+      ? t('hud.breakNow')
       : hosWarning === 'wont_arrive'
-      ? 'ВНИМАНИЕ · Няма да стигнете'
-      : 'ВНИМАНИЕ · Следете времето';
+      ? t('hud.willNotArrive')
+      : t('hud.watchTime');
 
   if (!route && !navigating && speedLimit === null) return null;
+  const speedRowStyle = compactOnly
+    ? [styles.speedRow, { bottom: 96 + insets.bottom }]
+    : [styles.speedRow, { bottom: 224 + insets.bottom, transform: [{ translateY }] }];
 
   return (
     <>
       {/* ── Bottom-left: HOS badge + speed + limit ── */}
       {(navigating || speedLimit != null) && (
-        <Animated.View style={[styles.speedRow, { bottom: 224 + insets.bottom, transform: [{ translateY }] }]}>
+        <Animated.View style={speedRowStyle}>
           <View>
-            <View style={[
-              styles.hosBadge,
-              drivingSeconds >= 15600 && styles.hosBadgeWarn,
-              drivingSeconds >= HOS_LIMIT_S && styles.hosBadgeLimit,
-            ]}>
-              <Text style={styles.hosBadgeLabel}>HOS</Text>
-              <Text style={styles.hosBadgeValue}>{fmtHOS(drivingSeconds)}</Text>
-            </View>
+            {!compactOnly && (
+              <View style={[
+                styles.hosBadge,
+                drivingSeconds >= 15600 && styles.hosBadgeWarn,
+                drivingSeconds >= HOS_LIMIT_S && styles.hosBadgeLimit,
+              ]}>
+                <Text style={styles.hosBadgeLabel}>HOS</Text>
+                <Text style={styles.hosBadgeValue}>{fmtHOS(drivingSeconds)}</Text>
+              </View>
+            )}
             <View style={[
               styles.speedRing,
               speedLimit != null && speed > speedLimit
@@ -229,43 +242,45 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               ]}>
                 {speed}
               </Text>
-              <Text style={styles.speedUnit}>км/ч</Text>
+              <Text style={styles.speedUnit}>{t('hud.speedUnit')}</Text>
             </View>
           </View>
           
-          <View style={styles.signColumn}>
-            {speedLimit != null && (
-              <Animated.View style={[
-                styles.speedCircle, 
-                speed > speedLimit && styles.speedCircleExceeded,
-                { backgroundColor: speedingBg }
-              ]}>
-                <Text style={[styles.speedCircleNum, speed > speedLimit && { color: '#fff' }]}>{speedLimit}</Text>
-              </Animated.View>
-            )}
+          {!compactOnly && (
+            <View style={styles.signColumn}>
+              {speedLimit != null && (
+                <Animated.View style={[
+                  styles.speedCircle, 
+                  speed > speedLimit && styles.speedCircleExceeded,
+                  { backgroundColor: speedingBg }
+                ]}>
+                  <Text style={[styles.speedCircleNum, speed > speedLimit && { color: '#fff' }]}>{speedLimit}</Text>
+                </Animated.View>
+              )}
 
-            {proximityAlerts?.overtaking && proximityAlerts.overtaking.length > 0 && (
-              <View style={styles.noOvertakingCircle}>
-                <Text style={styles.noOvertakingEmoji}>
-                  {proximityAlerts.overtaking[0].hgv_only ? '🚛🚫' : '🚗🚫'}
-                </Text>
-              </View>
-            )}
+              {proximityAlerts?.overtaking && proximityAlerts.overtaking.length > 0 && (
+                <View style={styles.noOvertakingCircle}>
+                  <Text style={styles.noOvertakingEmoji}>
+                    {proximityAlerts.overtaking[0].hgv_only ? '🚛🚫' : '🚗🚫'}
+                  </Text>
+                </View>
+              )}
 
-            {/* Road Grade Warning (Step D) */}
-            {roadGrade != null && Math.abs(roadGrade) > 5 && (
-              <View style={[styles.gradeCircle, { borderColor: roadGrade > 0 ? '#ff9500' : '#ff3b30' }]}>
-                <Text style={styles.gradeEmoji}>{roadGrade > 0 ? '⛰️' : '📉'}</Text>
-                <Text style={styles.gradeVal}>{Math.abs(Math.round(roadGrade))}%</Text>
-              </View>
-            )}
-          </View>
-          {nearestParkingM != null && (
+              {/* Road Grade Warning (Step D) */}
+              {roadGrade != null && Math.abs(roadGrade) > 5 && (
+                <View style={[styles.gradeCircle, { borderColor: roadGrade > 0 ? '#ff9500' : '#ff3b30' }]}>
+                  <Text style={styles.gradeEmoji}>{roadGrade > 0 ? '⛰️' : '📉'}</Text>
+                  <Text style={styles.gradeVal}>{Math.abs(Math.round(roadGrade))}%</Text>
+                </View>
+              )}
+            </View>
+          )}
+          {!compactOnly && nearestParkingM != null && (
             <View style={styles.parkingHudChip}>
               <Text style={styles.parkingHudText}>
                 🅿️ {nearestParkingM < 1000
-                  ? `${Math.round(nearestParkingM)}м`
-                  : `${(nearestParkingM / 1000).toFixed(1)}км`}
+                  ? `${Math.round(nearestParkingM)}${t('units.meterShort')}`
+                  : `${(nearestParkingM / 1000).toFixed(1)}${t('units.kilometerShort')}`}
               </Text>
             </View>
           )}
@@ -275,7 +290,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
       {/* ManeuverPanel removed — pawan-pk native overlay already shows turn instructions at top */}
 
       {/* ── Bottom panel (swipeable sheet) ── */}
-      {route && !loadingRoute && (
+      {route && !loadingRoute && !compactOnly && (
         <Animated.View
           style={[styles.bottomPanel, { paddingBottom: insets.bottom + spacing.md, transform: [{ translateY }] }]}
           onLayout={(e) => {
@@ -302,12 +317,12 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           )}
           <View style={styles.infoRow}>
             <View style={styles.infoCell}>
-              <Text style={styles.infoLabel}>РАЗСТОЯНИЕ</Text>
+              <Text style={styles.infoLabel}>{t('hud.distance')}</Text>
               <Text style={styles.infoValue}>{fmtDistance(route.distance)}</Text>
             </View>
             <View style={styles.infoDivider} />
             <View style={styles.infoCell}>
-              <Text style={styles.infoLabel}>ОСТАВАЩО</Text>
+              <Text style={styles.infoLabel}>{t('hud.remaining')}</Text>
               <Text style={styles.infoValue}>
                 {navigating && remainingSeconds > 0
                   ? fmtDuration(remainingSeconds)
@@ -318,7 +333,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               <>
                 <View style={styles.infoDivider} />
                 <View style={styles.infoCell}>
-                  <Text style={styles.infoLabel}>⏰ ПРИСТИГАНЕ</Text>
+                  <Text style={styles.infoLabel}>{t('hud.arrival')}</Text>
                   <Text style={styles.infoValue}>{eta}</Text>
                 </View>
               </>
@@ -329,7 +344,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 onPress={() => {
                   const [lng, lat] = destination;
                   const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`;
-                  Share.share({ message: `Маршрут до ${destinationName}: ${url}` });
+                  Share.share({ message: t('hud.shareRoute', { destination: destinationName, url }) });
                 }}
               >
                 <Text style={styles.shareBtnText}>↗</Text>
@@ -348,16 +363,16 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           {navigating && profile && (
             <View style={styles.truckDimRow}>
               <View style={styles.truckDimBadge}>
-                <Text style={styles.truckDimText}>↕ {profile.height_m} м</Text>
+                <Text style={styles.truckDimText}>↕ {profile.height_m} {t('units.meterShort')}</Text>
               </View>
               <View style={styles.truckDimBadge}>
-                <Text style={styles.truckDimText}>⚖ {profile.weight_t} т</Text>
+                <Text style={styles.truckDimText}>⚖ {profile.weight_t} {t('units.tonShort')}</Text>
               </View>
               <View style={styles.truckDimBadge}>
-                <Text style={styles.truckDimText}>↔ {profile.width_m} м</Text>
+                <Text style={styles.truckDimText}>↔ {profile.width_m} {t('units.meterShort')}</Text>
               </View>
               <View style={styles.truckDimBadge}>
-                <Text style={styles.truckDimText}>↔ {profile.length_m} м</Text>
+                <Text style={styles.truckDimText}>↔ {profile.length_m} {t('units.meterShort')}</Text>
               </View>
               {profile.hazmat_class && profile.hazmat_class !== 'none' && (
                 <View style={[styles.truckDimBadge, styles.adrBadge]}>
@@ -377,10 +392,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
               ]}>
                 <Text style={styles.congestionText}>
                   {dominantCongestion === 'heavy'
-                    ? '🔴 Задръствания'
+                    ? `🔴 ${t('hud.congestionHeavy')}`
                     : dominantCongestion === 'moderate'
-                    ? '🟡 Умерен трафик'
-                    : '🟢 Свободно'}
+                    ? `🟡 ${t('hud.congestionModerate')}`
+                    : `🟢 ${t('hud.congestionFree')}`}
                 </Text>
               </View>
             </View>
@@ -401,7 +416,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           {elevProfile.length > 1 && (
             <View style={styles.elevProfileStripHUD}>
               <Text style={styles.elevProfileLabelHUD}>
-                ⛰ {Math.round(Math.min(...elevProfile))}–{Math.round(Math.max(...elevProfile))} м н.в.
+                ⛰ {t('hud.elevationRange', {
+                  min: Math.round(Math.min(...elevProfile)),
+                  max: Math.round(Math.max(...elevProfile)),
+                })}
               </Text>
               <View style={styles.elevProfileBarsHUD}>
                 {(() => {
@@ -440,7 +458,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                     styles.departChipText,
                     departLabel === label && styles.departChipTextActive,
                   ]}>
-                    {label}
+                    {departLabelText(label)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -493,7 +511,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 }
               }}
             >
-              <Text style={styles.optimizeBtnText}>⚡ Оптимизирай спирките</Text>
+              <Text style={styles.optimizeBtnText}>⚡ {t('hud.optimizeStops')}</Text>
             </TouchableOpacity>
           )}
 
@@ -507,7 +525,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.startBtnText, { fontSize: 16 }]}>📊 Детайли</Text>
+                <Text style={[styles.startBtnText, { fontSize: 16 }]}>📊 {t('hud.details')}</Text>
               </TouchableOpacity>
             )}
 
@@ -523,8 +541,8 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             >
               <Text style={styles.startBtnText}>
                 {navigating
-                  ? '🛑 Спри навигацията'
-                  : '🚀 Тръгни'}
+                  ? `🛑 ${t('hud.stopNavigation')}`
+                  : `🚀 ${t('hud.startDriving')}`}
               </Text>
             </TouchableOpacity>
           </View>
