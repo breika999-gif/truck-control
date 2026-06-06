@@ -21,6 +21,7 @@ import {
 } from '../../../shared/services/backendApi';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
+import i18n from '../../../i18n';
 import type { RouteResult } from '../api/directions';
 import type { GeoPlace } from '../api/geocoding';
 import type { TruckPOI } from '../api/poi';
@@ -83,7 +84,7 @@ function trafficAlertsToGeoJSON(alerts?: RouteOption['traffic_alerts']): GeoJSON
     type: 'FeatureCollection',
     features: alerts.map((a) => ({
       type: 'Feature' as const,
-      properties: { label: a.label ?? `🛑 +${a.delay_min} мин`, severity: a.severity },
+      properties: { label: a.label ?? i18n.t('route.delayMinutes', { minutes: a.delay_min }), severity: a.severity },
       geometry: { type: 'Point' as const, coordinates: [a.lng, a.lat] },
     })),
   };
@@ -360,8 +361,8 @@ export function useMapHandlers({
     routeLogStartPendingRef.current = true;
     void startRouteLog({
       userEmail: googleUser?.email,
-      originName: customOriginName || 'GPS позиция',
-      destinationName: destinationNameRef.current || 'Маршрут',
+      originName: customOriginName || i18n.t('route.gpsPosition'),
+      destinationName: destinationNameRef.current || i18n.t('common.route'),
       originLat: origin[1],
       originLng: origin[0],
       destLat: destination[1],
@@ -463,7 +464,7 @@ export function useMapHandlers({
   const handleStart = useCallback((activeRoute?: RouteResult | null) => {
     const routeToStart = activeRoute ?? routeRef.current ?? route;
     if (!routeToStart?.geometry?.coordinates?.length) {
-      Alert.alert('Няма маршрут', 'Изчакай маршрутът да се зареди или избери дестинация отново.');
+      Alert.alert(i18n.t('alerts.noRouteTitle'), i18n.t('alerts.noRouteMessage'));
       return;
     }
 
@@ -479,7 +480,7 @@ export function useMapHandlers({
     setNavPhase('NAVIGATING');
     if (!voiceMutedRef.current) {
       Tts.stop();
-      ttsSpeak('Следвайте маршрута.');
+      ttsSpeak(i18n.t('alerts.followRoute'));
     }
   }, [
     beginRouteLog,
@@ -735,7 +736,7 @@ export function useMapHandlers({
   const handleBizMarkerPress = useCallback((business: POICard) => {
     if (!Number.isFinite(business.lat) || !Number.isFinite(business.lng)) return;
     setBusinessResults([]);
-    navigateTo([business.lng, business.lat], business.name || 'Място');
+    navigateTo([business.lng, business.lat], business.name || i18n.t('common.place', { defaultValue: 'Place' }));
   }, [navigateTo, setBusinessResults]);
 
   const handleRouteTimelinePOIPress = useCallback((poi: RoutePOI) => {
@@ -767,15 +768,15 @@ export function useMapHandlers({
       setParkingResults(recommendations);
       setSelectedFuel(null);
       if (recommendations.length === 0) {
-        Alert.alert('Почивка', 'Не намерих паркинг за камион в радиус 30 км.');
+        Alert.alert(i18n.t('alerts.breakTitle'), i18n.t('alerts.noTruckParking'));
         return;
       }
       setSelectedParking({
         ...recommendations[0],
-        name: `Почивка · ${recommendations[0].name}`,
+        name: `${i18n.t('dispatcher.rest')} · ${recommendations[0].name}`,
       });
     } catch {
-      Alert.alert('Почивка', 'Не успях да заредя препоръчани паркинги.');
+      Alert.alert(i18n.t('alerts.breakTitle'), i18n.t('alerts.parkingLoadFailed'));
     }
   }, [setParkingResults, setSelectedFuel, setSelectedParking]);
 
@@ -787,16 +788,16 @@ export function useMapHandlers({
         if (cams.length > 0) setReportedCameras(cams);
       }).catch(() => {});
     }
-    Alert.alert('Благодарим!', 'Камерата е докладвана и ще бъде добавена към картата.');
+    Alert.alert(i18n.t('alerts.thanks'), i18n.t('alerts.cameraReported'));
   }, [playCameraAlert, userCoords, googleUser, setReportedCameras]);
 
   const handleExportGPX = useCallback(() => {
     const coords = route?.geometry?.coordinates as Coords[] | undefined;
     if (!coords?.length) {
-      Alert.alert('Няма маршрут', 'Изберете маршрут, преди да го експортирате.');
+      Alert.alert(i18n.t('alerts.noRouteTitle'), i18n.t('alerts.exportRouteFirst'));
       return;
     }
-    const dest = destinationNameRef.current || 'Маршрут';
+    const dest = destinationNameRef.current || i18n.t('common.route');
     const wps = waypointsRef.current ?? [];
     const wpNames = waypointNamesRef.current ?? [];
     const gpx = buildGPX(coords, dest, wps, wpNames);

@@ -1,5 +1,6 @@
 import requests
 import concurrent.futures
+import math
 from config import GOOGLE_PLACES_KEY, TOMTOM_API_KEY
 from utils.helpers import _haversine_m
 from database import _transparking_match, _poi_cache_get, _poi_cache_set, _poi_cache_key
@@ -114,31 +115,62 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 def _enrich_business_with_places(biz: dict) -> dict: return biz
 
 def _tool_find_overtaking_restrictions(lat: float, lng: float, radius_m: int = 5000) -> dict:
+    lat_delta = radius_m / 111_320
+    lng_delta = radius_m / max(1, 111_320 * math.cos(math.radians(lat)))
+    south = lat - lat_delta
+    north = lat + lat_delta
+    west = lng - lng_delta
+    east = lng + lng_delta
     query = f"""
 [out:json][timeout:15];
 (
-  way["overtaking"="no"](around:{radius_m},{lat},{lng});
-  way["overtaking:hgv"="no"](around:{radius_m},{lat},{lng});
+  way["overtaking"="no"]({south},{west},{north},{east});
+  way["overtaking:hgv"="no"]({south},{west},{north},{east});
 );
-out tags center;
+out body geom;
 """
     try:
-        r = requests.post("https://overpass-api.de/api/interpreter", data={"data": query}, timeout=15)
+        r = requests.post(
+            "https://overpass-api.de/api/interpreter",
+            data={"data": query},
+            headers={"User-Agent": "TruckExpoAI/1.0 truck-navigation-alerts"},
+            timeout=20,
+        )
         r.raise_for_status()
         restrictions = []
+        seen = set()
         for el in r.json().get("elements", []):
+            el_id = el.get("id")
+            if el_id in seen:
+                continue
+            seen.add(el_id)
             tags   = el.get("tags", {})
             center = el.get("center", {})
+            geometry = []
+            for p in el.get("geometry", []) or []:
+                p_lat = p.get("lat")
+                p_lng = p.get("lon")
+                if p_lat is not None and p_lng is not None:
+                    geometry.append([p_lng, p_lat])
             el_lat = center.get("lat")
             el_lng = center.get("lon")
-            if not el_lat:
+            if (el_lat is None or el_lng is None) and geometry:
+                mid_lng, mid_lat = geometry[len(geometry) // 2]
+                el_lat = mid_lat
+                el_lng = mid_lng
+            if el_lat is None or el_lng is None:
                 continue
-            dist = round(_haversine_m(lat, lng, el_lat, el_lng))
+            dist_candidates = [_haversine_m(lat, lng, el_lat, el_lng)]
+            dist_candidates.extend(_haversine_m(lat, lng, p_lat, p_lng) for p_lng, p_lat in geometry)
+            dist = round(min(dist_candidates))
+            if dist > radius_m:
+                continue
             restrictions.append({
                 "lat": el_lat, "lng": el_lng,
                 "type": "overtaking_no",
                 "hgv_only": tags.get("overtaking:hgv") == "no",
                 "distance_m": dist,
+                "geometry": geometry or None,
             })
         restrictions.sort(key=lambda x: x["distance_m"])
         return {"restrictions": restrictions}

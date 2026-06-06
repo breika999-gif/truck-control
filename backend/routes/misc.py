@@ -75,6 +75,38 @@ def health():
         "timestamp": now_iso()
     })
 
+@misc_bp.post("/api/elevation")
+def elevation_profile():
+    body = _get_body()
+    coords = _validate_lng_lat_points(body.get("coords") or [], max_points=80)
+    if coords is None:
+        return jsonify({"ok": False, "error": "invalid coords"}), 400
+    if not coords:
+        return jsonify({"ok": True, "elevations": []})
+
+    locations = "|".join(f"{lat:.6f},{lng:.6f}" for lng, lat in coords)
+    try:
+        resp = requests.get(
+            "https://api.opentopodata.org/v1/aster30m",
+            params={"locations": locations},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results")
+        if not isinstance(results, list) or len(results) != len(coords):
+            return jsonify({"ok": True, "elevations": None})
+
+        elevations = []
+        for item in results:
+            elevation = item.get("elevation") if isinstance(item, dict) else None
+            value = float(elevation)
+            if not math.isfinite(value):
+                return jsonify({"ok": True, "elevations": None})
+            elevations.append(value)
+        return jsonify({"ok": True, "elevations": elevations})
+    except Exception:
+        return jsonify({"ok": True, "elevations": None})
+
 @misc_bp.get("/api/geocode")
 @require_app_token
 def geocode_proxy():

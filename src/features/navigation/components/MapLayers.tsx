@@ -1,12 +1,14 @@
 import React, { memo } from 'react';
 import { View, Text } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
+import { useTranslation } from 'react-i18next';
 import type * as GeoJSON from 'geojson';
 import { RouteResult } from '../api/directions';
 import { RouteOption, POICard, SavedPOI } from '../../../shared/services/backendApi';
 import { TruckPOI, POI_META } from '../api/poi';
 import { MapLayersConfig } from '../hooks/useMapUIState';
 import type { DriveSegmentsResult } from '../utils/driveSegments';
+import type { GradeProfile } from '../utils/gradeProfile';
 
 interface MapLayersProps {
   mapIsLoaded: boolean;
@@ -21,6 +23,7 @@ interface MapLayersProps {
   routeLineColor: string;
   routeProgressFraction?: number;
   driveSegments?: DriveSegmentsResult | null;
+  gradeProfile?: GradeProfile | null;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
   customOriginRef: React.MutableRefObject<[number, number] | null>;
@@ -112,6 +115,97 @@ function toPointGeoJSON(
   };
 }
 
+function clampFraction(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function distanceMeters(a: [number, number], b: [number, number]): number {
+  const midLatRad = ((a[1] + b[1]) / 2) * Math.PI / 180;
+  const dx = (b[0] - a[0]) * 111320 * Math.cos(midLatRad);
+  const dy = (b[1] - a[1]) * 110540;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function routeFractions(coords: [number, number][]): number[] {
+  if (coords.length <= 1) return coords.map(() => 0);
+  const cumulative = [0];
+  let total = 0;
+  for (let i = 1; i < coords.length; i += 1) {
+    total += distanceMeters(coords[i - 1], coords[i]);
+    cumulative[i] = total;
+  }
+  if (total <= 0) return coords.map((_, index) => index / Math.max(1, coords.length - 1));
+  return cumulative.map(distance => distance / total);
+}
+
+function pointAtFraction(
+  coords: [number, number][],
+  fractions: number[],
+  fraction: number,
+): [number, number] {
+  if (coords.length === 0) return [0, 0];
+  if (coords.length === 1) return coords[0];
+  const target = clampFraction(fraction);
+  for (let i = 1; i < fractions.length; i += 1) {
+    if (target <= fractions[i] || i === fractions.length - 1) {
+      const span = fractions[i] - fractions[i - 1];
+      const t = span > 0 ? (target - fractions[i - 1]) / span : 0;
+      const start = coords[i - 1];
+      const end = coords[i];
+      return [
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+      ];
+    }
+  }
+  return coords[coords.length - 1];
+}
+
+function routeSliceForFractions(
+  coords: [number, number][],
+  fractions: number[],
+  start: number,
+  end: number,
+): [number, number][] {
+  const from = clampFraction(Math.min(start, end));
+  const to = clampFraction(Math.max(start, end));
+  if (coords.length < 2 || to <= from) return [];
+
+  const sliced: [number, number][] = [pointAtFraction(coords, fractions, from)];
+  for (let i = 1; i < coords.length - 1; i += 1) {
+    if (fractions[i] > from && fractions[i] < to) sliced.push(coords[i]);
+  }
+  sliced.push(pointAtFraction(coords, fractions, to));
+  return sliced;
+}
+
+function buildGradeOverlayGeoJSON(
+  route: RouteResult | null,
+  gradeProfile?: GradeProfile | null,
+): GeoJSON.FeatureCollection {
+  const coords = route?.geometry.coordinates ?? [];
+  if (coords.length < 2 || !gradeProfile?.steepSections.length) {
+    return { type: 'FeatureCollection', features: [] };
+  }
+  const fractions = routeFractions(coords);
+  return {
+    type: 'FeatureCollection',
+    features: gradeProfile.steepSections
+      .map((section, index) => ({
+        section,
+        index,
+        coordinates: routeSliceForFractions(coords, fractions, section.start, section.end),
+      }))
+      .filter(item => item.coordinates.length >= 2)
+      .map(({ section, index, coordinates }) => ({
+        type: 'Feature' as const,
+        id: `grade-${index}`,
+        properties: { grade: section.grade },
+        geometry: { type: 'LineString' as const, coordinates },
+      })),
+  };
+}
+
 const POIMarker = ({
   symbol,
   accent,
@@ -180,6 +274,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   routeLineColor,
   routeProgressFraction,
   driveSegments,
+  gradeProfile,
   exitsGeoJSON,
   navTrafficAlerts,
   customOriginRef,
@@ -206,10 +301,20 @@ const MapLayers: React.FC<MapLayersProps> = ({
   poiResults = [],
   handlePOINavigate,
 }) => {
+  const { t } = useTranslation();
 
   const { traffic: showTraffic } = mapLayers;
   const hasDriveSegments = Boolean(driveSegments?.gradientStops.length);
+  const routeGlowColor = lightMode ? 'rgba(0,122,255,0.30)' : 'rgba(19,217,255,0.52)';
+  const routeCasingColor = lightMode ? '#071426' : '#06244A';
   const routeBaseColor = hasDriveSegments ? 'rgba(0,0,0,0)' : routeLineColor;
+  const routeMainWidth = ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 9, 15, 15] as any;
+  const routeCasingWidth = ['interpolate', ['linear'], ['zoom'], 5, 8, 10, 14, 15, 23] as any;
+  const routeGlowWidth = ['interpolate', ['linear'], ['zoom'], 5, 13, 10, 22, 15, 36] as any;
+  const gradeOverlayGeoJSON = React.useMemo(
+    () => buildGradeOverlayGeoJSON(route, gradeProfile),
+    [gradeProfile, route],
+  );
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
@@ -396,17 +501,18 @@ const MapLayers: React.FC<MapLayersProps> = ({
               ],
               iconSize: [
                 'interpolate', ['linear'], ['zoom'],
-                8, 0.12,
-                12, 0.18,
-                15, 0.26,
-                17, 0.34,
+                8, 0.16,
+                12, 0.28,
+                15, 0.38,
+                17, 0.45,
               ],
               iconOpacity: [
                 'interpolate', ['linear'], ['zoom'],
-                12, 0.7,
+                12, 0.8,
                 15, 1.0,
               ],
               iconAllowOverlap: true,
+              iconIgnorePlacement: true,
               iconAnchor: 'center',
               iconPitchAlignment: 'viewport',
               iconRotationAlignment: 'viewport',
@@ -486,16 +592,30 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.VectorSource>
       )}
 
-      {/* ── Route casing (dark border) ── */}
+      {/* ── Route glow + casing (thick glass navigation tube) ── */}
       {mapIsLoaded && routeShape && (
         <Mapbox.ShapeSource id="route-source" shape={routeShape} tolerance={0} lineMetrics={true}>
           <Mapbox.LineLayer
-            id="route-casing"
+            id="route-glow"
             slot="middle"
             style={{
-              lineColor: lightMode ? '#0a0a1a' : '#003d6b',
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 7, 15, 9],
-              lineOpacity: 1.0,
+              lineColor: routeGlowColor,
+              lineWidth: routeGlowWidth,
+              lineOpacity: lightMode ? 0.42 : 0.72,
+              lineBlur: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 8] as any,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
+            } as any}
+          />
+          <Mapbox.LineLayer
+            id="route-casing"
+            slot="middle"
+            aboveLayerID="route-glow"
+            style={{
+              lineColor: routeCasingColor,
+              lineWidth: routeCasingWidth,
+              lineOpacity: lightMode ? 0.92 : 1.0,
               lineCap: 'round',
               lineJoin: 'round',
               lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
@@ -524,11 +644,14 @@ const MapLayers: React.FC<MapLayersProps> = ({
                   'severe', '#FA0000',
                   routeBaseColor,
                 ],
-                lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 7],
+                lineWidth: routeMainWidth,
+                lineOpacity: 0.98,
                 lineCap: 'round',
                 lineJoin: 'round',
+                lineBlur: lightMode ? 0 : 0.25,
+                lineEmissiveStrength: lightMode ? 0 : 1.2,
                 lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
-              }}
+              } as any}
             />
           </Mapbox.ShapeSource>
         );
@@ -546,11 +669,32 @@ const MapLayers: React.FC<MapLayersProps> = ({
             slot="middle"
             aboveLayerID="route-line"
             style={{
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 7],
+              lineWidth: routeMainWidth,
+              lineOpacity: 0.98,
               lineCap: 'round',
               lineJoin: 'round',
               lineGradient: buildLineGradient(driveSegments.gradientStops),
+              lineBlur: lightMode ? 0 : 0.2,
+              lineEmissiveStrength: lightMode ? 0 : 1.15,
               lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
+      {mapIsLoaded && hasDriveSegments && gradeOverlayGeoJSON.features.length > 0 && (
+        <Mapbox.ShapeSource id="grade-overlay-source" shape={gradeOverlayGeoJSON}>
+          <Mapbox.LineLayer
+            id="grade-overlay"
+            slot="middle"
+            aboveLayerID="drive-segments-layer"
+            style={{
+              lineColor: '#FF6B00',
+              lineWidth: 5,
+              lineOpacity: 0.65,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineEmissiveStrength: lightMode ? 0 : 1.1,
             } as any}
           />
         </Mapbox.ShapeSource>
@@ -563,10 +707,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="route-direction-arrows"
             slot="middle"
             style={{
-              symbolPlacement: 'line', symbolSpacing: 80, textField: '▲', textSize: 14,
-              textColor: 'rgba(255,255,255,0.85)', textHaloColor: 'rgba(0,0,0,0.30)', textHaloWidth: 1,
+              symbolPlacement: 'line', symbolSpacing: 110, textField: '▲',
+              textSize: ['interpolate', ['linear'], ['zoom'], 10, 12, 15, 18] as any,
+              textColor: 'rgba(255,255,255,0.92)', textHaloColor: 'rgba(0,190,255,0.45)', textHaloWidth: 1.4,
               textRotationAlignment: 'map', textAllowOverlap: true, iconAllowOverlap: true,
-            }}
+            } as any}
           />
         </Mapbox.ShapeSource>
       )}
@@ -612,7 +757,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
           <POIMarker
             symbol="⛺"
             accent={restPoint.restHours === 9 ? '#FF9500' : '#9B59B6'}
-            label={`${restPoint.restHours}ч почивка`}
+            label={t('route.restHours', { hours: restPoint.restHours })}
             symbolSize={16}
           />
         </Mapbox.PointAnnotation>
@@ -877,12 +1022,15 @@ const MapLayers: React.FC<MapLayersProps> = ({
         >
           <Mapbox.SymbolLayer
             id="camera-symbols"
+            slot="top"
             style={{
               iconImage: 'camera-icon',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.45, 14, 0.85, 18, 1.3] as unknown as number,
               iconPitchAlignment: 'viewport',
-              iconAllowOverlap: false,
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
               iconAnchor: 'bottom',
+              iconEmissiveStrength: lightMode ? 0 : 1.0,
             }}
           />
         </Mapbox.ShapeSource>
@@ -896,12 +1044,15 @@ const MapLayers: React.FC<MapLayersProps> = ({
         >
           <Mapbox.SymbolLayer
             id="overtaking-symbols"
+            slot="top"
             style={{
               iconImage: 'no-overtaking',
-              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.35, 14, 0.65, 18, 1.0] as unknown as number,
+              iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.45, 14, 0.85, 18, 1.3] as unknown as number,
               iconPitchAlignment: 'viewport',
-              iconAllowOverlap: false,
+              iconAllowOverlap: true,
+              iconIgnorePlacement: true,
               iconAnchor: 'bottom',
+              iconEmissiveStrength: lightMode ? 0 : 1.0,
             }}
           />
         </Mapbox.ShapeSource>
@@ -917,12 +1068,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
         const fastestDuration = routeOptions[0]?.duration ?? 0;
         const diffMin = Math.round((opt.duration - fastestDuration) / 60);
         const timeLabel = i === 0
-          ? 'Най-бърз'
+          ? t('route.fastest')
           : diffMin > 0
-            ? `+${diffMin} мин`
+            ? `+${diffMin} ${t('routeOptions.minutesShort')}`
             : diffMin < 0
-              ? `${diffMin} мин`
-              : 'Равен';
+              ? `${diffMin} ${t('routeOptions.minutesShort')}`
+              : t('route.equal');
         
         return (
           <React.Fragment key={`route-opt-${i}`}>

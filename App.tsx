@@ -7,6 +7,8 @@ import Mapbox from '@rnmapbox/maps';
 import { MAPBOX_PUBLIC_TOKEN } from './src/shared/constants/config';
 import { colors } from './src/shared/constants/theme';
 import type { RootStackParamList } from './src/shared/types/navigation';
+import { useTranslation } from 'react-i18next';
+import './src/i18n';
 
 Mapbox.setAccessToken(MAPBOX_PUBLIC_TOKEN);
 if (Mapbox.setTelemetryEnabled) Mapbox.setTelemetryEnabled(false);
@@ -40,6 +42,8 @@ const AppDarkTheme = {
 };
 
 export default function App() {
+  const { t } = useTranslation();
+
   return (
     <SafeAreaProvider>
     <NavigationContainer theme={AppDarkTheme}>
@@ -52,7 +56,7 @@ export default function App() {
           options={{
             presentation: 'modal',
             headerShown: true,
-            title: 'Профил на камиона',
+            title: t('app.vehicleProfileTitle'),
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },
@@ -71,7 +75,7 @@ export default function App() {
           component={TachoScreen}
           options={{
             headerShown: true,
-            title: 'Тахограф',
+            title: t('app.tachoTitle'),
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
           }}
@@ -111,7 +115,7 @@ export default function App() {
           options={{
             presentation: 'modal',
             headerShown: true,
-            title: 'Правна информация',
+            title: t('app.legalInfoTitle'),
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },

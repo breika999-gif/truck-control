@@ -6,6 +6,7 @@ import {
   ScrollView,
   Share,
   Animated,
+  Image,
   PanResponder,
   StyleSheet,
 } from 'react-native';
@@ -24,10 +25,12 @@ import {
   fmtHOS,
   DEPART_LABELS,
   departLabelText,
+  ICON_NO_OVERTAKING,
   type DepartLabel,
 } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
+import { useVehicleStore } from '../../../store/vehicleStore';
 
 interface NavigationHUDProps {
   navigating: boolean;
@@ -61,7 +64,7 @@ interface NavigationHUDProps {
   navigateTo?: (dest: [number, number], name: string, wps?: [number, number][], autoStart?: boolean) => void;
   HOS_LIMIT_S: number;
   speedingBg?: Animated.AnimatedInterpolation<string | number> | string;
-  proximityAlerts?: { overtaking: any[] };
+  proximityAlerts?: { overtaking: any[]; activeHgvNoOvertaking?: boolean };
   roadGrade?: number | null;
   nearestParkingM?: number | null;
   hillWarnings?: import('../hooks/useRouteInsights').RouteInsight[];
@@ -113,7 +116,10 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   compactOnly = false,
 }) => {
   const { t, i18n } = useTranslation();
+  const isLoaded = useVehicleStore(state => state.isLoaded);
+  const setIsLoaded = useVehicleStore(state => state.setIsLoaded);
   const routeDistance = route?.distance;
+  const activeHgvNoOvertaking = proximityAlerts?.activeHgvNoOvertaking === true;
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
   const panelHeightRef       = useRef(0);
   const translateY           = useRef(new Animated.Value(0)).current;
@@ -228,22 +234,45 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 <Text style={styles.hosBadgeValue}>{fmtHOS(drivingSeconds)}</Text>
               </View>
             )}
-            <View style={[
-              styles.speedRing,
-              speedLimit != null && speed > speedLimit
-                ? styles.speedRingRed
-                : speedLimit != null && speed > speedLimit - 10
-                ? styles.speedRingYellow
-                : styles.speedRingGreen,
-            ]}>
-              <Text style={[
-                styles.speedValue,
-                speedLimit != null && speed > speedLimit && styles.speedValueOverLimit
+            <View style={hudStyles.speedRingWrap}>
+              <View style={[
+                styles.speedRing,
+                speedLimit != null && speed > speedLimit
+                  ? styles.speedRingRed
+                  : speedLimit != null && speed > speedLimit - 10
+                  ? styles.speedRingYellow
+                  : styles.speedRingGreen,
               ]}>
-                {speed}
-              </Text>
-              <Text style={styles.speedUnit}>{t('hud.speedUnit')}</Text>
+                <Text style={[
+                  styles.speedValue,
+                  speedLimit != null && speed > speedLimit && styles.speedValueOverLimit
+                ]}>
+                  {speed}
+                </Text>
+                <Text style={styles.speedUnit}>{t('hud.speedUnit')}</Text>
+              </View>
+              {activeHgvNoOvertaking && (
+                <View style={hudStyles.hgvNoOvertakingBadge} pointerEvents="none">
+                  <Image source={ICON_NO_OVERTAKING} style={hudStyles.hgvNoOvertakingImage} />
+                </View>
+              )}
             </View>
+            <TouchableOpacity
+              style={[
+                hudStyles.loadToggle,
+                isLoaded ? hudStyles.loadToggleLoaded : hudStyles.loadToggleEmpty,
+              ]}
+              activeOpacity={0.82}
+              onPress={() => setIsLoaded(!isLoaded)}
+            >
+              <Text style={hudStyles.loadToggleIcon}>{isLoaded ? '🚛📦' : '🚛'}</Text>
+              <Text style={[
+                hudStyles.loadToggleText,
+                isLoaded ? hudStyles.loadToggleTextLoaded : hudStyles.loadToggleTextEmpty,
+              ]}>
+                {isLoaded ? '>20t' : 'Empty'}
+              </Text>
+            </TouchableOpacity>
           </View>
           
           {!compactOnly && (
@@ -256,14 +285,6 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 ]}>
                   <Text style={[styles.speedCircleNum, speed > speedLimit && { color: '#fff' }]}>{speedLimit}</Text>
                 </Animated.View>
-              )}
-
-              {proximityAlerts?.overtaking && proximityAlerts.overtaking.length > 0 && (
-                <View style={styles.noOvertakingCircle}>
-                  <Text style={styles.noOvertakingEmoji}>
-                    {proximityAlerts.overtaking[0].hgv_only ? '🚛🚫' : '🚗🚫'}
-                  </Text>
-                </View>
               )}
 
               {/* Road Grade Warning (Step D) */}
@@ -553,6 +574,68 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
 });
 
 const hudStyles = StyleSheet.create({
+  speedRingWrap: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hgvNoOvertakingBadge: {
+    position: 'absolute',
+    right: -38,
+    top: -8,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#FF2D2D',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    elevation: 12,
+  },
+  hgvNoOvertakingImage: {
+    width: 58,
+    height: 58,
+    resizeMode: 'contain',
+  },
+  loadToggle: {
+    alignSelf: 'center',
+    minWidth: 76,
+    marginTop: 6,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  loadToggleEmpty: {
+    backgroundColor: 'rgba(120,130,145,0.16)',
+    borderColor: 'rgba(180,190,205,0.42)',
+  },
+  loadToggleLoaded: {
+    backgroundColor: 'rgba(255,149,0,0.18)',
+    borderColor: 'rgba(255,149,0,0.75)',
+  },
+  loadToggleIcon: {
+    fontSize: 12,
+    lineHeight: 15,
+  },
+  loadToggleText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+  },
+  loadToggleTextEmpty: {
+    color: 'rgba(225,230,240,0.76)',
+  },
+  loadToggleTextLoaded: {
+    color: '#FFB340',
+  },
   hosWarningBanner: {
     flexDirection: 'row',
     alignItems: 'center',

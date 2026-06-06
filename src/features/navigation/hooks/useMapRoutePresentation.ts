@@ -1,11 +1,20 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Platform, ToastAndroid } from 'react-native';
 
+import { BACKEND_URL } from '../../../shared/constants/config';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import type { POICard, TachoSummary } from '../../../shared/services/backendApi';
 import type { RestrictionPoint, RouteResult } from '../api/directions';
 import type { MapMode } from './useMapUIState';
 import type { NavPhase } from './useNavigationState';
 import { calculateDriveSegments } from '../utils/driveSegments';
+import { useVehicleStore } from '../../../store/vehicleStore';
+import {
+  buildGradeProfile,
+  sampleRouteCoords,
+  sampleRouteFractions,
+  type GradeProfile,
+} from '../utils/gradeProfile';
 import { HOS_LIMIT_S, haversineMeters } from '../utils/mapUtils';
 import {
   MAX_MAP_RESTRICTION_MARKERS,
@@ -30,6 +39,39 @@ type RouteTrafficAlert = {
   label?: string;
   roadName?: string;
 };
+
+function elevationRouteKey(route: RouteResult | null): string {
+  const coords = route?.geometry.coordinates;
+  if (!coords?.length) return '';
+  const first = coords[0];
+  const mid = coords[Math.floor(coords.length / 2)];
+  const last = coords[coords.length - 1];
+  return [coords.length, route?.distance ?? 0, first, mid, last]
+    .map(part => Array.isArray(part) ? `${part[0].toFixed(5)},${part[1].toFixed(5)}` : String(part))
+    .join('|');
+}
+
+function routeFractionForPoint(coords: [number, number][], point: [number, number]): number {
+  if (coords.length < 2) return 0;
+  const cumulative = [0];
+  let total = 0;
+  let nearestIdx = 0;
+  let nearestDist = Infinity;
+
+  coords.forEach((coord, index) => {
+    const distance = haversineMeters(coord, point);
+    if (distance < nearestDist) {
+      nearestDist = distance;
+      nearestIdx = index;
+    }
+    if (index > 0) {
+      total += haversineMeters(coords[index - 1], coord);
+      cumulative[index] = total;
+    }
+  });
+
+  return total > 0 ? Math.max(0, Math.min(1, cumulative[nearestIdx] / total)) : 0;
+}
 
 interface UseMapRoutePresentationArgs {
   currentStep: number;
@@ -62,6 +104,65 @@ export function useMapRoutePresentation({
   tachoSummary,
   userCoords,
 }: UseMapRoutePresentationArgs) {
+  const isLoaded = useVehicleStore(state => state.isLoaded);
+  const [gradeProfile, setGradeProfile] = useState<GradeProfile | null>(null);
+  const warnedWeightRestrictionKeyRef = useRef<string | null>(null);
+  const routeElevationKey = useMemo(() => elevationRouteKey(route), [route]);
+
+  useEffect(() => {
+    const coords = route?.geometry.coordinates;
+    if (!coords || coords.length < 2) {
+      setGradeProfile(null);
+      return;
+    }
+
+    const sampledCoords = sampleRouteCoords(coords, 80);
+    const sampledFractions = sampleRouteFractions(coords, 80);
+    if (sampledCoords.length < 2 || sampledCoords.length !== sampledFractions.length) {
+      setGradeProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+
+    fetch(`${BACKEND_URL}/api/elevation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ coords: sampledCoords }),
+      signal: controller.signal,
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled) return;
+        const elevations = data?.elevations;
+        if (
+          Array.isArray(elevations) &&
+          elevations.length === sampledCoords.length &&
+          elevations.every((value: unknown) => Number.isFinite(Number(value)))
+        ) {
+          setGradeProfile(buildGradeProfile(sampledCoords, elevations.map(Number), sampledFractions));
+        } else {
+          setGradeProfile(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGradeProfile(null);
+      })
+      .finally(() => clearTimeout(timeout));
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [route, routeElevationKey]);
+
+  useEffect(() => {
+    warnedWeightRestrictionKeyRef.current = null;
+  }, [routeElevationKey]);
+
   const nearestParkingM = useMemo(
     () => parkingResults.length ? Math.min(...parkingResults.map(parking => parking.distance_m)) : null,
     [parkingResults],
@@ -137,9 +238,33 @@ export function useMapRoutePresentation({
         dailyDrivenSeconds: (tachoSummary.daily_driven_s ?? 0)
           + Math.max(0, drivingSeconds - (tachoSummary.continuous_driven_s ?? 0)),
       } : null,
+      gradeProfile,
+      isLoaded,
     ) : null,
-    [drivingSeconds, route, tachoSummary, trafficAheadAlerts],
+    [drivingSeconds, gradeProfile, isLoaded, route, tachoSummary, trafficAheadAlerts],
   );
+  const weightRestrictionAhead = useMemo(() => {
+    const coords = route?.geometry.coordinates ?? [];
+    if (!isLoaded || !navigating || coords.length < 2) return null;
+    return routeRestrictionPoints.find(restriction => {
+      const rawLimit = Number(restriction.value_num);
+      const limitT = rawLimit > 1000 ? rawLimit / 1000 : rawLimit;
+      if (restriction.type !== 'maxweight' || !Number.isFinite(limitT) || limitT >= 20) return false;
+      const restrictionFraction = routeFractionForPoint(coords, [restriction.lng, restriction.lat]);
+      return restrictionFraction >= Math.max(0, routeProgressFraction - 0.02);
+    }) ?? null;
+  }, [isLoaded, navigating, route?.geometry.coordinates, routeProgressFraction, routeRestrictionPoints]);
+
+  useEffect(() => {
+    if (!weightRestrictionAhead || !navigating || !isLoaded) return;
+    const key = `${weightRestrictionAhead.type}:${weightRestrictionAhead.lng.toFixed(5)},${weightRestrictionAhead.lat.toFixed(5)}:${weightRestrictionAhead.value}`;
+    if (warnedWeightRestrictionKeyRef.current === key) return;
+    warnedWeightRestrictionKeyRef.current = key;
+    if (Platform.OS === 'android') {
+      ToastAndroid.show('⚠️ Weight restriction ahead', ToastAndroid.LONG);
+    }
+  }, [isLoaded, navigating, weightRestrictionAhead]);
+
   const aheadEvents = useRouteAheadEvents({
     steps: route?.steps ?? [],
     currentStepIdx: currentStep,
@@ -179,6 +304,7 @@ export function useMapRoutePresentation({
     displayRestrictionPoints,
     dominantCongestion,
     driveSegments,
+    gradeProfile,
     lanePulseOn: navigating && distToTurn != null && distToTurn < 350 && currentLanes.some(lane => lane.active),
     mapStyleURL,
     nearestParkingM,

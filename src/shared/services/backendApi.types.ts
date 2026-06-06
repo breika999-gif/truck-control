@@ -208,6 +208,7 @@ export interface ProximityAlerts {
     type: 'overtaking_no';
     hgv_only: boolean;
     distance_m: number;
+    geometry?: [number, number][] | null;
   }>;
   nearest_camera_m: number;
 }

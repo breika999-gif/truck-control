@@ -1,10 +1,26 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Animated } from 'react-native';
 import type { MutableRefObject } from 'react';
-import { cumulativeRouteDistances, haversineMeters, nearestRouteMatch, ttsSpeak } from '../utils/mapUtils';
-import type { POICard, ProximityAlerts } from '../../../shared/services/backendApi';
+import {
+  cumulativeRouteDistances,
+  haversineMeters,
+  nearestRouteMatch,
+  pointToSegmentDistanceMeters,
+  ttsSpeak,
+} from '../utils/mapUtils';
+import { fetchProximityAlerts, type POICard, type ProximityAlerts } from '../../../shared/services/backendApi';
 import { useSoundAlerts } from './useSoundAlerts';
 import type { RouteResult } from '../api/directions';
+import i18n from '../../../i18n';
+
+const PROXIMITY_ALERT_RADIUS_M = 8000;
+const PROXIMITY_ALERT_REFRESH_MS = 45_000;
+const PROXIMITY_ALERT_MIN_MOVE_M = 500;
+const OVERTAKING_ROUTE_TOLERANCE_M = 110;
+const OVERTAKING_LOOKAHEAD_M = 2500;
+const OVERTAKING_BEHIND_TOLERANCE_M = -60;
+const ACTIVE_HGV_OVERTAKING_GEOMETRY_TOLERANCE_M = 75;
+const ACTIVE_HGV_OVERTAKING_POINT_TOLERANCE_M = 180;
 
 interface UseDrivingAlertsArgs {
   speed: number;
@@ -16,6 +32,139 @@ interface UseDrivingAlertsArgs {
   cameraResults: POICard[];
   voiceMutedRef: MutableRefObject<boolean>;
   lanePulseOn: boolean;
+}
+
+type OvertakingAlert = ProximityAlerts['overtaking'][number];
+
+function isLngLatCoord(point: unknown): point is [number, number] {
+  return (
+    Array.isArray(point) &&
+    point.length >= 2 &&
+    Number.isFinite(point[0]) &&
+    Number.isFinite(point[1])
+  );
+}
+
+function alertGeometryCoords(alert: OvertakingAlert): [number, number][] {
+  return (alert.geometry ?? []).filter(isLngLatCoord);
+}
+
+function alertAnchorCoords(alert: OvertakingAlert): [number, number] | null {
+  if (Number.isFinite(alert.lng) && Number.isFinite(alert.lat)) {
+    return [alert.lng, alert.lat];
+  }
+  return alertGeometryCoords(alert)[0] ?? null;
+}
+
+function alertCandidateCoords(alert: OvertakingAlert): [number, number][] {
+  const coords = alertGeometryCoords(alert);
+  const anchor = alertAnchorCoords(alert);
+  if (anchor && !coords.some(coord => coord[0] === anchor[0] && coord[1] === anchor[1])) {
+    coords.push(anchor);
+  }
+  return coords;
+}
+
+function distanceToAlertGeometryMeters(alert: OvertakingAlert, point: [number, number]): number {
+  const geometry = alertGeometryCoords(alert);
+  if (geometry.length >= 2) {
+    let best = Infinity;
+    for (let i = 1; i < geometry.length; i += 1) {
+      best = Math.min(best, pointToSegmentDistanceMeters(point, geometry[i - 1], geometry[i]));
+    }
+    return best;
+  }
+
+  const anchor = alertAnchorCoords(alert);
+  return anchor ? haversineMeters(point, anchor) : Infinity;
+}
+
+function hasActiveHgvNoOvertaking(alerts: OvertakingAlert[], userCoords: [number, number] | null): boolean {
+  if (!userCoords) return false;
+  return alerts.some(alert => {
+    if (!alert.hgv_only) return false;
+    const distanceM = distanceToAlertGeometryMeters(alert, userCoords);
+    const toleranceM = alert.geometry && alert.geometry.length >= 2
+      ? ACTIVE_HGV_OVERTAKING_GEOMETRY_TOLERANCE_M
+      : ACTIVE_HGV_OVERTAKING_POINT_TOLERANCE_M;
+    return distanceM <= toleranceM;
+  });
+}
+
+function isRouteAlertMatch(
+  item: {
+    alert: OvertakingAlert;
+    alongRouteM: number;
+    lateralRouteM: number;
+    angleDiff: number;
+  } | null,
+): item is {
+  alert: OvertakingAlert;
+  alongRouteM: number;
+  lateralRouteM: number;
+  angleDiff: number;
+} {
+  return item !== null;
+}
+
+function headingDiffDeg(userHeading: number | null, from: [number, number], to: [number, number]): number {
+  if (userHeading === null) return 0;
+  const bearing = Math.atan2(to[0] - from[0], to[1] - from[1]) * 180 / Math.PI;
+  const normalized = (bearing + 360) % 360;
+  const diff = Math.abs(userHeading - normalized);
+  return diff > 180 ? 360 - diff : diff;
+}
+
+function filterOvertakingAlerts(
+  alerts: OvertakingAlert[],
+  userCoords: [number, number],
+  userHeading: number | null,
+  routeCoords?: [number, number][],
+): OvertakingAlert[] {
+  if (!routeCoords || routeCoords.length < 2) {
+    return alerts
+      .filter(alert => alertCandidateCoords(alert).length > 0)
+      .sort((a, b) => (a.distance_m ?? Infinity) - (b.distance_m ?? Infinity))
+      .slice(0, 8);
+  }
+
+  const userMatch = nearestRouteMatch(userCoords, routeCoords);
+  const routeMeters = cumulativeRouteDistances(routeCoords);
+
+  return alerts
+    .map(alert => {
+      const candidates = alertCandidateCoords(alert)
+        .map(coords => {
+          const routeMatch = nearestRouteMatch(coords, routeCoords);
+          return {
+            alongRouteM: routeMeters[routeMatch.bestIndex] - routeMeters[userMatch.bestIndex],
+            lateralRouteM: routeMatch.bestDistance,
+            angleDiff: headingDiffDeg(userHeading, userCoords, coords),
+          };
+        })
+        .filter(item =>
+          item.lateralRouteM <= OVERTAKING_ROUTE_TOLERANCE_M &&
+          item.alongRouteM >= OVERTAKING_BEHIND_TOLERANCE_M &&
+          item.alongRouteM <= OVERTAKING_LOOKAHEAD_M &&
+          (userHeading === null || item.angleDiff < 75)
+        );
+      const chosen = candidates
+        .sort((a, b) => a.alongRouteM - b.alongRouteM || a.lateralRouteM - b.lateralRouteM)[0];
+      if (!chosen) return null;
+      return {
+        alert: {
+          ...alert,
+          distance_m: Math.max(0, Math.round(chosen.alongRouteM)),
+        },
+        alongRouteM: chosen.alongRouteM,
+        lateralRouteM: chosen.lateralRouteM,
+        angleDiff: chosen.angleDiff,
+      };
+    })
+    .filter(isRouteAlertMatch)
+    .sort((a, b) => a.alongRouteM - b.alongRouteM || a.lateralRouteM - b.lateralRouteM)
+    .slice(0, 8)
+    .map(item => item.alert);
 }
 
 export function useDrivingAlerts({
@@ -40,6 +189,9 @@ export function useDrivingAlerts({
   const laneGlowLoop       = useRef<Animated.CompositeAnimation | null>(null);
   const lastCameraWarnRef  = useRef<number>(0);
   const lastSpeedAlarmRef  = useRef<number>(0);
+  const lastProximityFetchAtRef = useRef(0);
+  const lastProximityFetchCoordsRef = useRef<[number, number] | null>(null);
+  const proximityRequestSeqRef = useRef(0);
 
   // в”Ђв”Ђ Speed limit TTS alarm вЂ” fires once per 30 s when exceeding the limit в”Ђв”Ђ
   useEffect(() => {
@@ -54,7 +206,9 @@ export function useDrivingAlerts({
       Animated.timing(speedingFlash, { toValue: 1, duration: 150, useNativeDriver: false }),
       Animated.timing(speedingFlash, { toValue: 0, duration: 300, useNativeDriver: false }),
     ]).start();
-    if (!voiceMutedRef.current) ttsSpeak(`Надвишихте разрешената скорост. Лимит ${speedLimit} км/ч.`);
+    if (!voiceMutedRef.current) {
+      ttsSpeak(i18n.t('alerts.speedLimitExceeded', { speedLimit }));
+    }
     }, [speed, speedLimit, navigating, voiceMutedRef, playSpeedAlert, speedingFlash]);
 
     // ── Speed camera proximity alert — TTS + flash every 10 s when < 600 m ──
@@ -98,7 +252,11 @@ export function useDrivingAlerts({
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
       playCameraAlert();
-      if (!voiceMutedRef.current) ttsSpeak(`Наближавате радар за скорост. ${Math.max(0, Math.round(nearest.alongRouteM))} метра.`);
+      if (!voiceMutedRef.current) {
+        ttsSpeak(i18n.t('alerts.speedCameraAhead', {
+          meters: Math.max(0, Math.round(nearest.alongRouteM)),
+        }));
+      }
       Animated.sequence([
         Animated.timing(cameraFlashAnim, { toValue: 1, duration: 180, useNativeDriver: false }),
         Animated.timing(cameraFlashAnim, { toValue: 0, duration: 180, useNativeDriver: false }),
@@ -108,6 +266,49 @@ export function useDrivingAlerts({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userCoords, navigating, route, cameraResults, playCameraAlert, voiceMutedRef, userHeading]);
+
+  // ── No-overtaking restrictions — fetch near live GPS and filter to route ahead ──
+  useEffect(() => {
+    if (!navigating || !userCoords) {
+      proximityRequestSeqRef.current += 1;
+      lastProximityFetchCoordsRef.current = null;
+      setOvertakingResults([]);
+      return;
+    }
+
+    const now = Date.now();
+    const lastCoords = lastProximityFetchCoordsRef.current;
+    const movedM = lastCoords ? haversineMeters(lastCoords, userCoords) : Infinity;
+    if (
+      now - lastProximityFetchAtRef.current < PROXIMITY_ALERT_REFRESH_MS &&
+      movedM < PROXIMITY_ALERT_MIN_MOVE_M
+    ) {
+      return;
+    }
+
+    lastProximityFetchAtRef.current = now;
+    lastProximityFetchCoordsRef.current = userCoords;
+    const requestSeq = proximityRequestSeqRef.current + 1;
+    proximityRequestSeqRef.current = requestSeq;
+    const routeCoords = route?.geometry?.coordinates as [number, number][] | undefined;
+
+    fetchProximityAlerts(userCoords[1], userCoords[0], PROXIMITY_ALERT_RADIUS_M)
+      .then(alerts => {
+        if (proximityRequestSeqRef.current !== requestSeq) return;
+        const overtaking = filterOvertakingAlerts(
+          alerts?.overtaking ?? [],
+          userCoords,
+          userHeading,
+          routeCoords,
+        );
+        setOvertakingResults(overtaking);
+      })
+      .catch(() => {
+        if (proximityRequestSeqRef.current === requestSeq) {
+          setOvertakingResults([]);
+        }
+      });
+  }, [navigating, route, userCoords, userHeading]);
 
   // в”Ђв”Ђ Lane glow pulse вЂ” starts/stops based on lanePulseOn в”Ђв”Ђ
   useEffect(() => {
@@ -126,17 +327,20 @@ export function useDrivingAlerts({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lanePulseOn]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const laneGlowBg = useMemo(() => laneGlowAnim.interpolate({
     inputRange: [0, 1], outputRange: ['rgba(0,191,255,0.22)', 'rgba(0,191,255,0.60)'],
-  }), []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [laneGlowAnim]);
   const laneGlowShadow = useMemo(() => laneGlowAnim.interpolate({
     inputRange: [0, 1], outputRange: [0.55, 1.0],
-  }), []);
+  }), [laneGlowAnim]);
+
+  const activeHgvNoOvertaking = useMemo(
+    () => navigating && hasActiveHgvNoOvertaking(overtakingResults, userCoords),
+    [navigating, overtakingResults, userCoords],
+  );
 
   const speedingBg      = speed > (speedLimit ?? Infinity) ? '#FF3B30' : 'transparent';
-  const proximityAlerts = { overtaking: overtakingResults };
+  const proximityAlerts = { overtaking: overtakingResults, activeHgvNoOvertaking };
 
   return {
     cameraAlert,
@@ -151,6 +355,7 @@ export function useDrivingAlerts({
     laneGlowShadow,
     speedingBg,
     proximityAlerts,
+    activeHgvNoOvertaking,
     playCameraAlert,
   };
 }

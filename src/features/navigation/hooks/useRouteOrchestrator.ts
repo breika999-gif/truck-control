@@ -14,6 +14,7 @@ import { haversineMeters } from '../utils/mapUtils';
 import type { NavPhase } from './useNavigationState';
 import { fetchCamerasAlongRoute } from '../../../shared/services/backendApi';
 import type { POICard, RouteOption } from '../../../shared/services/backendApi';
+import i18n from '../../../i18n';
 
 export type Coords = [number, number];
 type RouteCameraSignature = { key: string; checkpoints: Coords[] };
@@ -340,7 +341,7 @@ export function useRouteOrchestrator({
       );
       if (!isMountedRef.current) return; // unmount guard
 
-      setBackendOnline(!!result);
+      if (result) setBackendOnline(true);
       routeSucceeded = !!result;
 
       // Apply TomTom's optimal waypoint order if requested
@@ -362,7 +363,7 @@ export function useRouteOrchestrator({
       // Show RouteOptionsPanel during preview even when the backend returns only the primary route.
       if (result && !navigatingRef.current) {
         const primary: RouteOption = {
-          label: 'Най-бърз',
+          label: i18n.t('route.fastest'),
           color: '#13BDFF',
           duration: result.duration,
           distance: result.distance,

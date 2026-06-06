@@ -424,7 +424,7 @@ const MapScreen: React.FC = () => {
   const isSearchingAlongRoute = loadingPOI && sarMode;
   const {
     aheadEvents, currentLanes, displayLanes, displayRestrictionPoints,
-    dominantCongestion, driveSegments, lanePulseOn, mapStyleURL, nearestParkingM,
+    dominantCongestion, driveSegments, gradeProfile, lanePulseOn, mapStyleURL, nearestParkingM,
     nextStep, routeLineColor, routeProgressFraction, stepToShow, trafficSegments,
     truckSituation,
   } = useMapRoutePresentation({
@@ -665,7 +665,7 @@ const MapScreen: React.FC = () => {
           topImage="nav-arrow"
           bearingImage="nav-arrow"
           scale={puckScale}
-          pulsing={{ isEnabled: true, color: NAV_PUCK_GLOW, radius: 42 }}
+          pulsing={{ isEnabled: true, color: NAV_PUCK_GLOW, radius: 58 }}
           visible={navigating || isTracking}
         />
 
@@ -682,6 +682,7 @@ const MapScreen: React.FC = () => {
           routeLineColor={routeLineColor}
           routeProgressFraction={routeProgressFraction}
           driveSegments={driveSegments}
+          gradeProfile={gradeProfile}
           exitsGeoJSON={exitsGeoJSON}
           navTrafficAlerts={navTrafficAlerts}
           customOriginRef={customOriginRef}

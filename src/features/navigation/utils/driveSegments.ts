@@ -1,14 +1,15 @@
 import type { RouteResult, RouteStep } from '../api/directions';
+import { gradeMultiplier, type GradeProfile } from './gradeProfile';
 
 const DRIVE_PERIOD_S = 16200;
 const TRUCK_SPEED_CAP_KMH = 90;
 const TRANSITION_EPSILON = 0.0001;
 const REST_MARKER_EPSILON = 0.0001;
 
-const BLUE = '#9B59B6';
-const PURPLE = '#E67E22';
+const BLUE = '#13D9FF';
+const PURPLE = '#7B61FF';
 const YELLOW = '#F1C40F';
-const RED = '#C0392B';
+const RED = '#FF3B30';
 
 export interface DriveSegment {
   fraction: number;
@@ -50,6 +51,20 @@ function stepsForRoute(route: RouteResult): RouteStep[] {
 function truckCappedDurationSeconds(distanceM: number, durationS: number): number {
   const speedCapDurationS = (distanceM / 1000 / TRUCK_SPEED_CAP_KMH) * 3600;
   return Math.max(0, durationS, speedCapDurationS);
+}
+
+function averageGradeInRange(
+  gradeProfile: GradeProfile | null | undefined,
+  startFraction: number,
+  endFraction: number,
+): number {
+  const points = gradeProfile?.points;
+  if (!points?.length) return 0;
+  const start = clampFraction(Math.min(startFraction, endFraction));
+  const end = clampFraction(Math.max(startFraction, endFraction));
+  const matching = points.filter(point => point.fraction >= start && point.fraction <= end);
+  if (!matching.length) return 0;
+  return matching.reduce((sum, point) => sum + point.gradePercent, 0) / matching.length;
 }
 
 function appendTransition(
@@ -120,6 +135,8 @@ export function calculateDriveSegments(
   remainingTachoSeconds: number,
   trafficAlerts?: TrafficDelay[] | null,
   hosConfig?: HosConfig | null,
+  gradeProfile?: GradeProfile | null,
+  isLoaded = false,
 ): DriveSegmentsResult {
   const totalDistM = route.distance;
   const coords = route.geometry.coordinates;
@@ -157,6 +174,12 @@ export function calculateDriveSegments(
     // TomTom step ETA already includes traffic. The floor prevents a truck
     // period from covering more than 405 km even if upstream ETA is too fast.
     let chunkDurationS = truckCappedDurationSeconds(stepDistM, step.duration ?? 0);
+    const avgGrade = averageGradeInRange(
+      gradeProfile,
+      stepStartM / totalDistM,
+      stepEndM / totalDistM,
+    );
+    chunkDurationS *= gradeMultiplier(avgGrade, isLoaded);
     let stepCursorM = stepStartM;
 
     while (chunkDurationS > 0) {

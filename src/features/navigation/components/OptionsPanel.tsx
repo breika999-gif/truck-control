@@ -13,9 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useTranslation } from 'react-i18next';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getDaySummary } from '../../tacho/TachoEventLog';
+import { useVehicleStore } from '../../../store/vehicleStore';
+import type { AppLanguage } from '../../../store/vehicleStore';
 import { POI_META, type POICategory } from '../api/poi';
 import { HOS_LIMIT_S, POI_CATEGORIES } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
@@ -146,10 +149,20 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   drivingSeconds,
   backendOnline: _backendOnline,
 }) => {
+  const { t } = useTranslation();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   
   const [summaryOpen, setSummaryOpen] = React.useState(false);
   const [summaryData, setSummaryData] = React.useState<LegacySummaryData | null>(null);
+
+  const language = useVehicleStore(s => s.language);
+  const setLanguage = useVehicleStore(s => s.setLanguage);
+  const LANGS: AppLanguage[] = ['en', 'bg', 'es'];
+  const LANG_FLAGS: Record<AppLanguage, string> = { en: '🇬🇧', bg: '🇧🇬', es: '🇪🇸' };
+  const cycleLanguage = () => {
+    const next = LANGS[(LANGS.indexOf(language) + 1) % LANGS.length];
+    setLanguage(next);
+  };
 
   const close = () => setOptionsOpen(false);
 
@@ -176,7 +189,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
     close();
   };
 
-  const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
+  const mapModeLabel = mapMode === 'vector' ? t('options.vectorMap') : t('options.hybridMap');
   const mapModeIcon = mapMode === 'vector' ? 'earth' : 'layers';
   const summarySegments = Array.isArray(summaryData?.segments) ? summaryData.segments : [];
   const summaryShiftStart = summaryData?.shift_start ?? '--:--';
@@ -209,7 +222,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             <View style={s.header}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Image source={LOGO} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="contain" />
-                <Text style={s.headerTitle}>Меню</Text>
+                <Text style={s.headerTitle}>{t('options.menu')}</Text>
               </View>
               <TouchableOpacity onPress={close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                 <Icon name="close" size={26} color="#FFFFFF" />
@@ -221,33 +234,43 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               contentContainerStyle={s.scrollContent}
               showsVerticalScrollIndicator={false}
             >
-              {/* ПРОФИЛ */}
-              <SectionHeader title="КАМИОН" />
+              {/* Language cycle button */}
+              <Row
+                icon="translate"
+                label={`${LANG_FLAGS[language]}  ${language.toUpperCase()}`}
+                onPress={cycleLanguage}
+                iconBg="rgba(0,212,198,0.15)"
+                iconColor="#00d4c6"
+                rightEl={<Icon name="sync" size={18} color="rgba(0,212,198,0.7)" />}
+              />
+
+              {/* Profile */}
+              <SectionHeader title={t('options.truck')} />
               <Row
                 icon="clipboard-text-outline"
-                label="Данни шофиране"
+                label={t('options.drivingData')}
                 onPress={() => { openSummary(); }}
                 iconBg="rgba(255,255,255,0.1)"
                 iconColor="#FFFFFF"
               />
               <Row
                 icon="truck"
-                label="Профил на камиона"
+                label={t('options.truckProfile')}
                 onPress={() => { navigation.navigate('VehicleProfile'); close(); }}
                 iconBg="rgba(0,191,255,0.2)"
                 iconColor={C_ACT}
               />
               <Row
                 icon="bluetooth"
-                label="Свържи тахограф"
+                label={t('options.connectTacho')}
                 onPress={() => { navigation.navigate('Tacho'); close(); }}
                 iconBg="rgba(76,175,80,0.15)"
                 iconColor="#4CAF50"
               />
 
-              {/* КАРТА */}
+              {/* Map */}
               <Divider />
-              <SectionHeader title="КАРТА" />
+              <SectionHeader title={t('options.map')} />
               <Row
                 icon={mapModeIcon}
                 label={mapModeLabel}
@@ -264,40 +287,40 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               />
               <Row
                 icon={lightMode ? 'weather-night' : 'weather-sunny'}
-                label={lightMode ? 'Нощен режим' : 'Дневен режим'}
+                label={lightMode ? t('options.nightMode') : t('options.dayMode')}
                 onPress={() => { setLightMode(v => !v); if (!navigating) setMapIsLoaded(false); close(); }}
                 iconColor={lightMode ? '#A78BFA' : '#FCD34D'}
                 iconBg={lightMode ? 'rgba(167,139,250,0.15)' : 'rgba(252,211,77,0.15)'}
               />
               <Row
                 icon="map-download"
-                label="Офлайн карти"
+                label={t('options.offlineMaps')}
                 onPress={() => { navigation.navigate('OfflineMaps'); close(); }}
                 iconColor="#00BFFF"
                 iconBg="rgba(0,191,255,0.15)"
               />
-              {/* ОГРАНИЧЕНИЯ */}
+              {/* Restrictions */}
               <Divider />
-              <SectionHeader title="ОГРАНИЧЕНИЯ" />
+              <SectionHeader title={t('options.restrictions')} />
               <Row
                 icon="star"
-                label="Любими места"
+                label={t('options.favoritePlaces')}
                 onPress={() => toggleLayer('starred')}
                 iconColor={mapLayers.starred ? '#FFD700' : C_OFF}
                 active={mapLayers.starred}
                 rightEl={
                   <View style={[s.toggle, mapLayers.starred && s.toggleOn]}>
-                    <Text style={s.toggleTxt}>{mapLayers.starred ? 'ВКЛ' : 'ИЗК'}</Text>
+                    <Text style={s.toggleTxt}>{mapLayers.starred ? t('options.on') : t('options.off')}</Text>
                   </View>
                 }
               />
 
-              {/* НАВИГАЦИЯ */}
+              {/* Navigation */}
               <Divider />
-              <SectionHeader title="НАВИГАЦИЯ" />
+              <SectionHeader title={t('options.navigation')} />
               <Row
                 icon="clipboard-list-outline"
-                label="Диспечер · Multi-stop"
+                label={t('options.dispatcher')}
                 onPress={() => {
                   navigation.navigate('Dispatcher', {
                     userCoords: userCoords || undefined,
@@ -310,7 +333,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               />
               <Row
                 icon="parking"
-                label="Паркинги на живо"
+                label={t('options.parkingLive')}
                 onPress={() => {
                   navigation.navigate('TruckParking', { userCoords: userCoords || undefined });
                   close();
@@ -320,7 +343,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               />
               <Row
                 icon="truck-remove"
-                label="Забрани за каране 🚫"
+                label={t('options.drivingBans')}
                 onPress={() => {
                   navigation.navigate('TruckBans');
                   close();
@@ -331,14 +354,14 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               {route && (
                 <Row
                   icon={simulating ? 'stop-circle-outline' : 'play-circle-outline'}
-                  label={simulating ? 'Стоп демо GPS' : 'Демо GPS (симулация)'}
+                  label={simulating ? t('options.stopDemoGps') : t('options.demoGps')}
                   onPress={toggleSimulation}
                   iconColor={simulating ? '#FF6B6B' : '#00F5A0'}
                   iconBg={simulating ? 'rgba(255,107,107,0.16)' : 'rgba(0,245,160,0.14)'}
                   active={simulating}
                   rightEl={
                     <View style={[s.toggle, simulating && s.toggleOn]}>
-                      <Text style={s.toggleTxt}>{simulating ? 'ВКЛ' : 'СТАРТ'}</Text>
+                      <Text style={s.toggleTxt}>{simulating ? t('options.on') : t('options.start')}</Text>
                     </View>
                   }
                 />
@@ -348,12 +371,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               {!navigating && !route && (
                 <>
                   <Divider />
-                  <SectionHeader title="НАБЛИЗО" />
+                  <SectionHeader title={t('options.nearby')} />
                   {POI_CATEGORIES.filter(c => c !== 'rest_area').map(cat => (
                     <Row
                       key={cat}
                       icon={POI_META[cat].iconName ?? 'map-marker'}
-                      label={POI_META[cat].label ?? cat}
+                      label={t(POI_META[cat].labelKey)}
                       onPress={() => { handlePOISearch(cat); close(); }}
                       iconColor={!sarMode && poiCategory === cat ? C_ACT : '#FFFFFF'}
                       active={!sarMode && poiCategory === cat}
@@ -365,12 +388,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               {route && (
                 <>
                   <Divider />
-                  <SectionHeader title="ПО МАРШРУТА (SAR)" />
+                  <SectionHeader title={t('options.alongRouteSar')} />
                   {POI_CATEGORIES.filter(c => c !== 'rest_area').map(cat => (
                     <Row
                       key={cat}
                       icon={POI_META[cat].iconName ?? 'map-marker'}
-                      label={POI_META[cat].label ?? cat}
+                      label={t(POI_META[cat].labelKey)}
                       onPress={() => { handleSARSearch(cat); close(); }}
                       iconColor={sarMode && poiCategory === cat ? C_ACT : '#FFFFFF'}
                       active={sarMode && poiCategory === cat}
@@ -382,27 +405,27 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               {navigating && (
                 <>
                   <Divider />
-                  <SectionHeader title="ПО ПЪТЯ" />
+                  <SectionHeader title={t('options.onRoad')} />
                   <Row
                     icon={isSearchingAlongRoute ? 'timer-sand' : 'map-search'}
-                    label="Търси по маршрута"
+                    label={t('options.searchAlongRoute')}
                     onPress={() => { close(); handleSearchAlongRoute(); }}
                     iconColor="#FFFFFF"
                   />
                 </>
               )}
 
-              {/* АКАУНТ */}
+              {/* Account */}
               {userCoords && (
                 <>
                   <Divider />
                   <Row
                     icon="map-marker-radius"
-                    label="Сподели позиция"
+                    label={t('options.sharePosition')}
                     onPress={() => {
                       close();
                       Share.share({
-                        message: `Моята позиция (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
+                        message: `${t('options.sharePositionMessage')} (TruckAI): https://www.google.com/maps/?q=${userCoords[1]},${userCoords[0]}`,
                       });
                     }}
                     iconColor={C_ACT}
@@ -413,7 +436,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
               <Divider />
               <Row
                 icon="information-outline"
-                label="За приложението · Лицензи"
+                label={t('options.aboutLicenses')}
                 onPress={() => { navigation.navigate('Licenses'); close(); }}
                 iconColor="rgba(255,255,255,0.5)"
                 iconBg="rgba(255,255,255,0.06)"
@@ -435,7 +458,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
         <View style={s.backdrop}>
           <SafeAreaView style={s.summaryDrawer}>
             <View style={s.header}>
-              <Text style={s.headerTitle}>Отчет за деня</Text>
+              <Text style={s.headerTitle}>{t('options.dayReport')}</Text>
               <TouchableOpacity onPress={() => setSummaryOpen(false)}>
                 <Icon name="close" size={26} color="#FFFFFF" />
               </TouchableOpacity>
@@ -446,33 +469,33 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 <>
                   <View style={s.summaryHero}>
                     <View style={s.summaryHeroItem}>
-                      <Text style={s.summaryHeroLabel}>НАЧАЛО</Text>
+                      <Text style={s.summaryHeroLabel}>{t('options.startTime')}</Text>
                       <Text style={s.summaryHeroVal}>{summaryShiftStart}</Text>
                     </View>
                     <View style={s.summaryHeroItem}>
-                      <Text style={s.summaryHeroLabel}>ТЕКУЩО</Text>
+                      <Text style={s.summaryHeroLabel}>{t('options.currentTime')}</Text>
                       <Text style={s.summaryHeroVal}>{summaryCurrentTime}</Text>
                     </View>
                   </View>
 
                   <View style={s.summaryStats}>
                     <View style={s.summaryStatBox}>
-                      <Text style={s.summaryStatLabel}>ШОФИРАНЕ</Text>
+                      <Text style={s.summaryStatLabel}>{t('options.driving')}</Text>
                       <Text style={[s.summaryStatVal, { color: '#4CAF50' }]}>{formatMin(summaryDrivenMin)}</Text>
                     </View>
                     <View style={s.summaryStatBox}>
-                      <Text style={s.summaryStatLabel}>ОСТАВАЩО</Text>
+                      <Text style={s.summaryStatLabel}>{t('options.remaining')}</Text>
                       <Text style={[s.summaryStatVal, { color: NEON }]}>{formatMin(summaryRemainingMin)}</Text>
                     </View>
                   </View>
 
-                  <Text style={s.tableHeader}>СЕГМЕНТИ</Text>
+                  <Text style={s.tableHeader}>{t('options.segments')}</Text>
                   <ScrollView style={s.tableScroll}>
                     <View style={s.tableRowHead}>
-                      <Text style={[s.tableCell, { flex: 2 }]}>АКТИВНОСТ</Text>
-                      <Text style={s.tableCell}>ОТ</Text>
-                      <Text style={s.tableCell}>ДО</Text>
-                      <Text style={[s.tableCell, { textAlign: 'right' }]}>МИН</Text>
+                      <Text style={[s.tableCell, { flex: 2 }]}>{t('options.activity')}</Text>
+                      <Text style={s.tableCell}>{t('options.from')}</Text>
+                      <Text style={s.tableCell}>{t('options.to')}</Text>
+                      <Text style={[s.tableCell, { textAlign: 'right' }]}>{t('options.minutes')}</Text>
                     </View>
                     {summarySegments.length > 0 ? summarySegments.map((seg, i) => (
                       <View key={i} style={s.tableRow}>
@@ -486,7 +509,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                     )) : (
                       <View style={s.tableRow}>
                         <Text style={[s.tableCell, { flex: 4, textAlign: 'center', color: 'rgba(255,255,255,0.6)' }]}>
-                          Няма детайли за сегментите за днешния ден.
+                          {t('options.noSegmentDetails')}
                         </Text>
                       </View>
                     )}
