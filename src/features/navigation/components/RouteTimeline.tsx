@@ -114,7 +114,7 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
               onPress={() => onPOIPress(poi)}
               activeOpacity={0.7}
             >
-              <Text style={styles.pinIcon}>{isFuel ? '⛽' : 'P'}</Text>
+              <Text style={styles.pinIcon}>{isFuel ? '⛽' : '🅿️'}</Text>
               {/* Label to the left */}
               <View style={styles.labelBubble}>
                 <Text style={styles.labelText}>{poi.remainingKm}km</Text>
@@ -186,16 +186,17 @@ const styles = StyleSheet.create({
     zIndex: 2,
   },
   pinFuel: {
-    backgroundColor: '#1A1A2E',
-    borderColor: '#FF9500',
+    backgroundColor: '#FF9500',
+    borderColor: '#FFFFFF',
   },
   pinParking: {
-    backgroundColor: '#1A1A2E',
-    borderColor: '#00BFFF',
+    backgroundColor: '#007AFF',
+    borderColor: '#FFFFFF',
   },
   pinIcon: {
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 14,
+    lineHeight: 16,
+    color: '#FFFFFF',
   },
   labelBubble: {
     position: 'absolute',

@@ -1,9 +1,11 @@
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
-from openai import OpenAI
+from openai import AzureOpenAI, OpenAI
 from config import (
-    OPENAI_API_KEY, _SYSTEM_PROMPT, _TOOLS
+    AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_CHAT_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_MINI_DEPLOYMENT, OPENAI_API_KEY,
+    OPENAI_CHAT_MODEL, OPENAI_MINI_MODEL, OPENAI_PROVIDER, _SYSTEM_PROMPT, _TOOLS
 )
 from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc,
@@ -16,8 +18,35 @@ from services.tomtom_service import (
 )
 
 # ── Setup ────────────────────────────────────────────────────────────────────
-client = OpenAI(api_key=OPENAI_API_KEY)
-_gpt4o_ready = bool(OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+azure_client = (
+    AzureOpenAI(
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version=AZURE_OPENAI_API_VERSION,
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    )
+    if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT else None
+)
+_azure_ready = bool(azure_client and (AZURE_OPENAI_CHAT_DEPLOYMENT or AZURE_OPENAI_MINI_DEPLOYMENT))
+_gpt4o_ready = bool(client or _azure_ready)
+
+def _azure_deployment_for(model: str) -> str:
+    if "mini" in (model or "").lower():
+        return AZURE_OPENAI_MINI_DEPLOYMENT or AZURE_OPENAI_CHAT_DEPLOYMENT
+    return AZURE_OPENAI_CHAT_DEPLOYMENT or AZURE_OPENAI_MINI_DEPLOYMENT
+
+def _chat_completion_create(**kwargs):
+    model = kwargs.get("model", OPENAI_MINI_MODEL)
+    prefer_azure = OPENAI_PROVIDER == "azure"
+    if prefer_azure and _azure_ready:
+        kwargs["model"] = _azure_deployment_for(str(model))
+        return azure_client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+    if client:
+        return client.chat.completions.create(**kwargs)
+    if _azure_ready:
+        kwargs["model"] = _azure_deployment_for(str(model))
+        return azure_client.chat.completions.create(**kwargs)  # type: ignore[union-attr]
+    raise RuntimeError("GPT-4o не е конфигуриран.")
 
 # ── Cache ────────────────────────────────────────────────────────────────────
 _gpt_cache: dict[str, tuple[dict, float]] = {}
@@ -112,7 +141,7 @@ def _get_gpt_route_insight(destination: str, context: dict) -> dict | None:
             {"role": "system", "content": "You are a truck routing assistant. Reply with ONLY a JSON object — no prose, no code fences. Format: {\"distance_km\": <number>, \"duration_min\": <number>, \"key_waypoints\": [<string>, ...]}"},
             {"role": "user", "content": f"Give route facts for a truck going to {destination}{loc_hint}."}
         ]
-        resp = client.chat.completions.create(model="gpt-4o-mini", messages=messages, max_tokens=80, temperature=0)
+        resp = _chat_completion_create(model=OPENAI_MINI_MODEL, messages=messages, max_tokens=80, temperature=0)
         return json.loads(_strip_md_fence(resp.choices[0].message.content or ""))
     except Exception: return None
 
@@ -158,14 +187,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
     tools = pick_tools(user_msg)
 
     action, accumulated_content = None, []
-    _model = "gpt-4o" if _classify_task_complexity(user_msg, []) == "full" else "gpt-4o-mini"
+    _model = OPENAI_CHAT_MODEL if _classify_task_complexity(user_msg, []) == "full" else OPENAI_MINI_MODEL
     try:
         for turn in range(4):
             _kwargs: dict = {"model": _model, "messages": messages, "temperature": 0.4, "timeout": 30}
             if tools:
                 _kwargs["tools"] = tools
                 _kwargs["parallel_tool_calls"] = False
-            resp = client.chat.completions.create(**_kwargs)
+            resp = _chat_completion_create(**_kwargs)
             curr_msg = resp.choices[0].message
             if curr_msg.content: accumulated_content.append(curr_msg.content)
             if not curr_msg.tool_calls: break

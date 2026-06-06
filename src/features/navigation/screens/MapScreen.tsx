@@ -63,6 +63,7 @@ const MAP_IMAGES = {
   'restriction-hazmat': ICON_RESTRICTION_HAZMAT, 'restriction-adr': ICON_RESTRICTION_ADR,
   'restriction-no-trucks': ICON_RESTRICTION_NO_TRUCKS,
 };
+const NAV_PUCK_GLOW = '#6D3DFF';
 // ── Component ────────────────────────────────────────────────────────
 
 const MapScreen: React.FC = () => {
@@ -168,6 +169,7 @@ const MapScreen: React.FC = () => {
   const destination = destinationRef.current;
   const destinationName = destinationNameRef.current;
   useEffect(() => { setReachMarker(null); }, [destinationName, route?.distance, route?.duration, setReachMarker]);
+  const simulationActiveRef = useRef(false);
 
   // ── States & Refs from useLocationRuntime ──────────────────────────
   const {
@@ -193,6 +195,7 @@ const MapScreen: React.FC = () => {
     lastRestrictionRef,
     dismissedStructureWarningsRef,
     avoidUnpavedRef,
+    simulationActiveRef,
     setTunnelWarning: (msg, key) => {
       activeStructureWarningKeyRef.current = msg ? (key ?? null) : null;
       setTunnelWarningRef.current(msg);
@@ -220,6 +223,11 @@ const MapScreen: React.FC = () => {
     setUserCoords,
     setSpeed,
     setUserHeading,
+    setCurrentStep,
+    setDistToTurn,
+    setSpeedLimit,
+    setRemainingSeconds,
+    simulationActiveRef,
   });
   // Sync GPS userCoordsRef → orchestratorUserCoordsRef so navigateTo uses real position
   useLayoutEffect(() => {
@@ -365,6 +373,7 @@ const MapScreen: React.FC = () => {
 
   useEffect(() => {
     if (!navigating || !route) { setRemainingSeconds(0); return; }
+    if (simulating) return;
     navStartRef.current      = Date.now();
     navInitDurationRef.current = route.duration;
     setRemainingSeconds(route.duration);
@@ -373,7 +382,7 @@ const MapScreen: React.FC = () => {
       setRemainingSeconds(Math.max(0, navInitDurationRef.current - elapsed));
     }, 30_000);
     return () => clearInterval(interval);
-  }, [navigating, navInitDurationRef, navStartRef, route, setRemainingSeconds]);
+  }, [navigating, navInitDurationRef, navStartRef, route, setRemainingSeconds, simulating]);
 
   useEffect(() => {
     if (navigating) return;
@@ -641,7 +650,7 @@ const MapScreen: React.FC = () => {
           topImage="nav-arrow"
           bearingImage="nav-arrow"
           scale={puckScale}
-          pulsing={{ isEnabled: true, color: NEON, radius: 30 }}
+          pulsing={{ isEnabled: true, color: NAV_PUCK_GLOW, radius: 42 }}
           visible={navigating || isTracking}
         />
 

@@ -145,10 +145,10 @@ export function useMapTracking({
   }, [destination, destinationName, navigateTo, navigating, navPhase, route, simulating, userCoords, userHeading, voiceMutedRef, waypoints]);
 
   const puckScale = useMemo(() => {
-    if (!navigating) return 0.40;
-    if (distToTurn != null && distToTurn < 100) return 0.38;
-    if (speed > 80) return 0.48;
-    return 0.44;
+    if (!navigating) return 0.54;
+    if (distToTurn != null && distToTurn < 100) return 0.52;
+    if (speed > 80) return 0.65;
+    return 0.60;
   }, [distToTurn, navigating, speed]);
 
   return {

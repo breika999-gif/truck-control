@@ -44,6 +44,7 @@ interface OptionsPanelProps {
   simulating: boolean;
   startSim: () => void;
   stopSim: () => void;
+  handleStart: () => void;
   poiCategory: POICategory | null;
   handlePOISearch: (cat: POICategory) => void;
   sarMode: boolean;
@@ -129,6 +130,10 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   toggleLayer,
   navigating,
   route,
+  simulating,
+  startSim,
+  stopSim,
+  handleStart,
   poiCategory,
   handlePOISearch,
   sarMode,
@@ -159,6 +164,16 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
     const data = await getDaySummary() as LegacySummaryData;
     setSummaryData(data);
     setSummaryOpen(true);
+  };
+
+  const toggleSimulation = () => {
+    if (simulating) {
+      stopSim();
+    } else {
+      if (!navigating) handleStart();
+      startSim();
+    }
+    close();
   };
 
   const mapModeLabel = mapMode === 'vector' ? 'Векторна карта' : 'Хибридна карта';
@@ -313,6 +328,21 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconColor="#FF5252"
                 iconBg="rgba(255,82,82,0.15)"
               />
+              {route && (
+                <Row
+                  icon={simulating ? 'stop-circle-outline' : 'play-circle-outline'}
+                  label={simulating ? 'Стоп демо GPS' : 'Демо GPS (симулация)'}
+                  onPress={toggleSimulation}
+                  iconColor={simulating ? '#FF6B6B' : '#00F5A0'}
+                  iconBg={simulating ? 'rgba(255,107,107,0.16)' : 'rgba(0,245,160,0.14)'}
+                  active={simulating}
+                  rightEl={
+                    <View style={[s.toggle, simulating && s.toggleOn]}>
+                      <Text style={s.toggleTxt}>{simulating ? 'ВКЛ' : 'СТАРТ'}</Text>
+                    </View>
+                  }
+                />
+              )}
 
               {/* POI / SAR */}
               {!navigating && !route && (

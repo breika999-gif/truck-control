@@ -503,6 +503,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       simulating={simulating}
       startSim={startSim}
       stopSim={stopSim}
+      handleStart={handleStart}
       poiCategory={poiCategory}
       handlePOISearch={handlePOISearch}
       sarMode={sarMode}
@@ -522,7 +523,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       backendOnline={backendOnline}
     />
 
-    <StatusChips gpsReady={gpsReady} rerouting={rerouting} loadingRoute={loadingRoute} />
+    <StatusChips gpsReady={gpsReady || simulating} rerouting={rerouting} loadingRoute={loadingRoute} />
 
     <BorderCrossingsPanel
       show={showBorderPanel}

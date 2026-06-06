@@ -28,6 +28,7 @@ interface UseLocationRuntimeProps {
   lastRestrictionRef: MutableRefObject<number>;
   dismissedStructureWarningsRef: MutableRefObject<Map<string, number>>;
   avoidUnpavedRef: MutableRefObject<boolean>;
+  simulationActiveRef?: MutableRefObject<boolean>;
 
   setTunnelWarning: (msg: string | null, key?: string | null) => void;
   setSpeedLimit: (limit: number | null) => void;
@@ -223,6 +224,7 @@ export const useLocationRuntime = ({
   lastRestrictionRef,
   dismissedStructureWarningsRef,
   avoidUnpavedRef: _avoidUnpavedRef,
+  simulationActiveRef,
   setTunnelWarning,
   setSpeedLimit,
   setCurrentStep,
@@ -253,7 +255,7 @@ export const useLocationRuntime = ({
     const startWatch = () => {
       Geolocation.getCurrentPosition(
         (pos) => {
-          if (!isMountedRef.current) return;
+          if (!isMountedRef.current || simulationActiveRef?.current) return;
           const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
           userCoordsRef.current = coords;
           setUserCoords(coords);
@@ -265,7 +267,7 @@ export const useLocationRuntime = ({
 
       watchId = Geolocation.watchPosition(
         (pos) => {
-          if (!isMountedRef.current) return;
+          if (!isMountedRef.current || simulationActiveRef?.current) return;
           const coords: [number, number] = [pos.coords.longitude, pos.coords.latitude];
           userCoordsRef.current = coords;
           setUserCoords(coords);

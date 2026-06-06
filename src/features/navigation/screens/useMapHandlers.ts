@@ -119,7 +119,7 @@ export interface MapHandlers {
   handleAcceptFasterRoute: () => void;
   handleMapLongPress: (event: any) => void;
   handleDestinationSelect: (place: GeoPlace) => void;
-  handleStart: () => void;
+  handleStart: (activeRoute?: RouteResult | null) => void;
   handleStopNav: () => void;
   handleClear: () => void;
   handleOriginChange: (place: GeoPlace | null) => void;
@@ -462,8 +462,16 @@ export function useMapHandlers({
     [navigateTo],
   );
 
-  const handleStart = useCallback(() => {
-    beginRouteLog(routeRef.current ?? route);
+  const handleStart = useCallback((activeRoute?: RouteResult | null) => {
+    const routeToStart = activeRoute ?? routeRef.current ?? route;
+    if (!routeToStart?.geometry?.coordinates?.length) {
+      Alert.alert('Няма маршрут', 'Изчакай маршрутът да се зареди или избери дестинация отново.');
+      return;
+    }
+
+    routeRef.current = routeToStart;
+    setRoute(routeToStart);
+    beginRouteLog(routeToStart);
     lastSpokenStepRef.current = -1;
     setCurrentStep(0);
     setDistToTurn(null);
@@ -475,7 +483,7 @@ export function useMapHandlers({
       Tts.stop();
       ttsSpeak('Следвайте маршрута.');
     }
-  }, [beginRouteLog, mapMode, resetSession, route, routeRef]);
+  }, [beginRouteLog, mapMode, resetSession, route, routeRef, setRoute]);
 
   const handleStopNav = useCallback(() => {
     completeActiveRouteLog();
@@ -713,7 +721,11 @@ export function useMapHandlers({
   }, [route, destinationNameRef, waypointsRef, waypointNamesRef]);
 
   const handleStartRoute = useCallback((_cong: any, _alerts: any) => {
-    const selectedIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
+    const selectedIdx = selectedRouteIdx != null && routeOptions[selectedRouteIdx]
+      ? selectedRouteIdx
+      : routeOptions.length > 0
+        ? 0
+        : null;
     const selectedOption = selectedIdx == null ? null : routeOptions[selectedIdx];
     if (selectedOption?.geometry?.coordinates?.length) {
       const selectedRoute = routeFromOption(selectedOption);
@@ -721,7 +733,7 @@ export function useMapHandlers({
       setRoute(selectedRoute);
       setNavCongestionGeoJSON(selectedRoute.congestionGeoJSON);
       setNavTrafficAlerts(trafficAlertsToGeoJSON(selectedOption.traffic_alerts));
-      handleStart();
+      handleStart(selectedRoute);
     } else if (routeOptDest) {
       navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);
     }
