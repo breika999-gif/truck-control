@@ -143,3 +143,14 @@ temp_poi.html
 
 # Separate project — not part of this repo
 TruckExpoAI/
+
+# Media / Site assets (bloat)
+site_clips/
+video_review/
+.codex-remote-attachments/
+
+# Local Dev Scripts
+*.ps1
+!android/gradlew.bat
+run-android.bat
+TruckAI-logcat.bat
