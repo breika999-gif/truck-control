@@ -31,6 +31,8 @@ import {
 import type { RouteResult } from '../api/directions';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
 import { useVehicleStore } from '../../../store/vehicleStore';
+import type { BluetoothTachoState } from '../../tacho/hooks/useTachoBluetooth';
+import type { POICard } from '../../../shared/services/backendApi';
 
 interface NavigationHUDProps {
   navigating: boolean;
@@ -65,6 +67,9 @@ interface NavigationHUDProps {
   HOS_LIMIT_S: number;
   speedingBg?: Animated.AnimatedInterpolation<string | number> | string;
   proximityAlerts?: { overtaking: any[]; activeHgvNoOvertaking?: boolean };
+  bluetoothTacho?: BluetoothTachoState | null;
+  urgentParkingResults?: POICard[];
+  onUrgentParkingPress?: () => void;
   roadGrade?: number | null;
   nearestParkingM?: number | null;
   hillWarnings?: import('../hooks/useRouteInsights').RouteInsight[];
@@ -107,6 +112,9 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   HOS_LIMIT_S,
   speedingBg,
   proximityAlerts,
+  bluetoothTacho,
+  urgentParkingResults = [],
+  onUrgentParkingPress,
   roadGrade,
   nearestParkingM,
   hillWarnings = [],
@@ -120,6 +128,33 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   const setIsLoaded = useVehicleStore(state => state.setIsLoaded);
   const routeDistance = route?.distance;
   const activeHgvNoOvertaking = proximityAlerts?.activeHgvNoOvertaking === true;
+  const tachoRemainingMin = useMemo(() => {
+    const liveRemaining = bluetoothTacho?.liveData?.drivingTimeLeftMin;
+    if (Number.isFinite(liveRemaining)) return Math.max(0, Math.round(liveRemaining as number));
+    const continuousDrivenS = bluetoothTacho?.data?.continuousDrivenS;
+    if (Number.isFinite(continuousDrivenS)) {
+      return Math.max(0, Math.round((HOS_LIMIT_S - (continuousDrivenS as number)) / 60));
+    }
+    return null;
+  }, [HOS_LIMIT_S, bluetoothTacho?.data?.continuousDrivenS, bluetoothTacho?.liveData?.drivingTimeLeftMin]);
+  const rawTachoActivity = bluetoothTacho?.liveData?.activity ?? bluetoothTacho?.data?.activity;
+  const tachoActivityLabel = rawTachoActivity === 'driving'
+    ? t('tacho.activityDriving')
+    : rawTachoActivity === 'work'
+      ? t('tacho.activityWork')
+      : rawTachoActivity === 'available'
+        ? t('tacho.activityAvailable')
+        : rawTachoActivity === 'rest'
+          ? t('tacho.activityRest')
+          : rawTachoActivity || t('tacho.activityUnknown');
+  const tachoRemainingLabel = tachoRemainingMin == null
+    ? '--:--'
+    : `${Math.floor(tachoRemainingMin / 60)}:${String(tachoRemainingMin % 60).padStart(2, '0')}`;
+  const tachoChipState = tachoRemainingMin != null && tachoRemainingMin <= 10
+    ? 'critical'
+    : tachoRemainingMin != null && tachoRemainingMin <= 30
+      ? 'warning'
+      : 'ok';
   // ── Bottom-sheet snap logic ────────────────────────────────────────────────
   const panelHeightRef       = useRef(0);
   const translateY           = useRef(new Animated.Value(0)).current;
@@ -273,6 +308,36 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 {isLoaded ? '>20t' : 'Empty'}
               </Text>
             </TouchableOpacity>
+            {bluetoothTacho?.connected && (
+              <View style={[
+                hudStyles.tachoLiveChip,
+                tachoChipState === 'warning' && hudStyles.tachoLiveChipWarning,
+                tachoChipState === 'critical' && hudStyles.tachoLiveChipCritical,
+              ]}>
+                <Text style={hudStyles.tachoLiveIcon}>🚛</Text>
+                <View style={hudStyles.tachoLiveTextWrap}>
+                  <Text
+                    style={[
+                      hudStyles.tachoLiveActivity,
+                      tachoChipState === 'warning' && hudStyles.tachoLiveTextWarning,
+                      tachoChipState === 'critical' && hudStyles.tachoLiveTextCritical,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {tachoActivityLabel}
+                  </Text>
+                  <Text
+                    style={[
+                      hudStyles.tachoLiveTime,
+                      tachoChipState === 'warning' && hudStyles.tachoLiveTextWarning,
+                      tachoChipState === 'critical' && hudStyles.tachoLiveTextCritical,
+                    ]}
+                  >
+                    {tachoRemainingLabel}
+                  </Text>
+                </View>
+              </View>
+            )}
           </View>
           
           {!compactOnly && (
@@ -304,6 +369,20 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                   : `${(nearestParkingM / 1000).toFixed(1)}${t('units.kilometerShort')}`}
               </Text>
             </View>
+          )}
+          {navigating && urgentParkingResults.length > 0 && (
+            <TouchableOpacity
+              style={hudStyles.urgentParkingBanner}
+              activeOpacity={0.86}
+              onPress={onUrgentParkingPress}
+            >
+              <Text style={hudStyles.urgentParkingText}>
+                {t('hud.urgentParkingBanner', {
+                  minutes: tachoRemainingMin ?? 20,
+                  count: urgentParkingResults.length,
+                })}
+              </Text>
+            </TouchableOpacity>
           )}
         </Animated.View>
       )}
@@ -635,6 +714,77 @@ const hudStyles = StyleSheet.create({
   },
   loadToggleTextLoaded: {
     color: '#FFB340',
+  },
+  tachoLiveChip: {
+    alignSelf: 'center',
+    marginTop: 6,
+    minWidth: 104,
+    maxWidth: 132,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+    backgroundColor: 'rgba(5,10,18,0.82)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  tachoLiveChipWarning: {
+    borderColor: 'rgba(255,209,42,0.82)',
+    backgroundColor: 'rgba(255,209,42,0.16)',
+  },
+  tachoLiveChipCritical: {
+    borderColor: 'rgba(255,45,61,0.9)',
+    backgroundColor: 'rgba(255,45,61,0.18)',
+  },
+  tachoLiveIcon: {
+    fontSize: 13,
+    lineHeight: 16,
+  },
+  tachoLiveTextWrap: {
+    minWidth: 0,
+  },
+  tachoLiveActivity: {
+    maxWidth: 86,
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    lineHeight: 11,
+  },
+  tachoLiveTime: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '900',
+    lineHeight: 16,
+    letterSpacing: 0.2,
+  },
+  tachoLiveTextWarning: {
+    color: '#FFD12A',
+  },
+  tachoLiveTextCritical: {
+    color: '#FF5A66',
+  },
+  urgentParkingBanner: {
+    maxWidth: 230,
+    marginLeft: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,209,42,0.78)',
+    backgroundColor: 'rgba(25,18,5,0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    shadowColor: '#FFD12A',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  urgentParkingText: {
+    color: '#FFD12A',
+    fontSize: 12,
+    fontWeight: '900',
+    lineHeight: 15,
   },
   hosWarningBanner: {
     flexDirection: 'row',

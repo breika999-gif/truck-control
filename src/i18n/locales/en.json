@@ -213,7 +213,12 @@
     "optimizeStops": "Optimize stops",
     "details": "Details",
     "stopNavigation": "Stop navigation",
-    "startDriving": "Go"
+    "startDriving": "Go",
+    "urgentParkingBanner": "Parking after {{minutes}} min — {{count}} places on route"
+  },
+  "tachoShield": {
+    "eyebrow": "Live tachograph",
+    "tapToDismiss": "Tap to return to the map"
   },
   "routeOptions": {
     "title": "🗺️ Choose route",

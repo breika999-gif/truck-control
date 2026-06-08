@@ -213,7 +213,12 @@
     "optimizeStops": "Оптимизирай спирките",
     "details": "Детайли",
     "stopNavigation": "Спри навигацията",
-    "startDriving": "Тръгни"
+    "startDriving": "Тръгни",
+    "urgentParkingBanner": "Паркинг след {{minutes}} мин — {{count}} места по маршрута"
+  },
+  "tachoShield": {
+    "eyebrow": "Live тахограф",
+    "tapToDismiss": "Натисни за връщане към картата"
   },
   "routeOptions": {
     "title": "🗺️ Изберете маршрут",

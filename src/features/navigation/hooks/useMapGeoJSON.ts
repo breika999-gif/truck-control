@@ -2,12 +2,35 @@ import { useMemo } from 'react';
 import type * as GeoJSON from 'geojson';
 import { haversineMeters, nearestRouteMatch } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
+import type { GradeProfile } from '../utils/gradeProfile';
+import { buildTachoRangeGeoJSON as buildTachoRange } from '../utils/tachoRouteRange';
 
 interface UseMapGeoJSONProps {
   route: RouteResult | null;
   navigating: boolean;
   userCoords: [number, number] | null;
   navCongestionGeoJSON: GeoJSON.FeatureCollection | null;
+  tachoDrivingTimeLeftMin?: number | null;
+  isLoaded?: boolean;
+  gradeProfile?: GradeProfile | null;
+}
+
+export function buildTachoRangeGeoJSON(
+  routeCoords: [number, number][],
+  userCoords: [number, number] | null,
+  drivingTimeLeftMin: number | null | undefined,
+  isLoaded = false,
+  route?: RouteResult | null,
+  gradeProfile?: GradeProfile | null,
+): GeoJSON.FeatureCollection {
+  return buildTachoRange({
+    routeCoords,
+    userCoords,
+    drivingTimeLeftMin,
+    isLoaded,
+    route,
+    gradeProfile,
+  });
 }
 
 export const useMapGeoJSON = ({
@@ -15,6 +38,9 @@ export const useMapGeoJSON = ({
   navigating,
   userCoords,
   navCongestionGeoJSON,
+  tachoDrivingTimeLeftMin,
+  isLoaded = false,
+  gradeProfile,
 }: UseMapGeoJSONProps) => {
   const exitsGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
     if (!route) return { type: 'FeatureCollection', features: [] };
@@ -90,5 +116,19 @@ export const useMapGeoJSON = ({
     return { type: 'FeatureCollection', features };
   }, [navigating, userCoords, navCongestionGeoJSON, route]);
 
-  return { exitsGeoJSON, navCongestionVisible };
+  const tachoRangeGeoJSON = useMemo<GeoJSON.FeatureCollection>(() => {
+    if (!navigating || !route || !userCoords) {
+      return { type: 'FeatureCollection', features: [] };
+    }
+    return buildTachoRangeGeoJSON(
+      route.geometry.coordinates,
+      userCoords,
+      tachoDrivingTimeLeftMin,
+      isLoaded,
+      route,
+      gradeProfile,
+    );
+  }, [gradeProfile, isLoaded, navigating, route, tachoDrivingTimeLeftMin, userCoords]);
+
+  return { exitsGeoJSON, navCongestionVisible, tachoRangeGeoJSON };
 };

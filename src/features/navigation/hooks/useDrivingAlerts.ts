@@ -8,9 +8,16 @@ import {
   pointToSegmentDistanceMeters,
   ttsSpeak,
 } from '../utils/mapUtils';
-import { fetchProximityAlerts, type POICard, type ProximityAlerts } from '../../../shared/services/backendApi';
+import {
+  fetchPOIsAlongRoute,
+  fetchProximityAlerts,
+  type POICard,
+  type ProximityAlerts,
+} from '../../../shared/services/backendApi';
 import { useSoundAlerts } from './useSoundAlerts';
 import type { RouteResult } from '../api/directions';
+import type { GradeProfile } from '../utils/gradeProfile';
+import { findTachoLimitPoint } from '../utils/tachoRouteRange';
 import i18n from '../../../i18n';
 
 const PROXIMITY_ALERT_RADIUS_M = 8000;
@@ -30,6 +37,9 @@ interface UseDrivingAlertsArgs {
   userHeading: number | null;
   route: RouteResult | null;
   cameraResults: POICard[];
+  drivingTimeLeftMin?: number | null;
+  isLoaded?: boolean;
+  gradeProfile?: GradeProfile | null;
   voiceMutedRef: MutableRefObject<boolean>;
   lanePulseOn: boolean;
 }
@@ -175,12 +185,16 @@ export function useDrivingAlerts({
   userHeading,
   route,
   cameraResults,
+  drivingTimeLeftMin,
+  isLoaded = false,
+  gradeProfile,
   voiceMutedRef,
   lanePulseOn,
 }: UseDrivingAlertsArgs) {
   const { playSpeedAlert, playCameraAlert } = useSoundAlerts(voiceMutedRef);
   const [cameraAlert, setCameraAlert] = useState<{ dist: number; name: string } | null>(null);
   const [overtakingResults, setOvertakingResults] = useState<ProximityAlerts['overtaking']>([]);
+  const [urgentParkingResults, setUrgentParkingResults] = useState<POICard[]>([]);
   const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
 
   const cameraFlashAnim    = useRef(new Animated.Value(0)).current;
@@ -192,6 +206,8 @@ export function useDrivingAlerts({
   const lastProximityFetchAtRef = useRef(0);
   const lastProximityFetchCoordsRef = useRef<[number, number] | null>(null);
   const proximityRequestSeqRef = useRef(0);
+  const urgentParkingAbortRef = useRef<AbortController | null>(null);
+  const lastUrgentParkingRouteKeyRef = useRef<string | null>(null);
 
   // в”Ђв”Ђ Speed limit TTS alarm вЂ” fires once per 30 s when exceeding the limit в”Ђв”Ђ
   useEffect(() => {
@@ -310,6 +326,72 @@ export function useDrivingAlerts({
       });
   }, [navigating, route, userCoords, userHeading]);
 
+  // ── Urgent tacho parking — search around the route point where drive time ends ──
+  useEffect(() => {
+    const remainingMin = Number(drivingTimeLeftMin);
+    if (
+      !navigating ||
+      !route ||
+      !userCoords ||
+      !Number.isFinite(remainingMin) ||
+      remainingMin <= 0 ||
+      remainingMin > 20
+    ) {
+      urgentParkingAbortRef.current?.abort();
+      urgentParkingAbortRef.current = null;
+      setUrgentParkingResults([]);
+      if (!navigating || remainingMin > 20) {
+        lastUrgentParkingRouteKeyRef.current = null;
+      }
+      return;
+    }
+
+    const routeCoords = route.geometry.coordinates as [number, number][];
+    if (routeCoords.length < 2) return;
+
+    const first = routeCoords[0];
+    const last = routeCoords[routeCoords.length - 1];
+    const routeKey = [
+      Math.round(route.distance),
+      first?.map(v => v.toFixed(4)).join(','),
+      last?.map(v => v.toFixed(4)).join(','),
+    ].join('|');
+    if (lastUrgentParkingRouteKeyRef.current === routeKey) return;
+
+    const limitPoint = findTachoLimitPoint({
+      routeCoords,
+      userCoords,
+      drivingTimeLeftMin: remainingMin,
+      isLoaded,
+      route,
+      gradeProfile,
+    });
+    const searchCoords = limitPoint?.routeSlice && limitPoint.routeSlice.length >= 2
+      ? limitPoint.routeSlice
+      : routeCoords;
+    if (searchCoords.length < 2) return;
+
+    lastUrgentParkingRouteKeyRef.current = routeKey;
+    urgentParkingAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    urgentParkingAbortRef.current = ctrl;
+
+    fetchPOIsAlongRoute(searchCoords, 'truck_stop', ctrl.signal)
+      .then(results => {
+        if (ctrl.signal.aborted) return;
+        setUrgentParkingResults(results.slice(0, 5));
+      })
+      .catch(err => {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        lastUrgentParkingRouteKeyRef.current = null;
+        setUrgentParkingResults([]);
+      });
+
+    return () => {
+      ctrl.abort();
+    };
+  }, [drivingTimeLeftMin, gradeProfile, isLoaded, navigating, route, userCoords]);
+
   // в”Ђв”Ђ Lane glow pulse вЂ” starts/stops based on lanePulseOn в”Ђв”Ђ
   useEffect(() => {
     if (lanePulseOn) {
@@ -347,6 +429,7 @@ export function useDrivingAlerts({
     setCameraAlert,
     overtakingResults,
     setOvertakingResults,
+    urgentParkingResults,
     tunnelWarning,
     setTunnelWarning,
     cameraFlashAnim,

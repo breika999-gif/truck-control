@@ -213,7 +213,12 @@
     "optimizeStops": "Optimizar paradas",
     "details": "Detalles",
     "stopNavigation": "Detener navegación",
-    "startDriving": "Ir"
+    "startDriving": "Ir",
+    "urgentParkingBanner": "Aparcamiento tras {{minutes}} min — {{count}} lugares en ruta"
+  },
+  "tachoShield": {
+    "eyebrow": "Tacógrafo en vivo",
+    "tapToDismiss": "Toca para volver al mapa"
   },
   "routeOptions": {
     "title": "🗺️ Elige ruta",

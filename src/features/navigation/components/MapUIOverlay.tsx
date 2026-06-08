@@ -69,6 +69,7 @@ export interface MapUIOverlayProps {
   laneGlowShadow: Loose;
   route: Loose;
   routeControlsVisible: boolean;
+  setRouteControlsVisible: Loose;
   navPhase: Loose;
   routeAheadPOIs: Loose[];
   handleRouteTimelinePOIPress: Loose;
@@ -117,6 +118,7 @@ export interface MapUIOverlayProps {
   handlePOINavigate: Loose;
   parkingResults: Loose[];
   setParkingResults: Loose;
+  urgentParkingResults: Loose[];
   navigateTo: Loose;
   addWaypoint: Loose;
   setSelectedParking: Loose;
@@ -227,6 +229,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   laneGlowShadow,
   route,
   routeControlsVisible,
+  setRouteControlsVisible,
   navPhase,
   routeAheadPOIs,
   handleRouteTimelinePOIPress,
@@ -275,6 +278,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   handlePOINavigate,
   parkingResults,
   setParkingResults,
+  urgentParkingResults,
   navigateTo,
   addWaypoint,
   setSelectedParking,
@@ -698,6 +702,14 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
         HOS_LIMIT_S={HOS_LIMIT_S}
         speedingBg={speedingBg}
         proximityAlerts={proximityAlerts}
+        bluetoothTacho={bluetoothTacho}
+        urgentParkingResults={urgentParkingResults}
+        onUrgentParkingPress={() => {
+          if (urgentParkingResults.length > 0) {
+            setParkingResults(urgentParkingResults);
+            setRouteControlsVisible(true);
+          }
+        }}
         nearestParkingM={nearestParkingM}
         hillWarnings={hillWarnings}
         compactOnly={routeUiCollapsed}

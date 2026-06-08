@@ -23,6 +23,7 @@ interface MapLayersProps {
   routeLineColor: string;
   routeProgressFraction?: number;
   driveSegments?: DriveSegmentsResult | null;
+  tachoRangeGeoJSON?: GeoJSON.FeatureCollection | null;
   gradeProfile?: GradeProfile | null;
   exitsGeoJSON: GeoJSON.FeatureCollection;
   navTrafficAlerts: GeoJSON.FeatureCollection | null;
@@ -274,6 +275,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
   routeLineColor,
   routeProgressFraction,
   driveSegments,
+  tachoRangeGeoJSON,
   gradeProfile,
   exitsGeoJSON,
   navTrafficAlerts,
@@ -305,9 +307,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
 
   const { traffic: showTraffic } = mapLayers;
   const hasDriveSegments = Boolean(driveSegments?.gradientStops.length);
+  const hasTachoRange = Boolean(tachoRangeGeoJSON?.features.length);
   const routeGlowColor = lightMode ? 'rgba(0,122,255,0.30)' : 'rgba(19,217,255,0.52)';
   const routeCasingColor = lightMode ? '#071426' : '#06244A';
-  const routeBaseColor = hasDriveSegments ? 'rgba(0,0,0,0)' : routeLineColor;
+  const routeBaseColor = hasDriveSegments || hasTachoRange ? 'rgba(0,0,0,0)' : routeLineColor;
   const routeMainWidth = ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 9, 15, 15] as any;
   const routeCasingWidth = ['interpolate', ['linear'], ['zoom'], 5, 8, 10, 14, 15, 23] as any;
   const routeGlowWidth = ['interpolate', ['linear'], ['zoom'], 5, 13, 10, 22, 15, 36] as any;
@@ -624,6 +627,57 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
+      {/* ── Live tacho range line: green reachable, yellow last 30 min, red after limit ── */}
+      {mapIsLoaded && hasTachoRange && tachoRangeGeoJSON && (
+        <Mapbox.ShapeSource id="tacho-range-source" shape={tachoRangeGeoJSON} tolerance={0}>
+          <Mapbox.LineLayer
+            id="tacho-range-safe"
+            slot="middle"
+            aboveLayerID="route-casing"
+            filter={['==', ['get', 'status'], 'safe']}
+            style={{
+              lineColor: '#23E06F',
+              lineWidth: routeMainWidth,
+              lineOpacity: 0.98,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineBlur: lightMode ? 0 : 0.2,
+              lineEmissiveStrength: lightMode ? 0 : 1.15,
+            } as any}
+          />
+          <Mapbox.LineLayer
+            id="tacho-range-warning"
+            slot="middle"
+            aboveLayerID="tacho-range-safe"
+            filter={['==', ['get', 'status'], 'warning']}
+            style={{
+              lineColor: '#FFD12A',
+              lineWidth: routeMainWidth,
+              lineOpacity: 0.98,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineBlur: lightMode ? 0 : 0.25,
+              lineEmissiveStrength: lightMode ? 0 : 1.2,
+            } as any}
+          />
+          <Mapbox.LineLayer
+            id="tacho-range-over"
+            slot="middle"
+            aboveLayerID="tacho-range-warning"
+            filter={['==', ['get', 'status'], 'over']}
+            style={{
+              lineColor: '#FF2D3D',
+              lineWidth: routeMainWidth,
+              lineOpacity: 0.98,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineBlur: lightMode ? 0 : 0.3,
+              lineEmissiveStrength: lightMode ? 0 : 1.25,
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
       {/* ── Route congestion line (colored segments from TomTom data) ── */}
       {mapIsLoaded && (() => {
         // During navigation: show 15km slice; in preview: show full route
@@ -657,7 +711,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
       })()}
 
       {/* ── Tachograph drive periods (visible route surface) ── */}
-      {mapIsLoaded && driveSegments && routeShape && driveSegments.gradientStops.length > 0 && (
+      {mapIsLoaded && !hasTachoRange && driveSegments && routeShape && driveSegments.gradientStops.length > 0 && (
         <Mapbox.ShapeSource
           id="drive-segments-source"
           lineMetrics={true}
@@ -681,12 +735,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {mapIsLoaded && hasDriveSegments && gradeOverlayGeoJSON.features.length > 0 && (
+      {mapIsLoaded && (hasDriveSegments || hasTachoRange) && gradeOverlayGeoJSON.features.length > 0 && (
         <Mapbox.ShapeSource id="grade-overlay-source" shape={gradeOverlayGeoJSON}>
           <Mapbox.LineLayer
             id="grade-overlay"
             slot="middle"
-            aboveLayerID="drive-segments-layer"
+            aboveLayerID={hasTachoRange ? 'tacho-range-over' : 'drive-segments-layer'}
             style={{
               lineColor: '#FF6B00',
               lineWidth: 5,

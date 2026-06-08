@@ -38,6 +38,11 @@ export interface TachoBleState {
 
 export interface BluetoothTachoState {
   connected: boolean;
+  status: BleStatus;
+  statusMsg: string;
+  liveData: TachoLiveData | null;
+  foundDevices: Device[];
+  isConnected: boolean;
   deviceName: string | null;
   data: {
     continuousDrivenS: number;

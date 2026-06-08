@@ -19,6 +19,7 @@ import { useVehicleStore } from '../../../store/vehicleStore';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import MapLayers from '../components/MapLayers';
 import MapUIOverlay from '../components/MapUIOverlay';
+import TachoShield from '../components/TachoShield';
 import { useFasterRouteCheck } from '../hooks/useFasterRouteCheck';
 import {
   searchNearbyParking,
@@ -33,6 +34,7 @@ import {
   ICON_RESTRICTION_HEIGHT, ICON_RESTRICTION_LENGTH, ICON_RESTRICTION_NO_TRUCKS,
   ICON_RESTRICTION_WEIGHT, ICON_RESTRICTION_WIDTH,
   type DepartLabel, departIso,
+  HOS_LIMIT_S,
   ttsSpeak,
   StableCamera,
 } from '../utils/mapUtils';
@@ -73,6 +75,7 @@ const MapScreen: React.FC = () => {
   const screenRoute = useRoute<MapRouteProp>();
   const insets = useSafeAreaInsets();
   const { profile } = useVehicleStore();
+  const isLoaded = useVehicleStore(state => state.isLoaded);
   const cameraRef = useRef<any>(null);
 
   // ── States & Refs ──────────────────────────────────────────────────────────
@@ -288,6 +291,21 @@ const MapScreen: React.FC = () => {
       }
     }
   );
+  const tachoDrivingTimeLeftMin = Number.isFinite(bluetoothTacho.liveData?.drivingTimeLeftMin)
+    ? Math.max(0, Math.round(bluetoothTacho.liveData!.drivingTimeLeftMin))
+    : bluetoothTacho.data
+      ? Math.max(0, Math.round((HOS_LIMIT_S - bluetoothTacho.data.continuousDrivenS) / 60))
+      : null;
+  const rawTachoActivity = bluetoothTacho.liveData?.activity ?? bluetoothTacho.data?.activity;
+  const tachoShieldActivity = rawTachoActivity === 'driving'
+    ? t('tacho.activityDriving')
+    : rawTachoActivity === 'work'
+      ? t('tacho.activityWork')
+      : rawTachoActivity === 'available'
+        ? t('tacho.activityAvailable')
+        : rawTachoActivity === 'rest'
+          ? t('tacho.activityRest')
+          : rawTachoActivity || t('tacho.activityUnknown');
   useLayoutEffect(() => { drivingSecondsRef.current = drivingSeconds; }, [drivingSeconds, drivingSecondsRef]);
   useLayoutEffect(() => { setTachoSummaryRef.current = setTachoSummary; });
 
@@ -364,6 +382,8 @@ const MapScreen: React.FC = () => {
 
   const [customOriginName, setCustomOriginName] = useState('');
   const [routeControlsVisible, setRouteControlsVisible] = useState(true);
+  const [tachoShieldVisible, setTachoShieldVisible] = useState(false);
+  const tachoShieldShownRef = useRef(false);
   const mapIsLoaded = mapLoaded;
   const {
     isTracking, lastMapTouchAtRef, mapPitch, puckScale, setAutoRetrackNonce,
@@ -415,6 +435,24 @@ const MapScreen: React.FC = () => {
   }, [navigating, route?.distance]);
 
   useEffect(() => {
+    if (!navigating) {
+      tachoShieldShownRef.current = false;
+      setTachoShieldVisible(false);
+      return;
+    }
+    if (
+      !tachoShieldShownRef.current &&
+      speed > 5 &&
+      tachoDrivingTimeLeftMin != null &&
+      tachoDrivingTimeLeftMin > 0 &&
+      tachoDrivingTimeLeftMin < 60
+    ) {
+      tachoShieldShownRef.current = true;
+      setTachoShieldVisible(true);
+    }
+  }, [navigating, speed, tachoDrivingTimeLeftMin]);
+
+  useEffect(() => {
     if (!navigating || !routeControlsVisible) return;
     const timer = setTimeout(() => setRouteControlsVisible(false), 5000);
     return () => clearTimeout(timer);
@@ -435,6 +473,7 @@ const MapScreen: React.FC = () => {
   const {
     cameraAlert, setCameraAlert,
     overtakingResults,
+    urgentParkingResults,
     tunnelWarning, setTunnelWarning,
     cameraFlashAnim,
     laneGlowBg, laneGlowShadow,
@@ -444,6 +483,9 @@ const MapScreen: React.FC = () => {
   } = useDrivingAlerts({
     speed, speedLimit, navigating,
     userCoords, userHeading, route, cameraResults,
+    drivingTimeLeftMin: tachoDrivingTimeLeftMin,
+    isLoaded,
+    gradeProfile,
     voiceMutedRef, lanePulseOn,
   });
   useLayoutEffect(() => { setTunnelWarningRef.current = setTunnelWarning; });
@@ -576,11 +618,15 @@ const MapScreen: React.FC = () => {
   const {
     exitsGeoJSON,
     navCongestionVisible,
+    tachoRangeGeoJSON,
   } = useMapGeoJSON({
     route,
     navigating,
     userCoords,
     navCongestionGeoJSON,
+    tachoDrivingTimeLeftMin,
+    isLoaded,
+    gradeProfile,
   });
 
   const routeShape = route
@@ -682,6 +728,7 @@ const MapScreen: React.FC = () => {
           routeLineColor={routeLineColor}
           routeProgressFraction={routeProgressFraction}
           driveSegments={driveSegments}
+          tachoRangeGeoJSON={tachoRangeGeoJSON}
           gradeProfile={gradeProfile}
           exitsGeoJSON={exitsGeoJSON}
           navTrafficAlerts={navTrafficAlerts}
@@ -717,7 +764,7 @@ const MapScreen: React.FC = () => {
         handleDestinationSelect, handleClear, handleOriginChange, tunnelWarning, insets,
         handleTunnelWarningDismiss, stepToShow, nextStep, distToTurn, currentLanes,
         aheadEvents, truckSituation, displayLanes, laneGlowBg, laneGlowShadow,
-        route, routeControlsVisible, navPhase, routeAheadPOIs, handleRouteTimelinePOIPress, trafficSegments,
+        route, routeControlsVisible, setRouteControlsVisible, navPhase, routeAheadPOIs, handleRouteTimelinePOIPress, trafficSegments,
         fasterOffer, handleAcceptFasterRoute, dismissOffer, optionsOpen, setOptionsOpen,
         mapMode, setMapMode, lightMode, setLightMode, voiceMuted, setVoiceMuted,
         mapLayers, toggleLayer, avoidUnpaved, setAvoidUnpaved, simulating, startSim, stopSim,
@@ -725,7 +772,7 @@ const MapScreen: React.FC = () => {
         starredPOIs, setBorderCrossings, setShowBorderPanel, isSearchingAlongRoute,
         handleSearchAlongRoute, setMapIsLoaded, userCoords, handleReportCamera, gpsReady,
         rerouting, loadingRoute, showBorderPanel, borderCrossings, profile, poiResults,
-        loadingPOI, clearPOI, handlePOINavigate, parkingResults, setParkingResults,
+        loadingPOI, clearPOI, handlePOINavigate, parkingResults, setParkingResults, urgentParkingResults,
         navigateTo, addWaypoint, setSelectedParking, navigation, fuelResults, setFuelResults,
         tachographResult, tachoSummary, bluetoothTacho, setTachographResult, businessResults,
         setBusinessResults, routeOptions, selectedRouteIdx, routeOptDest, restrictionChecking,
@@ -743,6 +790,12 @@ const MapScreen: React.FC = () => {
         handleChat, isRecording, handleMicStart, handleMicStop, kbHeight, gptScrollRef,
         geminiScrollRef, micLoading, showAccountModal, setGoogleUser, isMountedRef, setStarredPOIs,
       }} />
+      <TachoShield
+        visible={tachoShieldVisible}
+        remainingMin={tachoDrivingTimeLeftMin}
+        activity={tachoShieldActivity}
+        onDismiss={() => setTachoShieldVisible(false)}
+      />
     </View>
   );
 }
