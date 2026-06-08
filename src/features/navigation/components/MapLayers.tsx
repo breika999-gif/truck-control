@@ -650,7 +650,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
                 lineJoin: 'round',
                 lineBlur: lightMode ? 0 : 0.25,
                 lineEmissiveStrength: lightMode ? 0 : 1.2,
-                lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
               } as any}
             />
           </Mapbox.ShapeSource>

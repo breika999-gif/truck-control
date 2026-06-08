@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type * as GeoJSON from 'geojson';
-import { haversineMeters } from '../utils/mapUtils';
+import { haversineMeters, nearestRouteMatch } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 
 interface UseMapGeoJSONProps {
@@ -44,16 +44,51 @@ export const useMapGeoJSON = ({
   }, [route]);
 
   const navCongestionVisible = useMemo<GeoJSON.FeatureCollection | null>(() => {
-    if (!navigating || !userCoords || !navCongestionGeoJSON) return null;
-    const MAX_M = 15_000;
-    const features = navCongestionGeoJSON.features.filter(f => {
-      const coords = (f.geometry as GeoJSON.LineString).coordinates;
-      if (!coords?.length) return false;
-      const [lng, lat] = coords[0] as [number, number];
-      return haversineMeters(userCoords, [lng, lat]) <= MAX_M;
-    });
+    if (!navigating || !userCoords || !navCongestionGeoJSON || !route) return null;
+    
+    const routeCoords = route.geometry.coordinates;
+    const userMatch = nearestRouteMatch(userCoords, routeCoords);
+    const userIdx = userMatch.bestIndex;
+
+    const MAX_LOOKAHEAD_M = 15_000;
+    const features: GeoJSON.Feature[] = [];
+
+    for (const f of navCongestionGeoJSON.features) {
+      const endIdx = (f.properties?.endIdx as number) ?? 0;
+      // Skip if entire segment is behind us
+      if (endIdx < userIdx) continue;
+
+      const fGeom = f.geometry as GeoJSON.LineString;
+      const fCoords = fGeom.coordinates;
+      if (!fCoords?.length) continue;
+
+      // Start of this segment in global route coords
+      const startIdx = endIdx - (fCoords.length - 1);
+
+      let visibleCoords = fCoords;
+
+      // If we are currently inside this segment, slice it
+      if (userIdx > startIdx && userIdx <= endIdx) {
+        const localIdx = userIdx - startIdx;
+        visibleCoords = [userCoords, ...fCoords.slice(localIdx)];
+      }
+
+      // Optimization: skip if segment starts too far ahead
+      const [firstLng, firstLat] = visibleCoords[0] as [number, number];
+      if (haversineMeters(userCoords, [firstLng, firstLat]) > MAX_LOOKAHEAD_M) {
+        // Since features are in order, we could break here if we were sure.
+        // For now, continue to be safe.
+        continue;
+      }
+
+      features.push({
+        ...f,
+        geometry: { ...fGeom, coordinates: visibleCoords },
+      });
+    }
+
     return { type: 'FeatureCollection', features };
-  }, [navigating, userCoords, navCongestionGeoJSON]);
+  }, [navigating, userCoords, navCongestionGeoJSON, route]);
 
   return { exitsGeoJSON, navCongestionVisible };
 };

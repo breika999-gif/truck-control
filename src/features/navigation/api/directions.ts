@@ -115,12 +115,16 @@ export function buildCongestionGeoJSON(
     const changed = !isLast && (congestion[i] || 'unknown') !== (congestion[segStart] || 'unknown');
     if (changed || isLast) {
       features.push({
-        type: 'Feature',
-        properties: { congestion: congestion[segStart] || 'unknown' },
+        type: 'Feature' as const,
+        properties: {
+          congestion: congestion[segStart] || 'unknown',
+          endIdx: i,
+        },
         geometry: { type: 'LineString', coordinates: coords.slice(segStart, i + 1) },
       });
       segStart = i;
     }
+
   }
   return { type: 'FeatureCollection', features };
 }
