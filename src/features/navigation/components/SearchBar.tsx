@@ -24,8 +24,8 @@ import { pingBackend } from '../../../shared/services/backendApi';
 const NEON     = '#00bfff';
 const NEON_DIM = 'rgba(0,191,255,0.10)';
 
-// If no API response arrives within this window, abort and hide loading state.
-const SEARCH_TIMEOUT_MS = 3_000;
+// Railway/mobile networks can occasionally take a few seconds to wake up.
+const SEARCH_TIMEOUT_MS = 8_000;
 // Debounce delay before firing the suggest request.
 const DEBOUNCE_MS = 350;
 

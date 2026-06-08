@@ -1,6 +1,6 @@
 import { StyleSheet, Platform } from 'react-native';
 import { colors, radius, spacing, typography } from '../../../shared/constants/theme';
-import { isLandscape, isTablet, screenWidth, uiScale } from '../../../shared/utils/screen';
+import { isLandscape, isTablet, uiScale } from '../../../shared/utils/screen';
 
 // ── Neon Blue theme ──────────────────────────────────────────────────────────
 export const NEON = '#00f7ff'; // light neon blue (cyan)
@@ -48,9 +48,8 @@ export const styles = StyleSheet.create({
 
   searchContainer: {
     position: 'absolute',
-    left: isTablet ? (screenWidth - Math.min(600, screenWidth - 40)) / 2 : spacing.md,
-    right: isTablet ? undefined : spacing.md,
-    width: isTablet ? Math.min(600, screenWidth - 40) : undefined,
+    left: spacing.md,
+    right: spacing.md,
     zIndex: 20,
   },
 

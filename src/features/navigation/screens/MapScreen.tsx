@@ -291,12 +291,15 @@ const MapScreen: React.FC = () => {
       }
     }
   );
-  const tachoDrivingTimeLeftMin = Number.isFinite(bluetoothTacho.liveData?.drivingTimeLeftMin)
+  const bluetoothTachoConnected = bluetoothTacho.connected === true;
+  const tachoDrivingTimeLeftMin = bluetoothTachoConnected && Number.isFinite(bluetoothTacho.liveData?.drivingTimeLeftMin)
     ? Math.max(0, Math.round(bluetoothTacho.liveData!.drivingTimeLeftMin))
-    : bluetoothTacho.data
+    : bluetoothTachoConnected && bluetoothTacho.data
       ? Math.max(0, Math.round((HOS_LIMIT_S - bluetoothTacho.data.continuousDrivenS) / 60))
       : null;
-  const rawTachoActivity = bluetoothTacho.liveData?.activity ?? bluetoothTacho.data?.activity;
+  const rawTachoActivity = bluetoothTachoConnected
+    ? bluetoothTacho.liveData?.activity ?? bluetoothTacho.data?.activity
+    : null;
   const tachoShieldActivity = rawTachoActivity === 'driving'
     ? t('tacho.activityDriving')
     : rawTachoActivity === 'work'
@@ -469,6 +472,7 @@ const MapScreen: React.FC = () => {
     currentStep, distToTurn, drivingSeconds, lightMode, mapMode, navigating, navPhase,
     parkingResults, profile, remainingSeconds, route, tachoSummary, userCoords,
   });
+  const displayDriveSegments = bluetoothTachoConnected ? driveSegments : null;
 
   const {
     cameraAlert, setCameraAlert,
@@ -727,7 +731,7 @@ const MapScreen: React.FC = () => {
           congestionGeoJSON={route?.congestionGeoJSON ?? null}
           routeLineColor={routeLineColor}
           routeProgressFraction={routeProgressFraction}
-          driveSegments={driveSegments}
+          driveSegments={displayDriveSegments}
           tachoRangeGeoJSON={tachoRangeGeoJSON}
           gradeProfile={gradeProfile}
           exitsGeoJSON={exitsGeoJSON}
@@ -760,7 +764,7 @@ const MapScreen: React.FC = () => {
       </Mapbox.MapView>
 
       <MapUIOverlay {...{
-        backendOnline, navigating, driveSegments, searchTop, customOriginName,
+        backendOnline, navigating, driveSegments: displayDriveSegments, searchTop, customOriginName,
         handleDestinationSelect, handleClear, handleOriginChange, tunnelWarning, insets,
         handleTunnelWarningDismiss, stepToShow, nextStep, distToTurn, currentLanes,
         aheadEvents, truckSituation, displayLanes, laneGlowBg, laneGlowShadow,
