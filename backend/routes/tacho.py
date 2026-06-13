@@ -82,25 +82,3 @@ def log_rest_stop():
         )
         conn.commit()
     return jsonify({"ok": True}), 201
-
-@tacho_bp.get("/api/rest/history")
-@require_app_token
-def rest_history():
-    email = (request.args.get("user_email") or "").strip()
-    try:
-        limit = min(max(int(request.args.get("limit") or 30), 1), 100)
-    except (TypeError, ValueError):
-        limit = 30
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, user_email, lat, lng, rest_type,
-                   duration_min, started_at, created_at
-            FROM rest_log
-            WHERE user_email=?
-            ORDER BY started_at DESC
-            LIMIT ?
-            """,
-            (email, limit),
-        ).fetchall()
-    return jsonify({"ok": True, "rests": [dict(row) for row in rows]})

@@ -161,44 +161,6 @@ def geocode_place_proxy():
     except ValueError:
         return jsonify({"error": "invalid geocoding response"}), 502
 
-@misc_bp.post("/api/poi/search-along-route")
-@require_app_token
-def poi_search_along_route_proxy():
-    body = _get_body()
-    query = (body.get("query") or "").strip()
-    points = (body.get("route") or {}).get("points") or []
-    if not query:
-        return jsonify({"error": "missing query"}), 400
-    if not isinstance(points, list) or len(points) < 2 or len(points) > 400:
-        return jsonify({"error": "invalid route"}), 400
-    validated_points = []
-    for point in points:
-        if not isinstance(point, dict):
-            return jsonify({"error": "invalid coordinates"}), 400
-        lat, lon = validate_coords(point.get("lat"), point.get("lon"))
-        if lat is None:
-            return jsonify({"error": "invalid coordinates"}), 400
-        validated_points.append({"lat": lat, "lon": lon})
-    if not TOMTOM_API_KEY:
-        return jsonify({"error": "TomTom API key not configured"}), 503
-
-    params = {
-        "key": TOMTOM_API_KEY,
-        "maxDetourTime": _bounded_int(body.get("maxDetourTime"), 600, 0, 3600),
-        "limit": _bounded_int(body.get("limit"), 8, 1, 20),
-        "vehicleType": "Truck",
-        "language": "bg-BG",
-        "spreadingMode": "auto",
-    }
-    try:
-        url = f"https://api.tomtom.com/search/2/alongRouteSearch/{requests.utils.quote(query, safe='')}.json"
-        resp = requests.post(url, params=params, json={"route": {"points": validated_points}}, timeout=8)
-        return jsonify(resp.json()), resp.status_code
-    except requests.RequestException:
-        return jsonify({"error": "POI search unavailable"}), 502
-    except ValueError:
-        return jsonify({"error": "invalid POI response"}), 502
-
 _NUMERIC_RESTRICTION_TAGS = (
     "maxheight",
     "maxweight",
@@ -698,27 +660,6 @@ def complete_route_log():
         ).rowcount
         conn.commit()
     return jsonify({"ok": updated > 0})
-
-@misc_bp.get("/api/routes")
-@require_app_token
-def route_history():
-    email = (request.args.get("user_email") or "").strip()
-    limit = _bounded_int(request.args.get("limit"), 20, 1, 100)
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, user_email, origin_name, destination_name,
-                   origin_lat, origin_lng, dest_lat, dest_lng,
-                   waypoints_json, distance_m, duration_s,
-                   started_at, completed_at, created_at
-            FROM routes
-            WHERE user_email=?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (email, limit),
-        ).fetchall()
-    return jsonify({"ok": True, "routes": [dict(row) for row in rows]})
 
 @misc_bp.post("/api/transcribe")
 @require_app_token

@@ -250,21 +250,6 @@ def nearby_truck_parking():
     spots = _tool_find_truck_parking(lat, lng, max(1000, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
 
-@poi_bp.get("/api/fuel/nearby")
-@require_app_token
-def nearby_fuel():
-    if _is_rate_limited(limit=30, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
-    try:
-        lat, lng = validate_coords(request.args.get("lat"), request.args.get("lng"))
-        if lat is None:
-            raise ValueError("invalid coordinates")
-        radius_m = int(float(request.args.get("radius") or request.args.get("radius_m") or 2000))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
-
-    spots = _tool_find_fuel(lat, lng, max(500, min(radius_m, 50000)))
-    return jsonify({"ok": True, "spots": spots, "pois": spots})
-
 @poi_bp.post("/api/poi-along-route")
 @require_app_token
 def poi_along_route_v2():

@@ -1,5 +1,25 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { POICategory, TruckPOI, searchNearbyPOI, searchAlongRoute } from '../api/poi';
+import { fetchPOIsAlongRoute, type POICard } from '../../../shared/services/backendApi';
+import { POICategory, TruckPOI, searchNearbyPOI } from '../api/poi';
+
+const SAR_CATEGORY: Partial<Record<POICategory, 'truck_stop' | 'fuel'>> = {
+  gas_station: 'fuel',
+  parking: 'truck_stop',
+  truck_stop: 'truck_stop',
+};
+
+function toTruckPOI(card: POICard, category: POICategory, index: number): TruckPOI {
+  return {
+    id: card.transparking_id ?? `${category}-${card.lng}-${card.lat}-${index}`,
+    name: card.name?.trim() || 'POI',
+    category,
+    coordinates: [card.lng, card.lat],
+    address: card.info ?? card.opening_hours ?? '',
+    brand: card.brand,
+    detourTime: card.detour_time,
+    travelTime: card.travel_time,
+  };
+}
 
 export function usePOI(
   userCoordsRef: React.MutableRefObject<[number, number] | null>,
@@ -60,13 +80,13 @@ export function usePOI(
     setPoiResults([]);
     setLoadingPOI(true);
     try {
-      const results = await searchAlongRoute(
-        currentRoute.geometry.coordinates,
-        cat,
-        15,   // 15 min max detour
-        10,   // up to 10 results
-      );
-      setPoiResults(results);
+      const sarCategory = SAR_CATEGORY[cat];
+      if (!sarCategory) {
+        setPoiResults([]);
+        return;
+      }
+      const results = await fetchPOIsAlongRoute(currentRoute.geometry.coordinates, sarCategory);
+      setPoiResults(results.slice(0, 10).map((card, index) => toTruckPOI(card, cat, index)));
     } catch (err) {
       console.error('[usePOI] searchAlongRoute error:', err);
       setPoiResults([]);
