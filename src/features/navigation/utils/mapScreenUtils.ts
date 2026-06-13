@@ -84,7 +84,7 @@ export function isRestrictionRelevantToProfile(
     return hasLimit && profile.width_m + 0.05 >= limit;
   }
   if (restriction.type === 'maxweight') {
-    return hasLimit && profile.weight_t + 0.05 >= limit;
+    return hasLimit && (limit <= HGV_LEGAL_THRESHOLD_T || profile.weight_t + 0.05 >= limit);
   }
   if (restriction.type === 'no_trucks') {
     return profile.weight_t >= 3.5 || profile.length_m > 6.0;
@@ -128,20 +128,20 @@ export function isHighSignalMapRestriction(
   profile: VehicleProfile | null,
 ): boolean {
   if (restriction.type === 'no_trucks' || restriction.type === 'hazmat') return true;
-  if (restriction.type === 'maxheight' || restriction.type === 'maxwidth') return true;
+  if (restriction.type === 'maxheight' || restriction.type === 'maxwidth') {
+    // Without a profile only flag low clearances that affect most trucks
+    if (!profile) return Number(restriction.value_num) <= 4.5;
+    return true;
+  }
 
   if (restriction.type === 'maxweight') {
     const limit = Number(restriction.value_num);
     if (!Number.isFinite(limit)) return false;
     if (limit <= HGV_LEGAL_THRESHOLD_T) return true;
-
     const truckWeight = profile?.weight_t;
-    return (
-      typeof truckWeight === 'number' &&
-      Number.isFinite(truckWeight) &&
-      truckWeight > limit &&
-      limit >= truckWeight - 2
-    );
+    // No profile: show common HGV weight limits (≤20t) as a safe fallback
+    if (typeof truckWeight !== 'number' || !Number.isFinite(truckWeight)) return limit <= 20;
+    return truckWeight > limit;
   }
 
   return true;
@@ -153,22 +153,17 @@ export function restrictionDisplayRank(
 ): number {
   if (restriction.type === 'no_trucks') return 0;
   if (restriction.type === 'hazmat') return 1;
-  if (restriction.type === 'maxheight') return 2;
-  if (restriction.type === 'maxwidth') return 3;
   if (restriction.type === 'maxweight') {
     const limit = Number(restriction.value_num);
-    if (Number.isFinite(limit) && limit <= HGV_LEGAL_THRESHOLD_T) return 4;
+    if (Number.isFinite(limit) && limit <= HGV_LEGAL_THRESHOLD_T) return 2;
     const truckWeight = profile?.weight_t;
-    if (
-      typeof truckWeight === 'number' &&
-      Number.isFinite(truckWeight) &&
-      truckWeight > limit &&
-      limit >= truckWeight - 2
-    ) {
-      return 5;
+    if (typeof truckWeight === 'number' && Number.isFinite(truckWeight) && truckWeight > limit) {
+      return 3;
     }
     return 9;
   }
+  if (restriction.type === 'maxheight') return 4;
+  if (restriction.type === 'maxwidth') return 5;
   return 10;
 }
 
