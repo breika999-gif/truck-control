@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { styles } from '../screens/MapScreen.styles';
 import { spacing } from '../../../shared/constants/theme';
+import { HOS_CONTINUOUS_WARN_10MIN_S } from '../../../shared/constants/hosRules';
 import {
   fmtDistance,
   fmtDuration,
@@ -262,7 +263,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             {!compactOnly && (
               <View style={[
                 styles.hosBadge,
-                drivingSeconds >= 15600 && styles.hosBadgeWarn,
+                drivingSeconds >= HOS_CONTINUOUS_WARN_10MIN_S && styles.hosBadgeWarn,
                 drivingSeconds >= HOS_LIMIT_S && styles.hosBadgeLimit,
               ]}>
                 <Text style={styles.hosBadgeLabel}>HOS</Text>

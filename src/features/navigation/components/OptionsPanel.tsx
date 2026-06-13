@@ -314,6 +314,13 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                   </View>
                 }
               />
+              <Row
+                icon="star-outline"
+                label={t('poi.history')}
+                onPress={() => { navigation.navigate('POIList'); close(); }}
+                iconColor="#FFD700"
+                iconBg="rgba(255,215,0,0.15)"
+              />
 
               {/* Navigation */}
               <Divider />

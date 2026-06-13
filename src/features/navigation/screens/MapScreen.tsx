@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { View } from 'react-native';
-import Mapbox, { CustomLocationProvider, LocationPuck } from '@rnmapbox/maps';
+import Mapbox from '@rnmapbox/maps';
 import { useTranslation } from 'react-i18next';
 
 import { useVoice } from '../hooks/useVoice';
@@ -18,6 +18,9 @@ import { MAP_CENTER } from '../../../shared/constants/config';
 import { useVehicleStore } from '../../../store/vehicleStore';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import MapLayers from '../components/MapLayers';
+import MapImageRegistry from '../components/MapImageRegistry';
+import NavigationLocationProvider from '../components/NavigationLocationProvider';
+import NavigationPuck from '../components/NavigationPuck';
 import MapUIOverlay from '../components/MapUIOverlay';
 import TachoShield from '../components/TachoShield';
 import { useFasterRouteCheck } from '../hooks/useFasterRouteCheck';
@@ -28,7 +31,7 @@ import {
 } from '../../../shared/services/backendApi';
 import { styles } from './MapScreen.styles';
 import {
-  NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, STAR_ICON,
+  NAV_ARROW, SIGN_CLOSED, SIGN_DANGER0, ICON_INCIDENT_ACCIDENT, ICON_INCIDENT_ROADWORKS, STAR_ICON,
   ICON_PARKING, ICON_FUEL, ICON_CAMERA, ICON_DESTINATION, ICON_BIZ, ICON_NO_OVERTAKING,
   ICON_RESTRICTION_ADR, ICON_RESTRICTION_AXLE, ICON_RESTRICTION_HAZMAT,
   ICON_RESTRICTION_HEIGHT, ICON_RESTRICTION_LENGTH, ICON_RESTRICTION_NO_TRUCKS,
@@ -56,8 +59,10 @@ import { useAndroidAuto } from '../../androidauto/useAndroidAuto';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 type MapRouteProp = RouteProp<RootStackParamList, 'Map'>;
+type RoutePOIParam = Partial<POICard> & { address?: string };
 const MAP_IMAGES = {
   'nav-arrow': NAV_ARROW, 'sign-closed': SIGN_CLOSED, 'sign-danger-0': SIGN_DANGER0,
+  'incident-accident': ICON_INCIDENT_ACCIDENT, 'incident-roadworks': ICON_INCIDENT_ROADWORKS,
   'star-icon': STAR_ICON, 'parking-icon': ICON_PARKING, 'fuel-icon': ICON_FUEL,
   'camera-icon': ICON_CAMERA, 'biz-icon': ICON_BIZ, 'no-overtaking': ICON_NO_OVERTAKING,
   'dest-flag': ICON_DESTINATION, 'restriction-height': ICON_RESTRICTION_HEIGHT,
@@ -66,7 +71,6 @@ const MAP_IMAGES = {
   'restriction-hazmat': ICON_RESTRICTION_HAZMAT, 'restriction-adr': ICON_RESTRICTION_ADR,
   'restriction-no-trucks': ICON_RESTRICTION_NO_TRUCKS,
 };
-const NAV_PUCK_GLOW = '#6D3DFF';
 // ── Component ────────────────────────────────────────────────────────
 
 const MapScreen: React.FC = () => {
@@ -115,6 +119,7 @@ const MapScreen: React.FC = () => {
 
   // POI result states — declared early so useRouteOrchestrator can auto-populate them on route set
   const [parkingResults, setParkingResults]   = useState<POICard[]>([]);
+  const [parkingSource, setParkingSource]     = useState<'gpt' | 'route' | null>(null);
   const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
   const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
   const {
@@ -286,7 +291,12 @@ const MapScreen: React.FC = () => {
       ttsSpeak(t('tachoAlerts.remainingDrivingSearchParking', { minutes: remMin }));
       if (userCoords) {
         searchNearbyParking(userCoords[1], userCoords[0], 20000)
-          .then(results => { if (results.length > 0) setParkingResults(results.slice(0, 5)); })
+          .then(results => {
+            if (results.length > 0) {
+              setParkingResults(results.slice(0, 5));
+              setParkingSource('route');
+            }
+          })
           .catch(() => {});
       }
     }
@@ -297,6 +307,8 @@ const MapScreen: React.FC = () => {
     : bluetoothTachoConnected && bluetoothTacho.data
       ? Math.max(0, Math.round((HOS_LIMIT_S - bluetoothTacho.data.continuousDrivenS) / 60))
       : null;
+  const parkingRemainingDriveMin = tachoDrivingTimeLeftMin
+    ?? Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60));
   const rawTachoActivity = bluetoothTachoConnected
     ? bluetoothTacho.liveData?.activity ?? bluetoothTacho.data?.activity
     : null;
@@ -348,12 +360,25 @@ const MapScreen: React.FC = () => {
     voiceMutedRef, 
     navigateTo: (d, n, w, a) => navigateTo(d, n, w, a),
     addWaypoint: (c, n) => addWaypoint(c, n),
-    setParkingResults, setFuelResults, setCameraResults, setBusinessResults,
+    setParkingResults, setParkingSource, setFuelResults, setCameraResults, setBusinessResults,
     setRouteOptions, setRouteOptDest, setRoute, setDestination,
     setTachographResult,
     handleAppIntent: onAppIntent,
     onReachQuestion: showReachMarkerForText,
   });
+
+  const handleTargetedQuickAction = useCallback((text: string, target: 'gpt' | 'gemini') => {
+    setChatInput('');
+    if (target === 'gpt') {
+      setGeminiChatOpen(false);
+      setGptChatOpen(true);
+      void sendGptText(text);
+    } else {
+      setGptChatOpen(false);
+      setGeminiChatOpen(true);
+      void sendGeminiText(text, { forceGemini: true });
+    }
+  }, [sendGeminiText, sendGptText, setChatInput, setGeminiChatOpen, setGptChatOpen]);
 
   // ── GPS / route / waypoint state ───────────────────────────────────
   const {
@@ -364,7 +389,7 @@ const MapScreen: React.FC = () => {
     buildElevProfile,
     fetchWeatherForRoute,
     buildRoutePOIScan,
-  } = useRouteInsights(route, userCoords, { navigating, setParkingResults, setFuelResults });
+  } = useRouteInsights(route, userCoords, { navigating, setParkingResults, setParkingSource, setFuelResults });
 
   useEffect(() => { buildRoutePOIScanRef.current = buildRoutePOIScan; }, [buildRoutePOIScan, buildRoutePOIScanRef]);
   useEffect(() => { setNavCongestionGeoJSONRef.current = setNavCongestionGeoJSON; }, [setNavCongestionGeoJSON, setNavCongestionGeoJSONRef]);
@@ -388,6 +413,7 @@ const MapScreen: React.FC = () => {
   const [tachoShieldVisible, setTachoShieldVisible] = useState(false);
   const tachoShieldShownRef = useRef(false);
   const mapIsLoaded = mapLoaded;
+  const handledRoutePoiRef = useRef<string | null>(null);
   const {
     isTracking, lastMapTouchAtRef, mapPitch, puckScale, setAutoRetrackNonce,
     setIsTracking, setMapPitch, shouldCenterOnIdleGpsRef, suppressPanUntilRef,
@@ -396,6 +422,65 @@ const MapScreen: React.FC = () => {
     navigateTo, navigating, navPhase, route, simulating, speed, userCoords,
     userHeading, voiceMutedRef, waypoints,
   });
+
+  useEffect(() => {
+    if (!mapIsLoaded) return;
+    const params = screenRoute.params;
+    const center = params?.initialCenter;
+    const routePoi = params?.selectedPOI as RoutePOIParam | undefined;
+    const centerCoords = Array.isArray(center) && center.length >= 2 &&
+      Number.isFinite(center[0]) && Number.isFinite(center[1])
+      ? center
+      : null;
+    const poiLng = Number(routePoi?.lng);
+    const poiLat = Number(routePoi?.lat);
+    const coords = centerCoords ?? (
+      Number.isFinite(poiLng) && Number.isFinite(poiLat)
+        ? [poiLng, poiLat] as [number, number]
+        : null
+    );
+    if (!coords) return;
+
+    const name = typeof routePoi?.name === 'string' && routePoi.name.trim()
+      ? routePoi.name.trim()
+      : t('common.place', { defaultValue: 'Place' });
+    const key = `${coords[0].toFixed(6)},${coords[1].toFixed(6)}:${name}`;
+    if (handledRoutePoiRef.current === key) return;
+    handledRoutePoiRef.current = key;
+
+    const distanceM = Number(routePoi?.distance_m);
+    const selected: POICard = {
+      ...(routePoi ?? {}),
+      name,
+      lng: coords[0],
+      lat: coords[1],
+      distance_m: Number.isFinite(distanceM) ? distanceM : 0,
+      info: routePoi?.info ?? routePoi?.address,
+    };
+
+    setParkingResults([selected]);
+    setParkingSource(null);
+    setFuelResults([]);
+    setBusinessResults([]);
+    setCameraResults([]);
+    setSelectedParking(selected);
+    cameraRef.current?.animateToRegion({
+      latitude: coords[1],
+      longitude: coords[0],
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    }, 800);
+  }, [
+    mapIsLoaded,
+    screenRoute.params,
+    setBusinessResults,
+    setCameraResults,
+    setFuelResults,
+    setParkingResults,
+    setParkingSource,
+    setSelectedParking,
+    t,
+  ]);
 
   useEffect(() => {
     if (!navigating || !route) { setRemainingSeconds(0); return; }
@@ -684,18 +769,12 @@ const MapScreen: React.FC = () => {
           if (selectedFuel) setSelectedFuel(null);
         }}
       >
-        <Mapbox.Images
-          images={MAP_IMAGES}
-          onImageMissing={(_imageKey) => {
-            // mapbox-location-shadow-icon е вграден Mapbox asset — не е грешка
-          }}
+        <MapImageRegistry images={MAP_IMAGES} />
+        <NavigationLocationProvider
+          navigating={navigating}
+          displayCoords={displayCoords}
+          userHeading={userHeading}
         />
-        {navigating && displayCoords && (
-          <CustomLocationProvider
-            coordinate={displayCoords}
-            heading={userHeading ?? undefined}
-          />
-        )}
         <StableCamera
           cameraRef={cameraRef}
           navigating={navigating}
@@ -709,14 +788,11 @@ const MapScreen: React.FC = () => {
 
         <Mapbox.UserLocation visible={false} />
 
-        <LocationPuck
-          puckBearingEnabled={speed > 3}
-          puckBearing="course"
-          topImage="nav-arrow"
-          bearingImage="nav-arrow"
-          scale={puckScale}
-          pulsing={{ isEnabled: true, color: NAV_PUCK_GLOW, radius: 58 }}
-          visible={navigating || isTracking}
+        <NavigationPuck
+          speed={speed}
+          puckScale={puckScale}
+          navigating={navigating}
+          isTracking={isTracking}
         />
 
         <MapLayers
@@ -776,7 +852,8 @@ const MapScreen: React.FC = () => {
         starredPOIs, setBorderCrossings, setShowBorderPanel, isSearchingAlongRoute,
         handleSearchAlongRoute, setMapIsLoaded, userCoords, handleReportCamera, gpsReady,
         rerouting, loadingRoute, showBorderPanel, borderCrossings, profile, poiResults,
-        loadingPOI, clearPOI, handlePOINavigate, parkingResults, setParkingResults, urgentParkingResults,
+        loadingPOI, clearPOI, handlePOINavigate, parkingResults, parkingSource, setParkingResults, setParkingSource,
+        remainingDriveMin: parkingRemainingDriveMin, speedKmh: speed, urgentParkingResults,
         navigateTo, addWaypoint, setSelectedParking, navigation, fuelResults, setFuelResults,
         tachographResult, tachoSummary, bluetoothTacho, setTachographResult, businessResults,
         setBusinessResults, routeOptions, selectedRouteIdx, routeOptDest, restrictionChecking,
@@ -791,7 +868,7 @@ const MapScreen: React.FC = () => {
         cameraFlashAnim, mapPitch, setMapPitch, cameraRef, geminiChatOpen, gptChatOpen,
         setGeminiChatOpen, setGptChatOpen, isTracking, setIsTracking, suppressPanUntilRef,
         gptHistory, geminiHistory, chatInput, setChatInput, gptLoading, geminiLoading,
-        handleChat, isRecording, handleMicStart, handleMicStop, kbHeight, gptScrollRef,
+        handleChat, handleTargetedQuickAction, isRecording, handleMicStart, handleMicStop, kbHeight, gptScrollRef,
         geminiScrollRef, micLoading, showAccountModal, setGoogleUser, isMountedRef, setStarredPOIs,
       }} />
       <TachoShield

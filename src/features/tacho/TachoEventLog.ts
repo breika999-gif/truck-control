@@ -1,5 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import i18n from '../../i18n';
+import {
+  HOS_CONTINUOUS_DRIVE_LIMIT_MIN,
+  HOS_CONTINUOUS_WARN_MIN,
+  HOS_BREAK_FULL_MIN,
+  HOS_BREAK_SPLIT_FIRST_MIN,
+  HOS_BREAK_SPLIT_SECOND_MIN,
+} from '../../shared/constants/hosRules';
 
 const STORAGE_KEY = 'tacho_event_log';
 const KEEP_DAYS = 20;
@@ -139,33 +146,33 @@ export async function checkHosViolations(): Promise<HosViolation[]> {
 
     if (e.activity === 3) { // DRIVING
       continuousDrivingMin += durationMin;
-    } else if (durationMin >= 45) {
+    } else if (durationMin >= HOS_BREAK_FULL_MIN) {
       // Full 45-min break — full reset
       continuousDrivingMin = 0;
       splitStarted = false;
-    } else if (durationMin >= 30 && splitStarted) {
+    } else if (durationMin >= HOS_BREAK_SPLIT_SECOND_MIN && splitStarted) {
       // Second part of split break (15+30) — full reset
       continuousDrivingMin = 0;
       splitStarted = false;
-    } else if (durationMin >= 15) {
+    } else if (durationMin >= HOS_BREAK_SPLIT_FIRST_MIN) {
       // First part of split break — mark started, do NOT reset yet
       splitStarted = true;
     }
   }
 
-  if (continuousDrivingMin > 270) {
+  if (continuousDrivingMin > HOS_CONTINUOUS_DRIVE_LIMIT_MIN) {
     violations.push({
       type: 'continuous_driving',
       message: i18n.t('tacho.continuousBreakNeeded', {
         hours: Math.round(continuousDrivingMin / 60 * 10) / 10,
       }),
-      minutesOver: continuousDrivingMin - 270,
+      minutesOver: continuousDrivingMin - HOS_CONTINUOUS_DRIVE_LIMIT_MIN,
     });
-  } else if (continuousDrivingMin > 240) {
+  } else if (continuousDrivingMin > HOS_CONTINUOUS_WARN_MIN) {
     violations.push({
       type: 'continuous_driving',
       message: i18n.t('tacho.continuousBreakWarning', {
-        minutes: Math.round(270 - continuousDrivingMin),
+        minutes: Math.round(HOS_CONTINUOUS_DRIVE_LIMIT_MIN - continuousDrivingMin),
       }),
     });
   }
@@ -208,13 +215,13 @@ export async function getDaySummary(): Promise<object> {
       : Math.round((Date.now() - new Date(e.ts).getTime()) / 60_000);
     if (e.activity === 3) { // DRIVING
       continuousMin += durationMin;
-    } else if (durationMin >= 15) {
+    } else if (durationMin >= HOS_BREAK_SPLIT_FIRST_MIN) {
       break; // достатъчна пауза — reset
     }
     // пауза < 15мин не ресетва — продължи назад
   }
 
-  const continuousRemainingMin = Math.max(0, 270 - continuousMin); // 4.5ч = 270мин
+  const continuousRemainingMin = Math.max(0, HOS_CONTINUOUS_DRIVE_LIMIT_MIN - continuousMin); // 4.5ч = 270мин
   const nextBreakInMin = continuousRemainingMin;
 
   // Краен час на смяната (shift_start + 13ч)

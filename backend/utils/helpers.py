@@ -251,26 +251,28 @@ def _extract_location_from_message(msg: str) -> str | None:
     return candidates[-1] if candidates else None
 
 def _build_voice_desc(p: dict) -> str:
-    name = p.get("name", "паркинга")
-    dist_km = round(p.get("distance_m", 0) / 1000, 1)
-    features: list = []
-    if not p.get("paid"):
-        features.append("безплатен")
+    parts = [p.get("name") or "паркинг"]
+    dist = p.get("distance_m")
+    if dist is not None:
+        km = dist / 1000
+        parts.append(f"на {km:.1f} км" if km >= 1 else f"на {int(dist)} м")
+    tags = []
+    if p.get("paid"):
+        tags.append("платен")
     else:
-        features.append("платен")
+        tags.append("безплатен")
     if p.get("showers"):
-        features.append("с душ")
+        tags.append("душове")
     if p.get("toilets"):
-        features.append("с тоалетни")
-    if p.get("wifi"):
-        features.append("с WiFi")
+        tags.append("тоалетни")
     if p.get("security"):
-        features.append("охраняем")
+        tags.append("охрана")
+    if p.get("wifi"):
+        tags.append("WiFi")
     if p.get("lighting"):
-        features.append("осветен")
+        tags.append("осветен")
     if p.get("capacity"):
-        features.append(f"до {p['capacity']} камиона")
-    if p.get("opening_hours"):
-        features.append(f"работи {p['opening_hours']}")
-    features_str = ", ".join(features) if features else "стандартен паркинг"
-    return f"{name} е на {dist_km} километра. {features_str.capitalize()}."
+        tags.append(f"{p['capacity']} места")
+    if tags:
+        parts.append(", ".join(tags))
+    return ". ".join(parts)

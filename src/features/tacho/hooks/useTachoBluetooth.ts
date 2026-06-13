@@ -11,6 +11,7 @@ import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
+import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
 import { loadSavedAccount } from '../../../shared/services/accountManager';
 import i18n from '../../../i18n';
 
@@ -56,7 +57,7 @@ export interface BluetoothTachoState {
 }
 
 const REST_THROTTLE_MS = 30_000;
-const CONTINUOUS_DRIVE_LIMIT_S = 16200;
+const CONTINUOUS_DRIVE_LIMIT_S = HOS_CONTINUOUS_DRIVE_LIMIT_S;
 const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
 const INITIAL_STATE: TachoBleState = {
   status: 'idle',

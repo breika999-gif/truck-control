@@ -25,9 +25,7 @@ import type {
   ChatResponse,
   SavedPOI,
   POIPayload,
-  RouteHistoryItem,
   RestType,
-  RestHistoryItem,
   TachoSessionPayload,
   TachoSummary,
   ProximityAlerts,
@@ -53,9 +51,7 @@ export type {
   TachoSummary,
   ProximityAlerts,
   TachoSessionPayload,
-  RouteHistoryItem,
   RestType,
-  RestHistoryItem,
 } from './backendApi.types';
 
 /** Global flag to track backend availability for UI banners */
@@ -364,35 +360,6 @@ export async function completeRouteLog(routeId: number): Promise<void> {
   }
 }
 
-export async function fetchRouteHistory(userEmail?: string, limit = 20): Promise<RouteHistoryItem[]> {
-  try {
-    const params = new URLSearchParams({
-      user_email: userEmail ?? '',
-      limit: String(limit),
-    });
-    const res = await apiRequest<{ ok: boolean; routes: Array<{
-      id: number;
-      origin_name: string;
-      destination_name: string;
-      distance_m: number;
-      duration_s: number;
-      started_at: string;
-      completed_at: string | null;
-    }> }>(`/api/routes?${params}`);
-    return (res.routes ?? []).map(item => ({
-      id: item.id,
-      originName: item.origin_name,
-      destinationName: item.destination_name,
-      distanceM: item.distance_m,
-      durationS: item.duration_s,
-      startedAt: item.started_at,
-      completedAt: item.completed_at,
-    }));
-  } catch {
-    return [];
-  }
-}
-
 export async function logRestStop(data: {
   userEmail?: string;
   lat: number;
@@ -415,33 +382,6 @@ export async function logRestStop(data: {
     });
   } catch {
     // Rest history is best-effort and must never interrupt tachograph state.
-  }
-}
-
-export async function fetchRestHistory(userEmail?: string, limit = 30): Promise<RestHistoryItem[]> {
-  try {
-    const params = new URLSearchParams({
-      user_email: userEmail ?? '',
-      limit: String(limit),
-    });
-    const res = await apiRequest<{ ok: boolean; rests: Array<{
-      id: number;
-      lat: number;
-      lng: number;
-      rest_type: RestType;
-      duration_min: number;
-      started_at: string;
-    }> }>(`/api/rest/history?${params}`);
-    return (res.rests ?? []).map(item => ({
-      id: item.id,
-      lat: item.lat,
-      lng: item.lng,
-      restType: item.rest_type,
-      durationMin: item.duration_min,
-      startedAt: item.started_at,
-    }));
-  } catch {
-    return [];
   }
 }
 

@@ -16,6 +16,10 @@ export const SIGN_CLOSED  = require('../../../shared/assets/sign_closed.png') as
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const SIGN_DANGER0 = require('../../../shared/assets/sign_danger_0.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_INCIDENT_ACCIDENT = require('../../../shared/assets/tomtom_research/icons/traffic/ic_map_accident.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+export const ICON_INCIDENT_ROADWORKS = require('../../../shared/assets/tomtom_research/icons/traffic/ic_map_roadworks.png') as number;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 export const STAR_ICON    = require('../../../shared/assets/star_icon.png') as number;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const ICON_PARKING       = require('../../../shared/assets/icon_parking.png') as number;
@@ -89,7 +93,10 @@ export const APP_URL_MAP: Record<string, (query?: string) => string> = {
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-export const HOS_LIMIT_S = 16200; // EU 4.5 h = 16 200 s
+// Canonical HOS limits live in shared/constants/hosRules. Re-exported here under
+// the legacy name so existing importers keep working (single source of truth).
+import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
+export const HOS_LIMIT_S = HOS_CONTINUOUS_DRIVE_LIMIT_S; // EU 4.5 h = 16 200 s
 export const POI_CATEGORIES: POICategory[] = [
   'gas_station',
   'parking',

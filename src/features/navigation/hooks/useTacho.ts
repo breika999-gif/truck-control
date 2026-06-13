@@ -13,9 +13,16 @@ import { checkHosViolations, HosViolation } from '../../tacho/TachoEventLog';
 import { recordDailyStats } from '../utils/driverHabits';
 import { useTachoBluetooth } from '../../tacho/hooks/useTachoBluetooth';
 import i18n from '../../../i18n';
+import {
+  HOS_CONTINUOUS_DRIVE_LIMIT_S,
+  HOS_CONTINUOUS_WARN_30MIN_S,
+  HOS_CONTINUOUS_WARN_10MIN_S,
+  HOS_DAILY_DRIVE_LIMIT_S,
+  HOS_WEEKLY_WARN_S,
+} from '../../../shared/constants/hosRules';
 
-const HOS_LIMIT_S = 16200; // EU 4.5h = 16 200 s
-const DAILY_LIMIT_9H = 32400; // 9h
+const HOS_LIMIT_S = HOS_CONTINUOUS_DRIVE_LIMIT_S; // EU 4.5h = 16 200 s
+const DAILY_LIMIT_9H = HOS_DAILY_DRIVE_LIMIT_S; // 9h
 const PENDING_TACHO_SESSIONS_KEY = '@truckai/pending_tacho_sessions_v1';
 
 export interface WeeklyStatus {
@@ -133,9 +140,9 @@ export function useTacho(
         setDrivingSeconds(alreadyDriven);
         hosWarningRef.current = {
           ...hosWarningRef.current,
-          w30:   alreadyDriven >= 14400,
-          w10:   alreadyDriven >= 15600,
-          limit: alreadyDriven >= 16200,
+          w30:   alreadyDriven >= HOS_CONTINUOUS_WARN_30MIN_S,
+          w10:   alreadyDriven >= HOS_CONTINUOUS_WARN_10MIN_S,
+          limit: alreadyDriven >= HOS_LIMIT_S,
         };
       }
     });
@@ -306,11 +313,11 @@ export function useTacho(
     }
 
     // 1. Continuous 4.5h rule
-    if (drivingSeconds >= 14400 && !hosWarningRef.current.w30) {
+    if (drivingSeconds >= HOS_CONTINUOUS_WARN_30MIN_S && !hosWarningRef.current.w30) {
       hosWarningRef.current.w30 = true;
       speak(i18n.t('tachoAlerts.thirtyMinutesToBreak'));
     }
-    if (drivingSeconds >= 15600 && !hosWarningRef.current.w10) {
+    if (drivingSeconds >= HOS_CONTINUOUS_WARN_10MIN_S && !hosWarningRef.current.w10) {
       hosWarningRef.current.w10 = true;
       speak(i18n.t('tachoAlerts.tenMinutesSearchParking'));
     }
@@ -332,7 +339,7 @@ export function useTacho(
     const weeklyTotal = bluetoothData && Number.isFinite(bluetoothData.weeklyDrivenS)
       ? bluetoothData.weeklyDrivenS
       : ((tachoSummary.weekly_driven_s || 0) + (drivingSeconds - (tachoSummary.continuous_driven_s || 0)));
-    if (weeklyTotal >= 194400 && !hosWarningRef.current.weekly56h) {
+    if (weeklyTotal >= HOS_WEEKLY_WARN_S && !hosWarningRef.current.weekly56h) {
       hosWarningRef.current.weekly56h = true;
       speak(i18n.t('tachoAlerts.weeklyLimitApproaching'));
     }

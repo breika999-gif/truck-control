@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import { useRef, useEffect, useCallback, type MutableRefObject } from 'react';
 
 import type * as GeoJSON from 'geojson';
@@ -330,6 +331,7 @@ export function useRouteOrchestrator({
           ? { avoidUnpaved: true, adr_tunnel: 'none' as const }
           : undefined;
 
+      let backendReachable: boolean | null = null;
       const result = await fetchRoute(
         origin,
         dest,
@@ -338,11 +340,18 @@ export function useRouteOrchestrator({
         waypointsArg,
         signal,
         optimizeWaypoints,
+        (online) => {
+          backendReachable = online;
+          setBackendOnline(online);
+        },
       );
       if (!isMountedRef.current) return; // unmount guard
 
       if (result) setBackendOnline(true);
       routeSucceeded = !!result;
+      if (!result && !navigatingRef.current && backendReachable !== false) {
+        Alert.alert(i18n.t('alerts.noRouteTitle'), i18n.t('alerts.noRouteMessage'));
+      }
 
       // Apply TomTom's optimal waypoint order if requested
       if (optimizeWaypoints && result?.optimizedWaypointOrder && waypointsArg) {

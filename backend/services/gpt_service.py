@@ -1,5 +1,7 @@
 import json
+import os
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from openai import AzureOpenAI, OpenAI
 from config import (
@@ -9,13 +11,69 @@ from config import (
 )
 from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc,
-    maybe_reach_answer,
+    maybe_reach_answer, _haversine_m,
 )
 from database import _db_save_chat
 from services.tomtom_service import (
     _tool_navigate_to, _tool_suggest_routes, _get_avoidance_waypoints,
     _tool_check_traffic, _adr_to_tunnel_code, _tomtom_search
 )
+
+_COUNTRY_BOXES = {
+    "DE": (47.3, 5.9, 55.0, 15.0),
+    "AT": (46.4, 9.5, 49.0, 17.2),
+    "FR": (42.3, -4.8, 51.1, 8.2),
+    "ES": (36.0, -9.3, 43.8, 3.3),
+    "CH": (45.8, 6.0, 47.8, 10.5),
+    "IT": (36.6, 6.6, 47.1, 18.5),
+    "PL": (49.0, 14.1, 54.9, 24.2),
+    "BG": (41.2, 22.4, 44.2, 28.6),
+    "RO": (43.6, 20.2, 48.3, 29.7),
+    "HU": (45.7, 16.1, 48.6, 22.9),
+    "GR": (34.8, 19.4, 41.7, 28.2),
+}
+_TRUCK_BANS_CACHE: dict | None = None
+
+def _load_truck_bans() -> dict:
+    global _TRUCK_BANS_CACHE
+    if _TRUCK_BANS_CACHE is None:
+        bans_path = os.path.join(os.path.dirname(__file__), "..", "data", "truck_bans.json")
+        try:
+            with open(bans_path, encoding="utf-8") as f:
+                _TRUCK_BANS_CACHE = json.load(f)
+        except Exception:
+            _TRUCK_BANS_CACHE = {}
+    return _TRUCK_BANS_CACHE
+
+def _get_truck_ban_warning(lat, lng):
+    """Return ban warning string or '' based on rough country bounding boxes."""
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        return ""
+
+    bans = _load_truck_bans()
+
+    country = None
+    for cc, (lat_min, lng_min, lat_max, lng_max) in _COUNTRY_BOXES.items():
+        if lat_min <= lat <= lat_max and lng_min <= lng <= lng_max:
+            country = cc
+            break
+    if not country or not bans.get(country, {}).get("weekend"):
+        return ""
+
+    now = datetime.now(timezone.utc)
+    weekday = now.weekday()
+    if weekday not in (5, 6):
+        return ""
+
+    label = "Saturday" if weekday == 5 else "Sunday"
+    end_key = "sat_end" if weekday == 5 else "sun_end"
+    end_time = bans[country].get(end_key, "22:00")
+    if end_time == "00:00":
+        return f" [TRUCK_BAN: {country} full {label} ban - trucks forbidden all day]"
+    return f" [TRUCK_BAN: {country} {label} ban until {end_time} local - trucks forbidden]"
 
 # ── Setup ────────────────────────────────────────────────────────────────────
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
@@ -84,7 +142,7 @@ NAV_TOOL_NAMES = {
 SEARCH_TOOL_NAMES = {
     "search_pois", "search_business", "geocode_location",
     "get_nearby_parking", "find_truck_parking", "find_parking_break",
-    "get_nearby_fuel", "find_fuel_stations",
+    "get_nearby_fuel", "find_fuel_stations", "find_speed_cameras",
 }
 NAV_TOOLS = [
     tool for tool in ALL_TOOLS
@@ -99,7 +157,8 @@ NAV_KEYWORDS_FOR_TOOLS = [
 ]
 SEARCH_KEYWORDS_FOR_TOOLS = [
     "намери", "търси", "близо", "parking", "гориво", "fuel", "паркинг",
-    "почивка", "спирка", "rest", "stop", "пауза",
+    "почивка", "спирка", "rest", "stop", "пауза", "камера", "камери",
+    "радар", "радари", "camera", "cameras", "speed camera", "speed trap",
 ]
 
 def pick_tools(msg: str) -> list:
@@ -145,6 +204,20 @@ def _get_gpt_route_insight(destination: str, context: dict) -> dict | None:
         return json.loads(_strip_md_fence(resp.choices[0].message.content or ""))
     except Exception: return None
 
+def _approach_point(context: dict, fallback_lat, fallback_lng) -> tuple[float, float]:
+    """Search parking before destination when current and destination coordinates are known."""
+    try:
+        cur_lat = float(context.get("lat"))
+        cur_lng = float(context.get("lng"))
+        dest_lat = float(context.get("dest_lat"))
+        dest_lng = float(context.get("dest_lng"))
+        return (
+            cur_lat + 0.82 * (dest_lat - cur_lat),
+            cur_lng + 0.82 * (dest_lng - cur_lng),
+        )
+    except (TypeError, ValueError):
+        return float(fallback_lat), float(fallback_lng)
+
 def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email: str = "") -> dict:
     if not _gpt4o_ready: return {"ok": False, "error": "GPT-4o не е конфигуриран."}
     _cache_key = user_msg.strip().lower() if not history and not context.get("lat") else None
@@ -165,7 +238,11 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
     _PROFILE_KEYWORDS = {"маршрут", "навигирай", "карай до", "стигни до", "route", "navigate",
                          "avoid", "restriction", "height", "weight", "adr", "hazmat",
                          "тегло", "височина", "опасни"}
-    system_txt = _SYSTEM_PROMPT
+    system_txt = _SYSTEM_PROMPT + (
+        "\nTRUCK PARKING: When finding truck parking near a destination, search at 82% "
+        "of the route from current position toward destination, not at the destination itself. "
+        "Calculate approach_lat = cur_lat + 0.82*(dest_lat-cur_lat), same for lng."
+    )
     if context:
         driven_h = context.get("driven_seconds", 0) / 3600
         prof = context.get("profile", {})
@@ -176,7 +253,67 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
             f"{prof.get('axle_count', 3)} axles, hazmat={prof.get('hazmat_class', 'none')}."
             if need_profile else ""
         )
-        system_txt += f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h.{profile_part}"
+        route_part = ""
+        if context.get("destination"):
+            facts = []
+            if context.get("route_distance_km") is not None:
+                facts.append(f"distance={context.get('route_distance_km')}km")
+            if context.get("route_duration_min") is not None:
+                facts.append(f"duration={context.get('route_duration_min')}min")
+            if context.get("remaining_drive_min") is not None:
+                facts.append(f"drive_left={context.get('remaining_drive_min')}min")
+            route_part = f" Active route to {context.get('destination')}: {', '.join(facts)}." if facts else f" Active route to {context.get('destination')}."
+
+        timing_part = ""
+        timing_bits = []
+        if context.get("current_time_iso"):
+            timing_bits.append(f"now={context.get('current_time_iso')}")
+        if context.get("eta_iso"):
+            timing_bits.append(f"eta={context.get('eta_iso')}")
+        if context.get("distance_since_rest_km") is not None:
+            timing_bits.append(f"since_rest={context.get('distance_since_rest_km')}km")
+        if timing_bits:
+            timing_part = " Timing: " + ", ".join(timing_bits) + "."
+
+        tacho_part = ""
+        if context.get("bt_connected") is not None:
+            live_left = context.get("bt_driving_time_left_min")
+            tacho_left = live_left if live_left is not None else context.get("remaining_drive_min")
+            tacho_bits = [
+                f"bt={'connected' if context.get('bt_connected') else 'off'}",
+                f"activity={context.get('bt_live_activity') or context.get('bt_activity') or 'unknown'}",
+            ]
+            if tacho_left is not None:
+                tacho_bits.append(f"left={tacho_left}min")
+            if context.get("bt_daily_driven_min") is not None:
+                tacho_bits.append(f"daily_driven={context.get('bt_daily_driven_min')}min")
+            if context.get("bt_card") is not None:
+                tacho_bits.append(f"card={'in' if context.get('bt_card') else 'out'}")
+            tacho_part = " Tacho: " + ", ".join(tacho_bits) + "."
+
+        parking_part = ""
+        if context.get("found_parking"):
+            spots = context["found_parking"]
+            lines = []
+            for sp in spots:
+                line = sp.get("name", "?")
+                if sp.get("dist_km") is not None:
+                    line += f" ({sp['dist_km']}km)"
+                tags = [k for k in ("paid", "showers", "security") if sp.get(k)]
+                if tags:
+                    line += " [" + ",".join(tags) + "]"
+                lines.append(line)
+            parking_part = " OnMap: " + "; ".join(lines) + "."
+
+        system_txt += (
+            f"\n\nDriver GPS: lat={context.get('lat', '?')}, lng={context.get('lng', '?')}, "
+            f"driven={driven_h:.1f}h, speed={context.get('speed_kmh', 0):.0f}km/h."
+            f"{profile_part}{route_part}{timing_part}{tacho_part}{parking_part}"
+        )
+        if context.get("lat") is not None and context.get("lng") is not None:
+            ban_warn = _get_truck_ban_warning(context.get("lat"), context.get("lng"))
+            if ban_warn:
+                system_txt += ban_warn
 
     messages = [{"role": "system", "content": system_txt}]
     MAX_HISTORY = 4
@@ -220,8 +357,17 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
                     if "options" in res: tool_act = {"action": "show_routes", "destination": res["destination"], "dest_coords": res["dest_coords"], "options": res["options"], "waypoints": _get_avoidance_waypoints(args.get("origin_lat"), args.get("origin_lng"), res["dest_coords"][0], args.get("avoid"))}
                 elif fn == "find_truck_parking":
                     from services.poi_service import _tool_find_truck_parking
-                    from utils.helpers import _build_voice_desc
-                    raw = _tool_find_truck_parking(args["lat"], args["lng"], args.get("radius_m", 5000))
+                    search_lat, search_lng = _approach_point(context, args["lat"], args["lng"])
+                    raw = [dict(p) for p in _tool_find_truck_parking(search_lat, search_lng, args.get("radius_m", 5000))]
+                    driver_lat = context.get("lat")
+                    driver_lng = context.get("lng")
+                    if driver_lat is not None and driver_lng is not None:
+                        for p in raw:
+                            if p.get("lat") is not None and p.get("lng") is not None:
+                                p["distance_m"] = _haversine_m(
+                                    float(driver_lat), float(driver_lng),
+                                    float(p["lat"]), float(p["lng"])
+                                )
                     res = raw
                     cards = [{"name": p["name"], "lat": p["lat"], "lng": p["lng"], "distance_m": p["distance_m"],
                               "paid": p.get("paid", False), "showers": p.get("showers", False),
@@ -249,7 +395,13 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
 
                     if driver_lat is not None and driver_lng is not None:
                         radius_m = int(min(max(break_dist_km, 1.0), 50.0) * 1000)
-                        spots = _search_parking_tomtom(float(driver_lat), float(driver_lng), radius_m=radius_m)
+                        spots = [dict(p) for p in _search_parking_tomtom(float(driver_lat), float(driver_lng), radius_m=radius_m)]
+                        for p in spots:
+                            if p.get("lat") is not None and p.get("lng") is not None:
+                                p["distance_m"] = _haversine_m(
+                                    float(driver_lat), float(driver_lng),
+                                    float(p["lat"]), float(p["lng"])
+                                )
                         cards = []
                         for p in spots[:5]:
                             if p.get("lat") is None or p.get("lng") is None:
@@ -293,7 +445,9 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
                         res = {"error": "missing driver coordinates"}
                 elif fn == "find_fuel_stations":
                     from services.poi_service import _tool_find_fuel
-                    raw = _tool_find_fuel(args["dest_lat"], args["dest_lng"], args.get("radius_m", 50000))
+                    fuel_lat = args.get("lat", args.get("dest_lat"))
+                    fuel_lng = args.get("lng", args.get("dest_lng"))
+                    raw = _tool_find_fuel(fuel_lat, fuel_lng, args.get("radius_m", 50000))
                     res = raw
                     cards = [{"name": s.get("name", "Бензиностанция"), "lat": s["lat"], "lng": s["lng"],
                               "distance_m": s.get("distance_m", 0), "brand": s.get("brand"),

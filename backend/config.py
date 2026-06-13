@@ -28,6 +28,17 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-preview-04-17")
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
 
+# ── EU Regulation (EC) 561/2006 — Hours of Service limits (seconds) ───────────
+# Single source of truth for backend HOS math. Mirrors src/shared/constants/hosRules.ts.
+HOS_CONTINUOUS_DRIVE_LIMIT_S = 16_200   # 4.5 h continuous driving before a break
+HOS_DAILY_DRIVE_LIMIT_S = 32_400        # 9 h standard daily limit
+HOS_DAILY_DRIVE_EXTENDED_S = 36_000     # 10 h extended (max 2×/week)
+HOS_WEEKLY_DRIVE_LIMIT_S = 201_600      # 56 h weekly
+HOS_BIWEEKLY_DRIVE_LIMIT_S = 324_000    # 90 h fortnightly
+HOS_BREAK_FULL_S = 2_700                # 45 min full break (resets continuous counter)
+HOS_BREAK_SPLIT_FIRST_S = 900           # 15 min first part of split break
+HOS_BREAK_SPLIT_SECOND_S = 1_800        # 30 min second part of split break
+
 # ── Truck Routing Constants ─────────────────────────────────────────────────
 # EU/Balkans truck speed limits (km/h) by ISO-3166-1 alpha-3 country code
 _TRUCK_SPEED_LIMITS: dict[str, tuple[int, int, int]] = {
@@ -114,7 +125,8 @@ _SYSTEM_PROMPT = (
     "1. APP CONTROL: launch_app при YouTube, Spotify, Google, Chrome и т.н.\n"
     "2. AVOIDANCE: По подразбиране избягвай Сърбия (ползвай Румъния → Букурещ → Клуж → Будапеща). "
     "Поддържай: serbia, romania, tolls, sofia_center, motorway, ferry.\n"
-    "3. SEARCH: search_business за ВСЯКО място — ресторант, сервиз, митница, склад, бензиностанция.\n"
+    "3. SEARCH: search_business за ВСЯКО място — ресторант, сервиз, митница, склад. "
+    "За гориво ползвай find_fuel_stations; за камери ползвай find_speed_cameras.\n"
     "4. CITY SEARCH: 'до/в/около/край' + град = търси около ТОЗИ ГРАД. "
     "Ползвай navigate_to(градско_име) — TomTom геокодира автоматично.\n"
     "5. NAVIGATION vs SEARCH: само градско име → navigate_to веднага. "
@@ -282,6 +294,44 @@ _TOOLS = [
                     "lat":      {"type": "number"},
                     "lng":      {"type": "number"},
                     "radius_m": {"type": "integer", "default": 5000},
+                },
+                "required": ["lat", "lng"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_fuel_stations",
+            "description": (
+                "Find HGV-friendly fuel stations near coordinates. "
+                "Use for diesel, fuel, gas station, бензиностанция, гориво requests."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lat":      {"type": "number"},
+                    "lng":      {"type": "number"},
+                    "radius_m": {"type": "integer", "default": 50000},
+                },
+                "required": ["lat", "lng"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_speed_cameras",
+            "description": (
+                "Find speed cameras near coordinates. "
+                "Use when the driver asks for cameras, radars, speed traps, камери or радари."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "lat":      {"type": "number"},
+                    "lng":      {"type": "number"},
+                    "radius_m": {"type": "integer", "default": 10000},
                 },
                 "required": ["lat", "lng"],
             },

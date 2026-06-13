@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { TachoSummary } from '../../../shared/services/backendApi';
 import { styles } from '../screens/MapScreen.styles';
+import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
 
 interface AITachoResult {
   drivenHours: number;
@@ -19,7 +20,7 @@ interface TachoResultCardProps {
   topOffset: number;
 }
 
-const HOS_CONTINUOUS_LIMIT_S = 16200;
+const HOS_CONTINUOUS_LIMIT_S = HOS_CONTINUOUS_DRIVE_LIMIT_S;
 
 const TachoResultCard: React.FC<TachoResultCardProps> = ({
   result,

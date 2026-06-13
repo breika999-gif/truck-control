@@ -34,6 +34,7 @@ interface ChatProps {
   navigateTo: (dest: [number, number], name: string, waypoints?: [number, number][], autoStart?: boolean) => void;
   addWaypoint: (coord: [number, number], name: string) => void;
   setParkingResults: (res: any[]) => void;
+  setParkingSource?: (source: 'gpt' | 'route' | null) => void;
   setFuelResults: (res: any[]) => void;
   setCameraResults: (res: any[]) => void;
   setBusinessResults: (res: any[]) => void;
@@ -57,6 +58,66 @@ function truckCappedRouteDurationMin(route: RouteResult | null): number | undefi
   return Math.round(cappedDurationS / 60);
 }
 
+function routeDestinationCoords(route: RouteResult | null): [number, number] | undefined {
+  const coords = route?.geometry.coordinates;
+  return coords?.length ? coords[coords.length - 1] : undefined;
+}
+
+function getRemainingDriveMin(
+  bluetoothTacho: BluetoothTachoState | null,
+  drivingSeconds: number,
+): number {
+  if (bluetoothTacho?.connected) {
+    const liveRemaining = bluetoothTacho.liveData?.drivingTimeLeftMin;
+    if (Number.isFinite(liveRemaining)) {
+      return Math.max(0, Math.round(liveRemaining as number));
+    }
+    const continuousDrivenS = bluetoothTacho.data?.continuousDrivenS;
+    if (Number.isFinite(continuousDrivenS)) {
+      return Math.max(0, Math.round((HOS_LIMIT_S - (continuousDrivenS as number)) / 60));
+    }
+  }
+  return Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60));
+}
+
+function buildLiveTachoContext(
+  bluetoothTacho: BluetoothTachoState | null,
+  tachoSummary: TachoSummary | null,
+  drivingSeconds: number,
+  routeDurationMin?: number,
+): Partial<ChatContext> {
+  const liveData = bluetoothTacho?.connected ? bluetoothTacho.liveData : null;
+  const dailyMin = liveData?.dailyDrivenMin
+    ?? (bluetoothTacho?.data?.continuousDrivenS
+      ? Math.round(bluetoothTacho.data.continuousDrivenS / 60)
+      : null);
+  return {
+    current_time_iso: new Date().toISOString(),
+    eta_iso: routeDurationMin != null
+      ? new Date(Date.now() + routeDurationMin * 60_000).toISOString()
+      : undefined,
+    distance_since_rest_km: dailyMin != null ? Math.round((dailyMin / 60) * 80) : undefined,
+    remaining_drive_min: getRemainingDriveMin(bluetoothTacho, drivingSeconds),
+    shift_start_iso: tachoSummary?.shift_start_iso,
+    reduced_rests_remaining: tachoSummary?.reduced_rests_remaining,
+    daily_driving_limit_h: tachoSummary?.daily_limit_h,
+    bt_connected: bluetoothTacho?.connected ?? false,
+    bt_activity: bluetoothTacho?.data?.activity ?? null,
+    bt_live_activity: liveData?.activity ?? null,
+    bt_card: bluetoothTacho?.data?.cardInserted ?? null,
+    bt_driving_time_left_min: Number.isFinite(liveData?.drivingTimeLeftMin)
+      ? Math.max(0, Math.round(liveData?.drivingTimeLeftMin as number))
+      : null,
+    bt_daily_driven_min: Number.isFinite(liveData?.dailyDrivenMin)
+      ? Math.max(0, Math.round(liveData?.dailyDrivenMin as number))
+      : null,
+    bt_speed_kmh: Number.isFinite(liveData?.speed)
+      ? Math.max(0, Math.round(liveData?.speed as number))
+      : null,
+    weekly_status: tachoSummary ? calcWeeklyStatus(tachoSummary) : undefined,
+  };
+}
+
 export function useChat({
   userCoords,
   drivingSeconds,
@@ -76,6 +137,7 @@ export function useChat({
   navigateTo,
   addWaypoint,
   setParkingResults,
+  setParkingSource,
   setFuelResults,
   setCameraResults,
   setBusinessResults,
@@ -92,6 +154,10 @@ export function useChat({
   const [geminiLoading, setGeminiLoading] = useState(false);
   const isMountedRef = useRef(true);
   const shiftSummaryDateRef = useRef<string | null>(null);
+  const bluetoothTachoRef = useRef(bluetoothTacho);
+  bluetoothTachoRef.current = bluetoothTacho;
+  const tachoSummaryRef = useRef(tachoSummary);
+  tachoSummaryRef.current = tachoSummary;
   
   useEffect(() => () => { isMountedRef.current = false; }, []);
 
@@ -164,15 +230,19 @@ export function useChat({
     } else if (act.action === 'show_pois') {
       if (act.category === 'truck_stop') {
         setParkingResults((act.cards ?? []).filter((c: any) => c.lat && c.lng).slice(0, 5));
+        setParkingSource?.('gpt');
         setFuelResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       } else if (act.category === 'fuel') {
         setFuelResults((act.cards ?? []).slice(0, 4));
+        setParkingSource?.(null);
         setParkingResults([]); setCameraResults([]); setBusinessResults([]); setTachographResult(null);
       } else if (act.category === 'speed_camera') {
         setCameraResults(act.cards ?? []);
+        setParkingSource?.(null);
         setParkingResults([]); setFuelResults([]); setBusinessResults([]);
       } else if (act.category === 'business') {
         setBusinessResults((act.cards ?? []).filter((c: any) => c.lat && c.lng).slice(0, 6));
+        setParkingSource?.(null);
         setParkingResults([]); setFuelResults([]); setCameraResults([]); setTachographResult(null);
       }
     } else if (act.action === 'show_routes') {
@@ -192,7 +262,7 @@ export function useChat({
     } else if (act.action === 'app') {
       handleAppIntent(act.data ?? act);
     }
-  }, [navigateTo, addWaypoint, setParkingResults, setFuelResults, setCameraResults,
+  }, [navigateTo, addWaypoint, setParkingResults, setParkingSource, setFuelResults, setCameraResults,
       setBusinessResults, setRouteOptions, setRouteOptDest, setRoute, setDestination,
       setTachographResult, handleAppIntent, speak, cleanAssistantText]);
 
@@ -206,6 +276,8 @@ export function useChat({
     setGptHistory(newHistory);
     setGptLoading(true);
 
+    const routeDurationMin = truckCappedRouteDurationMin(route);
+    const destCoords = routeDestinationCoords(route);
     const context: ChatContext = {
       lat:            userCoords?.[1],
       lng:            userCoords?.[0],
@@ -215,8 +287,20 @@ export function useChat({
       last_message:   text,
       destination:              destinationName ?? undefined,
       route_distance_km:        route ? Math.round(route.distance / 100) / 10 : undefined,
-      route_duration_min:       truckCappedRouteDurationMin(route),
-      remaining_drive_min:      Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60)),
+      route_duration_min:       routeDurationMin,
+      dest_lat:                 destCoords?.[1],
+      dest_lng:                 destCoords?.[0],
+      found_parking:            parkingResults
+        .filter(p => p.lat && p.lng)
+        .slice(0, 5)
+        .map(p => ({
+          name: p.name,
+          dist_km: p.distance_m != null ? Math.round(p.distance_m / 100) / 10 : undefined,
+          paid: p.paid || undefined,
+          showers: p.showers || undefined,
+          security: p.security || undefined,
+        })),
+      ...buildLiveTachoContext(bluetoothTachoRef.current, tachoSummaryRef.current, drivingSeconds, routeDurationMin),
     };
 
     const isGptNav = /карай до|маршрут|паркинг|гориво|навигир|route|navigate|до |в |около /.test(text.toLowerCase());
@@ -240,10 +324,10 @@ export function useChat({
     }
 
     setGptLoading(false);
-  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, route, destinationName, speak, processAction, cleanAssistantText, onReachQuestion, setGptHistory]);
+  }, [gptHistory, gptLoading, userCoords, drivingSeconds, speed, profile, route, destinationName, parkingResults, speak, processAction, cleanAssistantText, onReachQuestion, setGptHistory]);
 
   // ── Gemini logic ──────────────────────────────────────────────────────────
-  const sendGeminiText = useCallback(async (text: string) => {
+  const sendGeminiText = useCallback(async (text: string, options?: { forceGemini?: boolean }) => {
     if (!text || geminiLoading) return;
     onReachQuestion?.(text);
 
@@ -252,7 +336,7 @@ export function useChat({
     const isMemory = /обичам|помни|последно|камион|предпочит|навик/.test(msg);
     const isNav    = /карай до|маршрут|паркинг|гориво|навигир|route|navigate/.test(msg);
 
-    if (isNav) {
+    if (isNav && !options?.forceGemini) {
       await sendGptText(text);
       return;
     }
@@ -269,6 +353,8 @@ export function useChat({
       isMemory ? getHabitsSummary().catch(() => null)     : Promise.resolve(null),
     ]);
 
+    const routeDurationMin = truckCappedRouteDurationMin(route);
+    const destCoords = routeDestinationCoords(route);
     const context: ChatContext = {
       lat:                      userCoords?.[1],
       lng:                      userCoords?.[0],
@@ -277,21 +363,24 @@ export function useChat({
       profile:                  profile || undefined,
       destination:              destinationName ?? undefined,
       route_distance_km:        route ? Math.round(route.distance / 100) / 10 : undefined,
-      route_duration_min:       truckCappedRouteDurationMin(route),
-      remaining_drive_min:      Math.max(0, Math.round((HOS_LIMIT_S - drivingSeconds) / 60)),
-      shift_start_iso:          tachoSummary?.shift_start_iso,
-      reduced_rests_remaining:  tachoSummary?.reduced_rests_remaining,
-      daily_driving_limit_h:    tachoSummary?.daily_limit_h,
-      bt_connected:             bluetoothTacho?.connected ?? false,
-      bt_activity:              bluetoothTacho?.data?.activity ?? null,
-      bt_card:                  bluetoothTacho?.data?.cardInserted ?? null,
-      weekly_status:            tachoSummary ? calcWeeklyStatus(tachoSummary) : undefined,
+      route_duration_min:       routeDurationMin,
+      dest_lat:                 destCoords?.[1],
+      dest_lng:                 destCoords?.[0],
+      ...buildLiveTachoContext(bluetoothTachoRef.current, tachoSummaryRef.current, drivingSeconds, routeDurationMin),
       tacho_log:                Object.keys(tachoLog).length > 0 ? tachoLog : undefined,
       tacho_week:               Object.keys(tachoWeek).length > 0 ? tachoWeek : undefined,
       parking_cards:            parkingResults
-        .filter(p => p.transparking_id)
-        .map(p => ({ name: p.name, transparking_id: p.transparking_id }))
-        .slice(0, 5),
+        .filter(p => p.lat && p.lng)
+        .slice(0, 5)
+        .map(p => ({
+          name: p.name,
+          dist_km: p.distance_m != null ? Math.round(p.distance_m / 100) / 10 : undefined,
+          paid: p.paid || undefined,
+          showers: p.showers || undefined,
+          security: p.security || undefined,
+          toilets: (p as any).toilets || undefined,
+          transparking_id: p.transparking_id || undefined,
+        })),
       user_memory:              userMemory.length > 0 ? userMemory : undefined,
       driver_habits:            driverHabits || undefined,
     };
@@ -341,7 +430,7 @@ export function useChat({
     if (response.app_intent) { handleAppIntent(response.app_intent); }
 
     setGeminiLoading(false);
-  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile, tachoSummary, bluetoothTacho,
+  }, [geminiHistory, geminiLoading, userCoords, drivingSeconds, speed, profile,
       parkingResults, route, destinationName, googleUser, handleAppIntent, speak, processAction, cleanAssistantText, onReachQuestion,
       sendGptText, setGeminiHistory]);
 

@@ -12,6 +12,7 @@
  */
 import React, { useRef, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { RouteStep, BannerInstruction, BannerComponent } from '../api/directions';
 import LaneArrow from './LaneArrow';
 
@@ -53,9 +54,9 @@ function signArrow(modifier?: string): string {
 }
 
 /** Format metres to display string. */
-function fmtDist(m: number): string {
-  if (m >= 1000) return `${(m / 1000).toFixed(1)} км`;
-  return `${Math.round(m / 10) * 10} м`;
+function fmtDist(m: number, t: (key: string) => string): string {
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} ${t('units.kilometerShort')}`;
+  return `${Math.round(m / 10) * 10} ${t('units.meterShort')}`;
 }
 
 /**
@@ -82,6 +83,7 @@ function extractDestinations(banner?: BannerInstruction): string[] {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner }: Props) {
+  const { t } = useTranslation();
   // ── Pulsing glow for active lane boxes ─────────────────────────────────────
   const laneGlowAnim = useRef(new Animated.Value(0)).current;
   const laneGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -147,9 +149,9 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner
       ]}>
         {/* Top stripe — distance + road type + exit number */}
         <View style={[styles.topStripe, { backgroundColor: accent }]}>
-          <Text style={styles.stripeDist}>{fmtDist(distToTurn)}</Text>
+          <Text style={styles.stripeDist}>{fmtDist(distToTurn, t)}</Text>
           <Text style={styles.stripeLabel} numberOfLines={1}>
-            {color === 'blue' ? 'МАГИСТРАЛА' : 'ПЪТ'}
+            {color === 'blue' ? t('road.motorway') : t('road.road')}
           </Text>
           {exitNumber != null && (
             <View style={styles.exitBadge}>
@@ -180,7 +182,7 @@ export default function SignRenderer({ step, nextStep, distToTurn, lanes, banner
       {/* ── Right: Lane diagram (split view, Garmin dēzl style) ── */}
       {hasSplit && (
         <View style={styles.lanePanel}>
-          <Text style={styles.lanePanelTitle}>ЛЕНИ</Text>
+          <Text style={styles.lanePanelTitle}>{t('lane.lanes')}</Text>
 
           {/* Lane boxes — active ones pulse with neon glow + scale pop */}
           <View style={styles.laneRow}>

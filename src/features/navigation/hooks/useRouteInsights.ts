@@ -29,6 +29,7 @@ export interface RouteInsight {
 type RouteInsightsOptions = {
   navigating?: boolean;
   setParkingResults?: (pois: POICard[]) => void;
+  setParkingSource?: (source: 'gpt' | 'route' | null) => void;
   setFuelResults?: (pois: POICard[]) => void;
 };
 
@@ -83,11 +84,13 @@ export const useRouteInsights = (
   const userCoordsRef = useRef(userCoords ?? null);
   const navigatingRef = useRef(options.navigating ?? false);
   const setParkingResultsRef = useRef(options.setParkingResults);
+  const setParkingSourceRef = useRef(options.setParkingSource);
   const setFuelResultsRef = useRef(options.setFuelResults);
 
   useEffect(() => { userCoordsRef.current = userCoords ?? null; }, [userCoords]);
   useEffect(() => { navigatingRef.current = options.navigating ?? false; }, [options.navigating]);
   useEffect(() => { setParkingResultsRef.current = options.setParkingResults; }, [options.setParkingResults]);
+  useEffect(() => { setParkingSourceRef.current = options.setParkingSource; }, [options.setParkingSource]);
   useEffect(() => { setFuelResultsRef.current = options.setFuelResults; }, [options.setFuelResults]);
 
   useEffect(() => {
@@ -106,6 +109,7 @@ export const useRouteInsights = (
       allPOIsRef.current = [];
       routeForPOIRef.current = null;
       setParkingResultsRef.current?.([]);
+      setParkingSourceRef.current?.(null);
       setFuelResultsRef.current?.([]);
     }
   }, [route]);
@@ -253,7 +257,9 @@ export const useRouteInsights = (
 
       if (ctrl.signal.aborted || !isMountedRef.current) return;
 
-      setParkingResultsRef.current?.(dedupePOICards(truckStops).slice(0, 8));
+      const routeParking = dedupePOICards(truckStops).slice(0, 8);
+      setParkingResultsRef.current?.(routeParking);
+      setParkingSourceRef.current?.(routeParking.length > 0 ? 'route' : null);
       setFuelResultsRef.current?.(dedupePOICards(fuels).slice(0, 8));
 
       const all: RoutePOI[] = [
@@ -291,6 +297,7 @@ export const useRouteInsights = (
     allPOIsRef.current = [];
     setRouteAheadPOIs([]);
     setParkingResultsRef.current?.([]);
+    setParkingSourceRef.current?.(null);
     setFuelResultsRef.current?.([]);
 
     const coords = r.geometry.coordinates as [number, number][];

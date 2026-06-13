@@ -117,7 +117,11 @@ export interface MapUIOverlayProps {
   clearPOI: Loose;
   handlePOINavigate: Loose;
   parkingResults: Loose[];
+  parkingSource?: 'gpt' | 'route' | null;
   setParkingResults: Loose;
+  setParkingSource: Loose;
+  remainingDriveMin?: number;
+  speedKmh?: number;
   urgentParkingResults: Loose[];
   navigateTo: Loose;
   addWaypoint: Loose;
@@ -193,6 +197,7 @@ export interface MapUIOverlayProps {
   gptLoading: boolean;
   geminiLoading: boolean;
   handleChat: Loose;
+  handleTargetedQuickAction: Loose;
   isRecording: boolean;
   handleMicStart: Loose;
   handleMicStop: Loose;
@@ -245,19 +250,8 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   setLightMode,
   voiceMuted,
   setVoiceMuted,
-  mapLayers,
-  toggleLayer,
-  avoidUnpaved,
-  setAvoidUnpaved,
-  simulating,
-  startSim,
-  stopSim,
-  poiCategory,
-  handlePOISearch,
-  sarMode,
-  handleSARSearch,
-  googleUser,
-  setShowAccountModal,
+  mapLayers, toggleLayer, avoidUnpaved, setAvoidUnpaved, simulating, startSim, stopSim,
+  poiCategory, handlePOISearch, sarMode, handleSARSearch, googleUser, setShowAccountModal,
   starredPOIs,
   setBorderCrossings,
   setShowBorderPanel,
@@ -277,7 +271,11 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   clearPOI,
   handlePOINavigate,
   parkingResults,
+  parkingSource,
   setParkingResults,
+  setParkingSource,
+  remainingDriveMin,
+  speedKmh,
   urgentParkingResults,
   navigateTo,
   addWaypoint,
@@ -324,46 +322,13 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   dominantCongestion,
   elevProfile,
   weatherPoints,
-  departLabel,
-  pickDeparture,
-  waypoints,
-  waypointNames,
-  setWaypoints,
-  setWaypointNames,
-  speedingBg,
-  proximityAlerts,
-  nearestParkingM,
-  hillWarnings,
-  cameraAlert,
-  cameraFlashAnim,
-  mapPitch,
-  setMapPitch,
-  cameraRef,
-  geminiChatOpen,
-  gptChatOpen,
-  setGeminiChatOpen,
-  setGptChatOpen,
-  isTracking,
-  setIsTracking,
-  suppressPanUntilRef,
-  gptHistory,
-  geminiHistory,
-  chatInput,
-  setChatInput,
-  gptLoading,
-  geminiLoading,
-  handleChat,
-  isRecording,
-  handleMicStart,
-  handleMicStop,
-  kbHeight,
-  gptScrollRef,
-  geminiScrollRef,
-  micLoading,
-  showAccountModal,
-  setGoogleUser,
-  isMountedRef,
-  setStarredPOIs,
+  departLabel, pickDeparture, waypoints, waypointNames, setWaypoints, setWaypointNames,
+  speedingBg, proximityAlerts, nearestParkingM, hillWarnings, cameraAlert,
+  cameraFlashAnim, mapPitch, setMapPitch, cameraRef, geminiChatOpen, gptChatOpen,
+  setGeminiChatOpen, setGptChatOpen, isTracking, setIsTracking, suppressPanUntilRef,
+  gptHistory, geminiHistory, chatInput, setChatInput, gptLoading, geminiLoading,
+  handleChat, handleTargetedQuickAction, isRecording, handleMicStart, handleMicStop, kbHeight, gptScrollRef,
+  geminiScrollRef, micLoading, showAccountModal, setGoogleUser, isMountedRef, setStarredPOIs,
 }) => {
   const { t } = useTranslation();
   const [callingOpen, setCallingOpen] = React.useState(false);
@@ -556,14 +521,17 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       />
     )}
 
-    {!route && !navigating && (
+    {(parkingSource === 'gpt' || (!route && !navigating)) && (
       <ParkingResultsPanel
         parkingResults={parkingResults}
         searchTop={searchTop}
-        onDismiss={() => setParkingResults([])}
+        onDismiss={() => { setParkingResults([]); setParkingSource(null); }}
         onNavigate={(coords, name) => navigateTo(coords, name)}
         onAddWaypoint={(coords, name) => addWaypoint(coords, name)}
         onClearSelectedParking={() => setSelectedParking(null)}
+        onCardTap={(p) => setSelectedParking(p)}
+        remainingDriveMin={remainingDriveMin}
+        speedKmh={speedKmh}
         onOpenInfo={async (p) => {
           if (p.transparking_id) {
             const url = await getTransParkingUrl(p.transparking_id);
@@ -840,6 +808,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       gptLoading={gptLoading}
       geminiLoading={geminiLoading}
       handleChat={handleChat}
+      onTargetedQuickAction={handleTargetedQuickAction}
       isRecording={isRecording}
       handleMicStart={handleMicStart}
       handleMicStop={handleMicStop}

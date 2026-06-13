@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { LogBox, StatusBar } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';

@@ -113,7 +113,7 @@ function routeOptionAnalysisKey(option: RouteOption, profile: VehicleProfile): s
 
 export interface MapHandlers {
   handleEndOfDay: () => Promise<void>;
-  handleChat: () => Promise<void>;
+  handleChat: (textOverride?: string) => Promise<void>;
   handleMicStart: () => Promise<void>;
   handleMicStop: () => Promise<void>;
   handleWakeCommand: (cmd: string) => void;
@@ -144,6 +144,7 @@ interface UseMapHandlersArgs {
     sendGptText: (text: string) => Promise<void>,
     sendGeminiText: (text: string) => Promise<void>,
     isGptChatOpen: boolean,
+    textOverride?: string,
   ) => Promise<void>;
   handleMicStartState: (audioRecorderPlayer: typeof AudioRecorderPlayer) => Promise<void>;
   handleMicStopState: (
@@ -412,7 +413,7 @@ export function useMapHandlers({
   }, [summarizeShift]);
 
   const handleChat = useCallback(
-    () => handleChatState(sendGptText, sendGeminiText, gptChatOpen),
+    (textOverride?: string) => handleChatState(sendGptText, sendGeminiText, gptChatOpen, textOverride),
     [handleChatState, sendGptText, sendGeminiText, gptChatOpen],
   );
   const handleMicStart = useCallback(

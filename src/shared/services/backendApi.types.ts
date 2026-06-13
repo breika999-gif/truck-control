@@ -122,12 +122,21 @@ export interface ChatContext {
   route_distance_km?: number;
   route_duration_min?: number;
   remaining_drive_min?: number;
+  current_time_iso?: string;
+  eta_iso?: string;
+  distance_since_rest_km?: number;
+  dest_lat?: number;
+  dest_lng?: number;
   shift_start_iso?: string;
   reduced_rests_remaining?: number;
   daily_driving_limit_h?: number;
   bt_connected?: boolean;
   bt_activity?: 'driving' | 'rest' | 'work' | 'available' | null;
+  bt_live_activity?: string | null;
   bt_card?: boolean | null;
+  bt_driving_time_left_min?: number | null;
+  bt_daily_driven_min?: number | null;
+  bt_speed_kmh?: number | null;
   weekly_status?: {
     drivenH: number;
     remainingH: number;
@@ -137,7 +146,22 @@ export interface ChatContext {
   };
   tacho_log?: object;
   tacho_week?: object;
-  parking_cards?: Array<{ name: string; transparking_id?: string }>;
+  parking_cards?: Array<{
+    name: string;
+    dist_km?: number;
+    paid?: boolean;
+    showers?: boolean;
+    security?: boolean;
+    toilets?: boolean;
+    transparking_id?: string;
+  }>;
+  found_parking?: Array<{
+    name: string;
+    dist_km?: number;
+    paid?: boolean;
+    showers?: boolean;
+    security?: boolean;
+  }>;
   user_memory?: string[];
   driver_habits?: object | null;
 }
@@ -222,23 +246,4 @@ export interface TachoSessionPayload {
   type?: 'driving' | 'break' | 'rest';
 }
 
-export interface RouteHistoryItem {
-  id: number;
-  originName: string;
-  destinationName: string;
-  distanceM: number;
-  durationS: number;
-  startedAt: string;
-  completedAt: string | null;
-}
-
 export type RestType = 'break_45min' | 'daily_9h' | 'daily_11h' | 'reduced_9h';
-
-export interface RestHistoryItem {
-  id: number;
-  lat: number;
-  lng: number;
-  restType: RestType;
-  durationMin: number;
-  startedAt: string;
-}

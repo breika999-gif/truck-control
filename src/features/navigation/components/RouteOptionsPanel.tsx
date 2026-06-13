@@ -1,5 +1,6 @@
 import React, { memo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 import { fmtDistance, fmtDuration } from '../api/directions';
 import { styles, NEON } from '../screens/MapScreen.styles';
@@ -65,6 +66,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
   hosLimitS,
   onExportGPX,
 }) => {
+  const { t } = useTranslation();
   const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
   const [whyOpen, setWhyOpen] = React.useState(false);
   const selectedOption = effectiveSelectedRouteIdx !== null
@@ -85,7 +87,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
       {/* Liquid Glass top highlight line */}
       <View style={styles.routeOptionsGlassHighlight} />
       <View style={styles.routeOptionsHeader}>
-        <Text style={styles.routeOptionsTitle}>🗺️ Изберете маршрут</Text>
+        <Text style={styles.routeOptionsTitle}>{t('routeOptions.title')}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           {onExportGPX && (
             <TouchableOpacity onPress={onExportGPX} style={styles.parkingDismissBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -113,7 +115,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
             opt.traffic === 'heavy' ? '🔴' : opt.traffic === 'moderate' ? '🟡' : opt.traffic === 'low' ? '🟢' : null;
           const minDur = Math.min(...routeOptions.map(o => o.duration));
           const diffMin = Math.round((opt.duration - minDur) / 60);
-          const diffBadge = diffMin === 0 ? '⚡ Най-бърз' : `+${diffMin} мин`;
+          const diffBadge = diffMin === 0 ? t('routeOptions.fastest') : `+${diffMin} ${t('routeOptions.minutesShort')}`;
 
           // "Мога ли да стигна?" per-card tacho check
           const tachoRemMin = tachoEnabled ? remainingTachoMin(drivingSeconds!, hosLimitS!) : null;
@@ -147,7 +149,11 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
               <Text style={styles.routeOptionDur}>{fmtDuration(opt.duration)}</Text>
               {trafficEmoji && (
                 <Text style={styles.routeOptionTraffic}>
-                  {trafficEmoji} {opt.traffic === 'heavy' ? 'Задръстване' : opt.traffic === 'moderate' ? 'Умерено' : 'Свободно'}
+                  {trafficEmoji} {opt.traffic === 'heavy'
+                    ? t('routeOptions.trafficHeavy')
+                    : opt.traffic === 'moderate'
+                    ? t('routeOptions.trafficModerate')
+                    : t('routeOptions.trafficFree')}
                 </Text>
               )}
 
@@ -155,16 +161,16 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
               {tachoRemMin !== null && (
                 canMakeIt ? (
                   <Text style={{ fontSize: 10, color: '#4cff91', fontWeight: '700', marginTop: 4 }}>
-                    ✅ Стигаш ({tachoRemMin - routeDurMin} мин резерв)
+                    {t('routeOptions.canMakeIt', { minutes: tachoRemMin - routeDurMin })}
                   </Text>
                 ) : (
                   <Text style={{ fontSize: 10, color: '#FF3B30', fontWeight: '700', marginTop: 4 }}>
-                    ⏱ Пауза след ~{breakDistKm} км
+                    {t('routeOptions.breakAfter', { km: breakDistKm })}
                   </Text>
                 )
               )}
 
-              {!isSelected && <Text style={styles.routeOptionTap}>Натисни →</Text>}
+              {!isSelected && <Text style={styles.routeOptionTap}>{t('routeOptions.tap')}</Text>}
             </TouchableOpacity>
           );
         })}
@@ -181,7 +187,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                 onPress={() => setWhyOpen(open => !open)}
               >
                 <Text style={routePanelStyles.whyButtonText}>
-                  ℹ️ Защо този маршрут?
+                  {t('routeOptions.why')}
                 </Text>
               </TouchableOpacity>
 
@@ -231,13 +237,13 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                 borderLeftColor: '#FF3B30',
               }}>
                 <Text style={{ color: '#FF3B30', fontWeight: '700', fontSize: 12 }}>
-                  ⏱ Не стигаш без пауза
+                  {t('routeOptions.wontMakeIt')}
                 </Text>
                 <Text style={{ color: '#ffccc0', fontSize: 11, marginTop: 2 }}>
-                  Остават ти {tachoRemMin} мин, маршрутът е {routeDurMin} мин (+{shortageMin} мин)
+                  {t('routeOptions.remainingRoute', { remaining: tachoRemMin, route: routeDurMin, shortage: shortageMin })}
                 </Text>
                 <Text style={{ color: '#ffccc0', fontSize: 11 }}>
-                  Задължителна пауза след ~{breakDistKm} км
+                  {t('routeOptions.mandatoryBreak', { km: breakDistKm })}
                 </Text>
               </View>
             );
@@ -257,7 +263,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                     onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts);
                   }}
                 >
-                  <Text style={styles.routeStartBtnTxt}>🚀 Тръгни</Text>
+                  <Text style={styles.routeStartBtnTxt}>🚀 {t('hud.startDriving')}</Text>
                 </TouchableOpacity>
 
                 {totalDelay > 0 && (
@@ -269,7 +275,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                     textShadowOffset: { width: 0, height: 1 },
                     textShadowRadius: 2,
                   }}>
-                    ⚠️ Трафик +{totalDelay} мин
+                    {t('routeOptions.trafficDelay', { minutes: totalDelay })}
                   </Text>
                 )}
               </View>

@@ -1,8 +1,7 @@
-import os, json, math, re, requests, time as _cache_time
-from datetime import datetime, timezone
+import os, json, math, requests, time as _cache_time
 from flask import Blueprint, jsonify, request
 from config import TOMTOM_API_KEY
-from database import get_db, row_to_poi, DB_PATH
+from database import get_db
 from utils.helpers import _is_rate_limited, _get_body, now_iso, require_app_token, validate_coords
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
@@ -199,123 +198,6 @@ def poi_search_along_route_proxy():
         return jsonify({"error": "POI search unavailable"}), 502
     except ValueError:
         return jsonify({"error": "invalid POI response"}), 502
-
-@misc_bp.route("/api/google-sync", methods=["GET", "POST"])
-@require_app_token
-def google_sync():
-    email = (request.args.get("user_email") or "").strip()
-    if not email: return jsonify({"ok": False, "error": "email required"}), 400
-    if request.method == "GET":
-        with get_db() as conn: rows = conn.execute("SELECT * FROM pois WHERE user_email=? AND category='google_synced' ORDER BY created_at DESC", (email,)).fetchall()
-        return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
-    pois, count, validated_pois = _get_body().get("pois", []), 0, []
-    for p in pois:
-        if not p.get("name") or p.get("lat") is None or p.get("lng") is None:
-            continue
-        lat, lng = validate_coords(p.get("lat"), p.get("lng"))
-        if lat is None:
-            return jsonify({"ok": False, "error": "invalid coordinates"}), 400
-        validated_pois.append((p, lat, lng))
-    with get_db() as conn:
-        for p, lat, lng in validated_pois:
-            conn.execute("INSERT OR REPLACE INTO pois (name, address, category, lat, lng, notes, user_email, created_at) VALUES (?,?,?,?,?,?,?,?)", (p["name"], p.get("address", ""), "google_synced", lat, lng, p.get("notes", ""), email, now_iso()))
-            count += 1
-        conn.commit()
-    return jsonify({"ok": True, "imported": count})
-
-@misc_bp.route("/api/truck-bans/cache", methods=["DELETE", "POST"])
-def clear_truck_bans_cache():
-    admin_key = request.headers.get("X-Admin-Key", "")
-    if admin_key != os.environ.get("ADMIN_KEY", ""): return jsonify({"error": "Unauthorized"}), 401
-    try:
-        with get_db() as conn:
-            conn.execute("DELETE FROM truck_bans_cache")
-            conn.commit()
-        return jsonify({"ok": True, "message": "Cache cleared"})
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return jsonify({"ok": False, "error": "Internal server error"}), 500
-
-@misc_bp.route("/api/truck-bans", methods=["GET"])
-def get_truck_bans():
-    date_str = request.args.get("date")
-    if not date_str: return jsonify({"bans": [], "error": "date required"}), 400
-    
-    # Try cache first
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT data, fetched_at FROM truck_bans_cache WHERE date=?", (date_str,)).fetchone()
-            if row:
-                diff = (datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=timezone.utc)).total_seconds()
-                if diff < 604800: # 1 week
-                    return jsonify({"bans": json.loads(row["data"]), "source": "cache"})
-    except: pass
-
-    session = requests.Session()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "en-US,en;q=0.9",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://www.trafficban.com/",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-    }
-
-    try:
-        # Step 1: get cookies
-        root_resp = session.get("https://www.trafficban.com/", headers=headers, timeout=10)
-        
-        # Step 2: get dynamic param name from JS
-        js_resp = session.get("https://www.trafficban.com/res/js/js.ban.list.for.date.html", headers=headers, timeout=10)
-        m = re.search(r'\?([A-Za-z0-9]{5,15})=', js_resp.text)
-        param_name = m.group(1) if m else "KHcYF42A"
-        
-        # Step 3: try session key
-        key_resp = session.get(f"https://www.trafficban.com/res/json/json.get.key.html?d={date_str}", headers=headers, timeout=10)
-        key_data = {}
-        try: key_data = key_resp.json()
-        except: pass
-        key = key_data.get("key")
-        
-        # Step 4: try fetch (with key or without)
-        fetch_url = f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key or ''}&d={date_str}"
-        bans_resp = session.get(fetch_url, headers=headers, timeout=10)
-        
-        if not bans_resp.ok:
-            return jsonify({"bans": [], "error": f"HTTP {bans_resp.status_code}"}), 502
-
-        try:
-            raw_bans = bans_resp.json()
-        except:
-            return jsonify({"bans": [], "error": "Not JSON"}), 502
-
-        if not isinstance(raw_bans, list):
-            return jsonify({"bans": [], "error": "Not a list"}), 502
-
-        formatted = []
-        for b in raw_bans:
-            formatted.append({
-                "flag": b.get("fl"),
-                "country": b.get("cr"),
-                "time": b.get("tm"),
-                "alert": bool(b.get("al")),
-                "note": "Важна забрана" if b.get("al") else ""
-            })
-
-        # Save to cache
-        try:
-            with get_db() as conn:
-                conn.execute("INSERT OR REPLACE INTO truck_bans_cache (date, data, fetched_at) VALUES (?, ?, ?)", 
-                             (date_str, json.dumps(formatted), now_iso()))
-                conn.commit()
-        except: pass
-
-        return jsonify({"bans": formatted, "source": "live"})
-
-    except Exception:
-        return jsonify({"bans": [], "error": "Request failed"}), 502
 
 _NUMERIC_RESTRICTION_TAGS = (
     "maxheight",
@@ -846,7 +728,12 @@ def whisper_transcribe():
     if not audio_file: return jsonify({"ok": False, "error": "No audio file"}), 400
     try:
         audio_file.stream.seek(0)
-        resp = client.audio.transcriptions.create(model="whisper-1", file=(audio_file.filename or "recording.m4a", audio_file.stream, audio_file.mimetype or "audio/m4a"), language="bg")
+        resp = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(audio_file.filename or "recording.m4a", audio_file.stream, audio_file.mimetype or "audio/m4a"),
+            language="bg",
+            prompt="Truck navigation Bulgarian commands: маршрут, навигирай, карай до, паркинг за камион, гориво, тахограф, почивка, Лейда, Барселона, Испания.",
+        )
         return jsonify({"ok": bool(resp.text), "text": resp.text.strip()})
     except Exception as e:
         print(f"[ERROR] {e}")

@@ -74,9 +74,10 @@ export const useChatPanelsState = () => {
   const handleChat = useCallback(async (
     sendGptText: (text: string) => Promise<void>,
     sendGeminiText: (text: string) => Promise<void>,
-    isGptChatOpen: boolean
+    isGptChatOpen: boolean,
+    textOverride?: string,
   ) => {
-    const text = chatInputRef.current.trim();
+    const text = (typeof textOverride === 'string' ? textOverride : chatInputRef.current).trim();
     if (!text) return;
     chatInputRef.current = '';
     setChatInput('');

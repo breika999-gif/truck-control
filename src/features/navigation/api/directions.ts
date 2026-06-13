@@ -165,9 +165,14 @@ export async function fetchRoute(
   waypoints?: [number, number][],
   signal?: AbortSignal,
   optimizeWaypoints: boolean = false,
+  onBackendStatus?: (online: boolean) => void,
 ): Promise<RouteResult | null> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), ROUTE_FETCH_TIMEOUT_MS);
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ROUTE_FETCH_TIMEOUT_MS);
 
   if (signal) {
     if (signal.aborted) {
@@ -194,8 +199,12 @@ export async function fetchRoute(
         optimize: optimizeWaypoints,
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      onBackendStatus?.(res.status < 500);
+      return null;
+    }
     const data = await res.json();
+    onBackendStatus?.(true);
     if (data.error) return null;
 
     const routeCoords: [number, number][] = data.geometry?.coordinates ?? [];
@@ -225,6 +234,9 @@ export async function fetchRoute(
       optimizedWaypointOrder: data.optimizedWaypointOrder ?? null,
     };
   } catch {
+    if (!(signal?.aborted && !timedOut)) {
+      onBackendStatus?.(false);
+    }
     return null;
   } finally {
     clearTimeout(timeoutId);

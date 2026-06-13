@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 
 import { loadSavedAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 import {
-  fetchHealth,
   fetchTachoSummary,
   listStarred,
   type SavedPOI,
@@ -14,7 +13,6 @@ type UseSessionBootstrapArgs = {
 };
 
 export function useSessionBootstrap({ setTachoSummaryRef }: UseSessionBootstrapArgs) {
-  const [backendOnline, setBackendOnline] = useState(false);
   const [starredPOIs, setStarredPOIs] = useState<SavedPOI[]>([]);
   const [googleUser, setGoogleUser] = useState<GoogleAccount | null>(null);
   const googleUserRef = useRef<GoogleAccount | null>(null);
@@ -48,19 +46,7 @@ export function useSessionBootstrap({ setTachoSummaryRef }: UseSessionBootstrapA
     });
   }, [setTachoSummaryRef]);
 
-  useEffect(() => {
-    const check = () =>
-      fetchHealth().then(h => {
-        if (isMountedRef.current) setBackendOnline(h?.status === 'ok');
-      });
-
-    check();
-    const interval = setInterval(check, 300_000);
-    return () => clearInterval(interval);
-  }, []);
-
   return {
-    backendOnline,
     googleUser,
     setGoogleUser,
     googleUserRef,

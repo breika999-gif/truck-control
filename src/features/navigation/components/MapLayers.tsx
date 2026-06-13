@@ -525,8 +525,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* ── Incidents overlay ── */}
-      {mapIsLoaded && mapMode !== 'satellite' && (
+      {/* ── Incidents overlay (hidden during active navigation — TomTom route alerts cover the route, avoids double markers) ── */}
+      {mapIsLoaded && mapMode !== 'satellite' && !navigating && (
         <Mapbox.VectorSource id="incidents-v1" url="mapbox://mapbox.mapbox-traffic-v1">
           <Mapbox.SymbolLayer
             id="incident-signs-point"
@@ -535,7 +535,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
             filter={['==', ['geometry-type'], 'Point']}
             minZoomLevel={7}
             style={{
-              iconImage: ['match', ['get', 'class'], 'road_closure', 'sign-closed', 'lane_restriction', 'sign-closed', 'sign-danger-0'],
+              iconImage: ['match', ['get', 'class'],
+                'road_closure', 'sign-closed',
+                'lane_restriction', 'sign-closed',
+                'accident', 'incident-accident',
+                'construction', 'incident-roadworks',
+                'sign-danger-0'],
               iconSize: ['interpolate', ['linear'], ['zoom'], 7, 0.10, 10, 0.14, 13, 0.18, 16, 0.22],
               iconPitchAlignment: 'viewport',
               iconRotationAlignment: 'viewport',
@@ -552,7 +557,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
             minZoomLevel={7}
             style={{
               symbolPlacement: 'line-center',
-              iconImage: ['match', ['get', 'class'], 'road_closure', 'sign-closed', 'lane_restriction', 'sign-closed', 'sign-danger-0'],
+              iconImage: ['match', ['get', 'class'],
+                'road_closure', 'sign-closed',
+                'lane_restriction', 'sign-closed',
+                'accident', 'incident-accident',
+                'construction', 'incident-roadworks',
+                'sign-danger-0'],
               iconSize: ['interpolate', ['linear'], ['zoom'], 7, 0.10, 10, 0.14, 13, 0.18, 16, 0.22],
               iconPitchAlignment: 'viewport',
               iconRotationAlignment: 'viewport',

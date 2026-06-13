@@ -265,21 +265,6 @@ def nearby_fuel():
     spots = _tool_find_fuel(lat, lng, max(500, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
 
-@poi_bp.get("/api/parking/bbox")
-def get_parking_bbox():
-    if _is_rate_limited(limit=60, window_s=60): return jsonify({"error": "rate limited"}), 429
-    try:
-        sw_lat, sw_lng = validate_coords(request.args.get("swLat"), request.args.get("swLng"))
-        ne_lat, ne_lng = validate_coords(request.args.get("neLat"), request.args.get("neLng"))
-        if sw_lat is None or ne_lat is None:
-            raise ValueError("invalid coordinates")
-        with get_db() as db:
-            rows = db.execute("SELECT pointid, name, lat, lng FROM transparking_cache WHERE lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? LIMIT 150", (sw_lat, ne_lat, sw_lng, ne_lng)).fetchall()
-            features = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lng"], r["lat"]]}, "properties": {"pointid": r["pointid"], "name": r["name"], "url": "https://truckerapps.eu/transparking/bg/map/"}} for r in rows]
-            return jsonify({"type": "FeatureCollection", "features": features})
-    except ValueError: return jsonify({"error": "invalid coordinates"}), 400
-    except: return jsonify({"error": "invalid params"}), 400
-
 @poi_bp.post("/api/poi-along-route")
 @require_app_token
 def poi_along_route_v2():

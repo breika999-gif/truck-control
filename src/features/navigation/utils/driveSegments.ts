@@ -1,7 +1,8 @@
 import type { RouteResult, RouteStep } from '../api/directions';
 import { gradeMultiplier, type GradeProfile } from './gradeProfile';
+import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
 
-const DRIVE_PERIOD_S = 16200;
+const DRIVE_PERIOD_S = HOS_CONTINUOUS_DRIVE_LIMIT_S;
 const TRUCK_SPEED_CAP_KMH = 90;
 const TRANSITION_EPSILON = 0.0001;
 const REST_MARKER_EPSILON = 0.0001;

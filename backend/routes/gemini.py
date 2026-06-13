@@ -1,7 +1,9 @@
+import os
 import re
 import json
 from flask import Blueprint, jsonify
 from google import genai as _google_genai
+import requests as _requests
 from config import (
     GEMINI_MODEL,
     ANTHROPIC_API_KEY,
@@ -19,6 +21,9 @@ from utils.helpers import (
 )
 from database import _db_save_chat
 
+_WEATHER_CACHE: dict[str, tuple[float, str]] = {}  # key → (expires_ts, result)
+_WEATHER_TTL_S = 600  # 10 min
+
 _TACHO_HINTS = [
     "тахограф", "остава", "стигам", "стигна", "докъде", "до къде",
     "каране", "шофиране", "до колко", "почивка", "пауза", "смяна",
@@ -27,6 +32,33 @@ _TACHO_HINTS = [
 ]
 
 gemini_bp = Blueprint('gemini', __name__)
+
+def _fetch_weather(lat, lng):
+    import time as _time
+    api_key = os.environ.get("OPENWEATHER_KEY", "")
+    if not api_key:
+        return ""
+    cache_key = f"{round(float(lat), 2)},{round(float(lng), 2)}"
+    cached = _WEATHER_CACHE.get(cache_key)
+    if cached and _time.time() < cached[0]:
+        return cached[1]
+    try:
+        r = _requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"lat": lat, "lon": lng, "appid": api_key, "units": "metric", "lang": "en"},
+            timeout=3,
+        )
+        if not r.ok:
+            return ""
+        d = r.json()
+        desc = d["weather"][0]["description"]
+        temp = round(d["main"]["temp"])
+        wind = round(d["wind"]["speed"] * 3.6)
+        result = f" [WEATHER_AT_DEST: {desc}, {temp}°C, wind {wind}km/h]"
+        _WEATHER_CACHE[cache_key] = (_time.time() + _WEATHER_TTL_S, result)
+        return result
+    except Exception:
+        return ""
 
 
 
@@ -146,7 +178,16 @@ def gemini_chat():
             if context.get("daily_driving_limit_h"): fe_ctx += f" daily_limit={context['daily_driving_limit_h']}h;"
             if context.get("bt_connected") is not None: fe_ctx += f" bt={'on' if context['bt_connected'] else 'off'};"
             if context.get("bt_activity"): fe_ctx += f" activity={context['bt_activity']};"
+            if context.get("bt_live_activity"): fe_ctx += f" live_activity={context['bt_live_activity']};"
             if context.get("bt_card") is not None: fe_ctx += f" card={'in' if context['bt_card'] else 'out'};"
+            if context.get("bt_driving_time_left_min") is not None: fe_ctx += f" bt_left={context['bt_driving_time_left_min']}min;"
+            if context.get("bt_daily_driven_min") is not None: fe_ctx += f" bt_daily={context['bt_daily_driven_min']}min;"
+            if context.get("bt_speed_kmh") is not None: fe_ctx += f" bt_speed={context['bt_speed_kmh']}kmh;"
+            if context.get("current_time_iso"): fe_ctx += f" now={context['current_time_iso']};"
+            if context.get("eta_iso"): fe_ctx += f" eta={context['eta_iso']};"
+            if context.get("distance_since_rest_km") is not None: fe_ctx += f" since_rest={context['distance_since_rest_km']}km;"
+            if context.get("dest_lat") is not None and context.get("dest_lng") is not None:
+                fe_ctx += f" dest={context['dest_lat']},{context['dest_lng']};"
             if fe_ctx: ctx_note += f" [FRONTEND_CTX:{fe_ctx}]"
 
             if context.get("destination"):
@@ -159,6 +200,11 @@ def gemini_chat():
                     rd_parts.append(f"остава={context['remaining_drive_min']}мин")
                 if rd_parts:
                     ctx_note += f" [МАРШРУТ до {context['destination']}: {' '.join(rd_parts)}]"
+
+            dest_lat = context.get("dest_lat")
+            dest_lng = context.get("dest_lng")
+            if dest_lat is not None and dest_lng is not None:
+                ctx_note += _fetch_weather(dest_lat, dest_lng)
 
             if context.get("tacho_log"):
                 digest = _digest_tacho_log(context["tacho_log"])
@@ -184,7 +230,7 @@ def gemini_chat():
                 ctx_note += f" [НАВИЦИ:{json.dumps(context['driver_habits'], ensure_ascii=False)}]"
 
             if context.get("parking_cards"):
-                ctx_note += f" [PARKING_CARDS:{json.dumps(context['parking_cards'], ensure_ascii=False)[:300]}]"
+                ctx_note += f" [PARKING_CARDS:{json.dumps(context['parking_cards'], ensure_ascii=False)[:600]}]"
 
             contents.append({"role": "user", "parts": [{"text": user_msg + (f"\n\n[ВЪТРЕШНИ ДАННИ:{ctx_note}]" if ctx_note else "")}]})
         
@@ -197,7 +243,15 @@ def gemini_chat():
             return resp.text or ""
         except Exception as e:
             if _gpt4o_ready:
-                _gpt_ctx = {k: context[k] for k in ("lat", "lng", "profile", "speed_kmh") if k in context}
+                _gpt_ctx = {k: context[k] for k in (
+                    "lat", "lng", "profile", "speed_kmh", "destination",
+                    "route_distance_km", "route_duration_min", "remaining_drive_min",
+                    "current_time_iso", "eta_iso", "distance_since_rest_km",
+                    "dest_lat", "dest_lng",
+                    "bt_connected", "bt_activity", "bt_live_activity", "bt_card",
+                    "bt_driving_time_left_min", "bt_daily_driven_min", "bt_speed_kmh",
+                    "weekly_status", "found_parking", "parking_cards",
+                ) if k in context}
                 res = _run_gpt4o_internal(user_msg, history, _gpt_ctx)
                 return res.get("reply", "") if isinstance(res, dict) else ""
             return f"Грешка: {str(e)}"
@@ -211,7 +265,15 @@ def gemini_chat():
     app_intent, clean_reply = _extract_app_intent(clean_reply)
     
     if nav_cmd and _gpt4o_ready:
-        _gpt_ctx = {k: context[k] for k in ("lat", "lng", "profile", "speed_kmh") if k in context}
+        _gpt_ctx = {k: context[k] for k in (
+            "lat", "lng", "profile", "speed_kmh", "destination",
+            "route_distance_km", "route_duration_min", "remaining_drive_min",
+            "current_time_iso", "eta_iso", "distance_since_rest_km",
+            "dest_lat", "dest_lng",
+            "bt_connected", "bt_activity", "bt_live_activity", "bt_card",
+            "bt_driving_time_left_min", "bt_daily_driven_min", "bt_speed_kmh",
+            "weekly_status", "found_parking", "parking_cards",
+        ) if k in context}
         gpt_res = _run_gpt4o_internal(user_msg, history, _gpt_ctx, user_email=user_email)
     else:
         gpt_res = None

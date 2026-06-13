@@ -26,6 +26,8 @@ const PROXIMITY_ALERT_MIN_MOVE_M = 500;
 const OVERTAKING_ROUTE_TOLERANCE_M = 110;
 const OVERTAKING_LOOKAHEAD_M = 2500;
 const OVERTAKING_BEHIND_TOLERANCE_M = -60;
+// 75 m: geometry buffer (GPS accuracy on route)
+// 180 m: point-only OSM fallback — wider to catch sign; reduce to 120 m if false positives on parallel roads
 const ACTIVE_HGV_OVERTAKING_GEOMETRY_TOLERANCE_M = 75;
 const ACTIVE_HGV_OVERTAKING_POINT_TOLERANCE_M = 180;
 

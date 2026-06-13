@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useRef } from 'react';
 import { View, Text, Animated, StyleSheet, Image } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type { RestrictionPoint } from '../api/directions';
 
 interface Props {
@@ -11,27 +12,27 @@ const ICONS = {
   maxheight: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_height.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_height_exceed.png'),
-    unit: 'м',
+    unitKey: 'meterShort',
   },
   maxweight: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_weight.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_weight_exceed.png'),
-    unit: 'т',
+    unitKey: 'tonShort',
   },
   maxwidth: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_width.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_width_exceed.png'),
-    unit: 'м',
+    unitKey: 'meterShort',
   },
   no_trucks: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_no_trucks.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_no_trucks_violated.png'),
-    unit: '',
+    unitKey: null,
   },
   hazmat: {
     normal: require('../../../../android/app/src/main/res/raw/restriction_adr.png'),
     exceed: require('../../../../android/app/src/main/res/raw/restriction_adr_exceed.png'),
-    unit: '',
+    unitKey: null,
   },
 } as const;
 
@@ -52,6 +53,7 @@ function isExceeded(
 }
 
 const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
+  const { t } = useTranslation();
   const opacity = useRef(new Animated.Value(0)).current;
   const restrictionAnimationKey = restriction
     ? `${restriction.type}:${restriction.lat}:${restriction.lng}:${restriction.value_num}`
@@ -84,7 +86,7 @@ const RestrictionSign: React.FC<Props> = ({ restriction, vehicleProfile }) => {
         {showNumericValue && (
           <>
             <Text style={s.value}>{restriction.value_num}</Text>
-            <Text style={s.unit}>{iconMeta.unit}</Text>
+            <Text style={s.unit}>{iconMeta.unitKey ? t(`units.${iconMeta.unitKey}`) : ''}</Text>
           </>
         )}
       </View>
