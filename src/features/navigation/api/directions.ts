@@ -2,7 +2,7 @@ import type GeoJSON from 'geojson';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import i18n from '../../../i18n';
 
-const ROUTE_FETCH_TIMEOUT_MS = 45_000;
+const ROUTE_FETCH_TIMEOUT_MS = 90_000;
 
 export interface MaxspeedEntry {
   speed?: number;

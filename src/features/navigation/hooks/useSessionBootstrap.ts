@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 
+import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { loadSavedAccount, type GoogleAccount } from '../../../shared/services/accountManager';
 import {
   fetchTachoSummary,
@@ -7,6 +8,14 @@ import {
   type SavedPOI,
   type TachoSummary,
 } from '../../../shared/services/backendApi';
+
+const KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000; // 4 min — keeps Railway from sleeping (idle timeout ~10 min)
+
+function pingBackend() {
+  fetch(`${BACKEND_URL}/api/health`, {
+    headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+  }).catch(() => {});
+}
 
 type UseSessionBootstrapArgs = {
   setTachoSummaryRef: MutableRefObject<(summary: TachoSummary) => void>;
@@ -28,6 +37,12 @@ export function useSessionBootstrap({ setTachoSummaryRef }: UseSessionBootstrapA
   useEffect(() => {
     googleUserRef.current = googleUser;
   }, [googleUser]);
+
+  useEffect(() => {
+    pingBackend();
+    const keepAliveId = setInterval(pingBackend, KEEP_ALIVE_INTERVAL_MS);
+    return () => clearInterval(keepAliveId);
+  }, []);
 
   useEffect(() => {
     loadSavedAccount().then(acc => {
