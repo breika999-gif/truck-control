@@ -76,14 +76,12 @@ export function useLocationInterpolator(
           setRenderCoords(interpolated.current);
         }
       }
-      rafRef.current = requestAnimationFrame(tick);
     };
 
-    rafRef.current = requestAnimationFrame(tick);
+    // 50 ms ≈ 20 fps — GPS fires at 1 Hz; 60-fps rAF caused constant MapScreen re-renders
+    rafRef.current = setInterval(tick, 50) as unknown as number;
     return () => {
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-      }
+      if (rafRef.current != null) clearInterval(rafRef.current);
     };
   }, []);
 
