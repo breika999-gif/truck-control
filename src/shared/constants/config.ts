@@ -1,5 +1,8 @@
 import Config from 'react-native-config';
 
+// Sentry DSN — set SENTRY_DSN in .env (never commit the real value)
+export const SENTRY_DSN: string = Config.SENTRY_DSN ?? '';
+
 // Public Mapbox token — safe to commit (pk. prefix)
 export const MAPBOX_PUBLIC_TOKEN =
   'pk.eyJ1IjoiYnJlaWthOTk5IiwiYSI6ImNtbHBob2xjMzE5Z3MzZ3F4Y3QybGpod3AifQ.hprmbhb8EVFSfF7cqc4lkw';

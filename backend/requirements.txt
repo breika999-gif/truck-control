@@ -1,5 +1,6 @@
 flask
 flask-cors
+sentry-sdk[flask]>=2.0
 google-genai>=1.0
 openai
 anthropic

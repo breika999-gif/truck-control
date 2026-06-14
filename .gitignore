@@ -111,11 +111,13 @@ android_build_out.txt
 android_build_err.txt
 android/build_log.txt
 test/VDO\ Fleet.apk
-scripts/
+# scripts/ — crash doctor scripts are committed
+!scripts/diagnose.js
+!.github/scripts/
 src/shared/assets/tomtom_research/
 src/shared/assets/tomtom_icons/
 src/shared/assets/nav_glow.png
-AGENTS.md
+# AGENTS.md — committed (Codex/AI fix rules)
 
 # Aider AI editor artifacts
 .aider*

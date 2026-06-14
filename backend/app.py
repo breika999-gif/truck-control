@@ -1,7 +1,17 @@
 import os
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
 from flask import Flask
 from flask_cors import CORS
 from config import FLASK_PORT, FLASK_DEBUG
+
+sentry_sdk.init(
+    dsn=os.environ.get('SENTRY_DSN', ''),
+    integrations=[FlaskIntegration()],
+    environment='development' if os.environ.get('FLASK_DEBUG') else 'production',
+    traces_sample_rate=0.05,
+    send_default_pii=False,
+)
 from database import init_db, start_background_tasks
 from routes.chat import chat_bp
 from routes.gemini import gemini_bp

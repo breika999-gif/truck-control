@@ -1,5 +1,6 @@
 import React from 'react';
-import { LogBox, StatusBar } from 'react-native';
+import * as Sentry from '@sentry/react-native';
+import { LogBox, StatusBar, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -29,6 +30,28 @@ import { LicensesScreen } from './src/features/legal/screens/LicensesScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+function SentryCrashFallback({ error, onReset }: { error: Error; onReset: () => void }) {
+  return (
+    <View style={crashStyles.container}>
+      <Text style={crashStyles.title}>Нещо се счупи</Text>
+      <Text style={crashStyles.subtitle}>Грешката е докладвана автоматично.</Text>
+      <Text style={crashStyles.errorMsg}>{error.message}</Text>
+      <TouchableOpacity style={crashStyles.button} onPress={onReset}>
+        <Text style={crashStyles.buttonText}>Опитай пак</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const crashStyles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0d0d0d', alignItems: 'center', justifyContent: 'center', padding: 24 },
+  title: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 8 },
+  subtitle: { fontSize: 14, color: '#aaa', marginBottom: 16 },
+  errorMsg: { fontSize: 12, color: '#f66', fontFamily: 'monospace', marginBottom: 32, textAlign: 'center' },
+  button: { backgroundColor: '#2563eb', paddingHorizontal: 32, paddingVertical: 12, borderRadius: 8 },
+  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+});
+
 const AppDarkTheme = {
   ...DarkTheme,
   colors: {
@@ -41,7 +64,7 @@ const AppDarkTheme = {
   },
 };
 
-export default function App() {
+function App() {
   const { t } = useTranslation();
 
   return (
@@ -126,3 +149,12 @@ export default function App() {
     </SafeAreaProvider>
   );
 }
+
+export default Sentry.withErrorBoundary(App, {
+  fallback: ({ error, resetError }) => (
+    <SafeAreaProvider>
+      <StatusBar barStyle="light-content" />
+      <SentryCrashFallback error={error} onReset={resetError} />
+    </SafeAreaProvider>
+  ),
+});

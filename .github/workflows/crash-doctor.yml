@@ -1,0 +1,56 @@
+name: Crash Doctor — AI Fix PR
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  fix:
+    # Only run when the "crash-report" label is added
+    if: github.event.label.name == 'crash-report'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install AI fix script deps
+        run: pip install anthropic
+
+      - name: Run Crash Doctor
+        id: doctor
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python .github/scripts/crash_doctor.py
+
+      - name: Comment on issue
+        if: steps.doctor.outputs.pr_url != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `🩺 **Crash Doctor** е отворил PR с предложен fix: ${{ steps.doctor.outputs.pr_url }}\n\nМоля прегледай преди merge.`
+            })
