@@ -135,7 +135,7 @@ export interface MapHandlers {
   handleRestMarkerPress: (coords: Coords) => Promise<void>;
   handleReportCamera: () => Promise<void>;
   handleExportGPX: () => void;
-  handleStartRoute: (_cong: any, _alerts: any) => void;
+  handleStartRoute: (_cong: any, _alerts: any, selectedOption?: RouteOption, selectedIdx?: number | null) => void;
 }
 
 interface UseMapHandlersArgs {
@@ -695,8 +695,16 @@ export function useMapHandlers({
       const id = intent.transparking_id
         ?? selectedParking?.transparking_id
         ?? parkingResults[0]?.transparking_id;
+      const parking = selectedParking ?? parkingResults[0];
+      const selectedCoords = parking?.lng != null && parking?.lat != null
+        ? [parking.lng, parking.lat] as [number, number]
+        : undefined;
       if (id) {
-        getTransParkingUrl(id).then(url => navigation.navigate('TruckParking', { url }));
+        getTransParkingUrl(id).then(url => navigation.navigate('TruckParking', {
+          url,
+          selectedCoords,
+          selectedName: parking?.name,
+        }));
       } else {
         navigation.navigate('TruckParking', {});
       }
@@ -712,7 +720,7 @@ export function useMapHandlers({
   }, [navigation, parkingResults, selectedParking]);
 
   const handleSearchAlongRoute = () => {
-    if (poiCategory) handleSARSearch(poiCategory);
+    handleSARSearch(poiCategory ?? 'truck_stop');
   };
 
   const handleTunnelWarningDismiss = useCallback(() => {
@@ -805,19 +813,22 @@ export function useMapHandlers({
     Share.share({ message: gpx, title: `${dest}.gpx` }).catch(() => {});
   }, [route, destinationNameRef, waypointsRef, waypointNamesRef]);
 
-  const handleStartRoute = useCallback((_cong: any, _alerts: any) => {
-    const selectedIdx = selectedRouteIdx != null && routeOptions[selectedRouteIdx]
+  const handleStartRoute = useCallback((_cong: any, _alerts: any, selectedOptionArg?: RouteOption, selectedIdxArg?: number | null) => {
+    const selectedIdx = selectedIdxArg != null && routeOptions[selectedIdxArg]
+      ? selectedIdxArg
+      : selectedRouteIdx != null && routeOptions[selectedRouteIdx]
       ? selectedRouteIdx
       : routeOptions.length > 0
         ? 0
         : null;
-    const selectedOption = selectedIdx == null ? null : routeOptions[selectedIdx];
+    const selectedOption = selectedOptionArg ?? (selectedIdx == null ? null : routeOptions[selectedIdx]);
     if (selectedOption?.geometry?.coordinates?.length) {
       const selectedRoute = routeFromOption(selectedOption);
       routeRef.current = selectedRoute;
       setRoute(selectedRoute);
       setNavCongestionGeoJSON(selectedRoute.congestionGeoJSON);
       setNavTrafficAlerts(trafficAlertsToGeoJSON(selectedOption.traffic_alerts));
+      if (selectedIdx != null) setSelectedRouteIdx(selectedIdx);
       handleStart(selectedRoute);
     } else if (routeOptDest) {
       navigateTo(routeOptDest.coords, routeOptDest.name, routeOptDest.waypoints, true);

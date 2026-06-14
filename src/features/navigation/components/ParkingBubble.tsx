@@ -129,7 +129,11 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
               setTpLoading(true);
               const url = await getTransParkingUrl(parking.transparking_id!);
               setTpLoading(false);
-              navigation.navigate('TruckParking', { url });
+              navigation.navigate('TruckParking', {
+                url,
+                selectedCoords: [parking.lng, parking.lat],
+                selectedName: parking.name,
+              });
             }}
           >
             {tpLoading

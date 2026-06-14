@@ -334,6 +334,16 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
   const [callingOpen, setCallingOpen] = React.useState(false);
   const [driveLegendVisible, setDriveLegendVisible] = React.useState(true);
   const tabletFabOffset = isTablet ? 20 * uiScale : 0;
+  const truckParkingRouteCoords = React.useMemo(() => {
+    const coords = route?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return undefined;
+    const max = 220;
+    if (coords.length <= max) return coords;
+    const step = Math.ceil(coords.length / max);
+    const sampled = coords.filter((_: [number, number], i: number) => i % step === 0);
+    const last = coords[coords.length - 1];
+    return sampled[sampled.length - 1] === last ? sampled : [...sampled, last];
+  }, [route]);
 
   React.useEffect(() => {
     if (!navigating) setDriveLegendVisible(true);
@@ -495,6 +505,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       setMapIsLoaded={setMapIsLoaded}
       userCoords={userCoords}
       drivingSeconds={drivingSeconds}
+      remainingDriveMin={remainingDriveMin}
       onReportCamera={handleReportCamera}
       backendOnline={backendOnline}
     />}
@@ -533,13 +544,31 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
         remainingDriveMin={remainingDriveMin}
         speedKmh={speedKmh}
         onOpenInfo={async (p) => {
+          const selectedCoords = p.lng != null && p.lat != null
+            ? [p.lng, p.lat] as [number, number]
+            : undefined;
           if (p.transparking_id) {
             const url = await getTransParkingUrl(p.transparking_id);
-            navigation.navigate('TruckParking', { url });
+            navigation.navigate('TruckParking', {
+              url,
+              userCoords: userCoords || undefined,
+              selectedCoords,
+              selectedName: p.name,
+              routeCoords: truckParkingRouteCoords,
+              routeDurationS: route?.duration,
+              remainingDriveMin,
+            });
           } else if (p.website) {
             openInBrowser(p.website);
           } else {
-            navigation.navigate('TruckParking', {});
+            navigation.navigate('TruckParking', {
+              userCoords: userCoords || undefined,
+              selectedCoords,
+              selectedName: p.name,
+              routeCoords: truckParkingRouteCoords,
+              routeDurationS: route?.duration,
+              remainingDriveMin,
+            });
           }
         }}
         onSpeak={(text) => ttsSpeak(text)}
@@ -709,7 +738,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
     />
 
     <ChatFABs
-      visible={!navigating}
+      visible={!navigating && !(routeOptions.length > 0 && navPhase === 'ROUTE_PREVIEW')}
       backendOnline={backendOnline}
       geminiChatOpen={geminiChatOpen}
       gptChatOpen={gptChatOpen}
@@ -742,8 +771,8 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo(({
       onPress={() => { setVoiceMuted((v: boolean) => !v); if (!voiceMuted) Tts.stop(); }}
       style={{
         position: 'absolute',
-        right: 14,
-        bottom: insets.bottom + 160 + tabletFabOffset,
+        left: 14,
+        bottom: insets.bottom + 214 + tabletFabOffset,
         width: 44,
         height: 44,
         borderRadius: 22,

@@ -16,7 +16,15 @@ export type RootStackParamList = {
   POIList: undefined;
   Tacho: undefined;
   TruckBans: undefined;
-  TruckParking: { userCoords?: [number, number]; url?: string };
+  TruckParking: {
+    userCoords?: [number, number];
+    url?: string;
+    selectedCoords?: [number, number];
+    selectedName?: string;
+    routeCoords?: [number, number][];
+    routeDurationS?: number;
+    remainingDriveMin?: number;
+  };
   Dispatcher: {
     userCoords?: [number, number];
     remainingDriveSeconds?: number;

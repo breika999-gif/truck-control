@@ -63,6 +63,7 @@ interface OptionsPanelProps {
   setMapIsLoaded: (loaded: boolean) => void;
   userCoords: [number, number] | null;
   drivingSeconds: number;
+  remainingDriveMin?: number;
   onReportCamera: () => void;
   backendOnline: boolean;
 }
@@ -70,6 +71,17 @@ interface OptionsPanelProps {
 const ICON_SIZE = 26;
 const C_ACT = '#00BFFF';
 const C_OFF = '#4A5568';
+
+function sampleRouteForParking(route: RouteResult | null): [number, number][] | undefined {
+  const coords = route?.geometry?.coordinates;
+  if (!coords || coords.length < 2) return undefined;
+  const max = 220;
+  if (coords.length <= max) return coords;
+  const step = Math.ceil(coords.length / max);
+  const sampled = coords.filter((_, i) => i % step === 0);
+  const last = coords[coords.length - 1];
+  return sampled[sampled.length - 1] === last ? sampled : [...sampled, last];
+}
 
 // A single large list row (TomTom style)
 const Row = ({
@@ -147,6 +159,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   setMapIsLoaded,
   userCoords,
   drivingSeconds,
+  remainingDriveMin,
   backendOnline: _backendOnline,
 }) => {
   const { t } = useTranslation();
@@ -342,7 +355,12 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 icon="parking"
                 label={t('options.parkingLive')}
                 onPress={() => {
-                  navigation.navigate('TruckParking', { userCoords: userCoords || undefined });
+                  navigation.navigate('TruckParking', {
+                    userCoords: userCoords || undefined,
+                    routeCoords: sampleRouteForParking(route),
+                    routeDurationS: route?.duration,
+                    remainingDriveMin,
+                  });
                   close();
                 }}
                 iconColor="#4FC3F7"
