@@ -15,6 +15,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTranslation } from 'react-i18next';
 import Geolocation from 'react-native-geolocation-service';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { RootStackParamList } from '../../../shared/types/navigation';
 import { spacing } from '../../../shared/constants/theme';
@@ -30,6 +31,8 @@ type ParkingTarget = {
   lng: number;
   label: string;
 };
+
+type StatusTone = 'neutral' | 'good' | 'warn' | 'bad';
 
 function coordToTarget(
   coord: [number, number] | undefined,
@@ -84,27 +87,39 @@ function pointAlongRoute(coords: [number, number][] | undefined, targetS: number
   return coords[coords.length - 1];
 }
 
-function urlWithFocus(point: ParkingTarget): string {
-  const params = new URLSearchParams({
-    lat: String(point.lat),
-    lng: String(point.lng),
-    zoom: '12',
-  });
-  return `${TRANSPARKING_URL}?${params.toString()}`;
-}
-
-function buildLocateScript(): string {
+function buildFocusScript(point: ParkingTarget): string {
+  const label = JSON.stringify(point.label);
   return `
     (function () {
       try {
-        var labels = ['locat', 'near', 'nearby', 'gps', 'position', 'позиция', 'моето', 'около'];
-        var nodes = Array.prototype.slice.call(document.querySelectorAll('button,a,div[role="button"],input'));
-        var target = nodes.find(function (el) {
-          var txt = ((el.innerText || '') + ' ' + (el.title || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.value || '')).toLowerCase();
-          return labels.some(function (label) { return txt.indexOf(label) >= 0; });
-        });
-        if (target && target.click) target.click();
-        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-locate', found: !!target }));
+        var tries = 0;
+        var lat = ${point.lat};
+        var lng = ${point.lng};
+        var label = ${label};
+        function post(payload) {
+          window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+        }
+        function focus() {
+          if (window.google && window.google.maps && window.map && window.map.setCenter) {
+            var pos = { lat: lat, lng: lng };
+            window.map.setCenter(pos);
+            window.map.setZoom(12);
+            if (window.__truckaiTargetMarker) window.__truckaiTargetMarker.setMap(null);
+            window.__truckaiTargetMarker = new window.google.maps.Marker({
+              position: pos,
+              map: window.map,
+              title: label
+            });
+            post({ type: 'tp-focused', ok: true, label: label });
+            return;
+          }
+          if (tries++ < 30) {
+            setTimeout(focus, 250);
+          } else {
+            post({ type: 'tp-focused', ok: false });
+          }
+        }
+        focus();
       } catch (e) {
         window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-error', message: String(e && e.message || e) }));
       }
@@ -113,40 +128,190 @@ function buildLocateScript(): string {
   `;
 }
 
+function buildNightModeScript(enabled: boolean): string {
+  return `
+    (function () {
+      try {
+        var id = 'truckai-night-mode-style';
+        var existing = document.getElementById(id);
+        if (${enabled ? 'true' : 'false'}) {
+          if (!existing) {
+            var style = document.createElement('style');
+            style.id = id;
+            style.textContent = 'html { filter: invert(0.88) hue-rotate(180deg) !important; } img, video, [class*="logo"] { filter: invert(1) hue-rotate(180deg) !important; }';
+            document.head.appendChild(style);
+          }
+        } else if (existing) {
+          existing.remove();
+        }
+      } catch (e) {}
+      true;
+    })();
+  `;
+}
+
 const CAPTURE_COORDS_SCRIPT = `
   (function () {
-    if (window.__truckaiParkingHooked) return true;
-    window.__truckaiParkingHooked = true;
-    function parseCoords(text) {
-      var matches = String(text || '').match(/-?\\d{1,3}\\.\\d{4,}/g);
-      if (!matches || matches.length < 2) return null;
-      for (var i = 0; i < matches.length - 1; i++) {
-        var a = parseFloat(matches[i]);
-        var b = parseFloat(matches[i + 1]);
-        if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
-        if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };
+    try {
+      if (window.__truckaiParkingHooked) return true;
+      window.__truckaiParkingHooked = true;
+
+      function parseCoords(text) {
+        var matches = String(text || '').match(/-?\\d{1,3}\\.\\d{4,}/g);
+        if (!matches || matches.length < 2) return null;
+        for (var i = 0; i < matches.length - 1; i++) {
+          var a = parseFloat(matches[i]);
+          var b = parseFloat(matches[i + 1]);
+          if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
+          if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };
+        }
+        return null;
       }
-      return null;
+
+      function autoDismissDialogs() {
+        try {
+          var labels = ['accept', 'ok', 'agree', 'got it', 'close', 'приемам', 'съглас', 'добре', 'затвори'];
+          var nodes = Array.prototype.slice.call(document.querySelectorAll('button,a,input,[role="button"]'));
+          nodes.some(function (el) {
+            var txt = String((el.innerText || '') + ' ' + (el.value || '') + ' ' + (el.title || '') + ' ' + (el.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+            if (txt.length > 42) return false;
+            var hit = labels.some(function (label) { return txt.indexOf(label) >= 0; });
+            if (hit && el.click) {
+              el.click();
+              return true;
+            }
+            return false;
+          });
+        } catch (e) {}
+      }
+
+      document.addEventListener('click', function (event) {
+        setTimeout(function () {
+          try {
+            var el = event.target;
+            var chunks = [location.href];
+            for (var i = 0; el && i < 6; i++, el = el.parentElement) {
+              chunks.push(el.href || '', el.getAttribute && el.getAttribute('data-lat') || '', el.getAttribute && el.getAttribute('data-lng') || '', el.textContent || '');
+            }
+            var coords = parseCoords(chunks.join(' '));
+            if (coords && window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: coords.lat, lng: coords.lng }));
+            }
+          } catch (e) {}
+        }, 250);
+      }, true);
+
+      autoDismissDialogs();
+      new MutationObserver(function () {
+        setTimeout(autoDismissDialogs, 50);
+      }).observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-error', message: String(e && e.message || e) }));
+      }
     }
-    document.addEventListener('click', function (event) {
-      setTimeout(function () {
-        var el = event.target;
-        var chunks = [location.href];
-        for (var i = 0; el && i < 6; i++, el = el.parentElement) {
-          chunks.push(el.href || '', el.getAttribute && el.getAttribute('data-lat') || '', el.getAttribute && el.getAttribute('data-lng') || '', el.textContent || '');
-        }
-        var coords = parseCoords(chunks.join(' '));
-        if (coords && window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: coords.lat, lng: coords.lng }));
-        }
-      }, 250);
-    }, true);
     true;
   })();
 `;
 
+const CLEAN_TRANSPARKING_POPUPS_SCRIPT = `
+  (function () {
+    try {
+      if (window.__truckaiPopupCleanupHooked) return true;
+      window.__truckaiPopupCleanupHooked = true;
+
+      function installStyle() {
+        if (document.getElementById('truckai-transparking-clean-style')) return;
+        var style = document.createElement('style');
+        style.id = 'truckai-transparking-clean-style';
+        style.textContent = [
+          'header, nav, .navbar, .header, #header, #header-box, #download_app, #back_to_home { display: none !important; visibility: hidden !important; }',
+          '.cookie, .gdpr, .banner, .cc-banner, [class*="cookie"], [class*="consent"], .ad, .ads, [class*="advert"], .promo, [class*="promo"] { display: none !important; visibility: hidden !important; }',
+          '.gm-style-iw button, .gm-style-iw a { max-width: 100% !important; }',
+          'img[src*="shower"], [title*="душ"], [aria-label*="душ"], [title*="shower"], [aria-label*="shower"] { filter: hue-rotate(165deg) saturate(1.8) !important; }',
+          'img[src*="security"], img[src*="guard"], [title*="охрана"], [aria-label*="охрана"], [title*="security"], [aria-label*="security"] { filter: hue-rotate(95deg) saturate(1.8) !important; }'
+        ].join('\\n');
+        document.head.appendChild(style);
+      }
+
+      function cleanText(value) {
+        return String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      }
+
+      function hide(el) {
+        if (!el || el.__truckaiHidden) return;
+        el.__truckaiHidden = true;
+        el.style.setProperty('display', 'none', 'important');
+      }
+
+      function hideCompact(el) {
+        if (!el) return;
+        var txt = cleanText(el.innerText || el.textContent || '');
+        if (txt.length < 260) hide(el);
+      }
+
+      function cleanup() {
+        installStyle();
+        var buttonLabels = [
+          'изпращане sms',
+          'facebook',
+          'e-mail',
+          'email',
+          'send sms'
+        ];
+        Array.prototype.slice.call(document.querySelectorAll('a,button,input,[role="button"],.button,.btn')).forEach(function (el) {
+          var txt = cleanText((el.innerText || '') + ' ' + (el.value || '') + ' ' + (el.title || '') + ' ' + (el.getAttribute('aria-label') || ''));
+          if (buttonLabels.some(function (label) { return txt.indexOf(label) >= 0; })) {
+            hideCompact(el.closest('a,button,li,p,div') || el);
+          }
+        });
+
+        Array.prototype.slice.call(document.querySelectorAll('p,section')).forEach(function (el) {
+          var txt = cleanText(el.innerText || el.textContent || '');
+          if (
+            txt.indexOf('изпратете на вашият шофьор') >= 0 ||
+            txt.indexOf('безплатен sms') >= 0 ||
+            txt.indexOf('координатите на паркинга') >= 0 ||
+            txt.indexOf('send a free sms') >= 0 ||
+            txt.indexOf('parking coordinates') >= 0
+          ) {
+            hideCompact(el);
+          }
+        });
+      }
+
+      cleanup();
+      new MutationObserver(cleanup).observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {}
+    true;
+  })();
+`;
+
+function parkingStatusForTarget(
+  point: ParkingTarget,
+  userCoords: [number, number] | undefined,
+  remainingDriveMin: number | undefined,
+): { text: string; tone: StatusTone } | null {
+  if (!userCoords) return null;
+  const distKm = distM(userCoords, [point.lng, point.lat]) / 1000;
+  const etaMin = Math.max(1, Math.ceil((distKm / 80) * 60));
+  const distText = distKm < 10 ? distKm.toFixed(1) : String(Math.round(distKm));
+  if (remainingDriveMin && remainingDriveMin > 0) {
+    const reserveMin = Math.round(remainingDriveMin - etaMin);
+    if (reserveMin >= 30) {
+      return { text: `${distText} км · пристигаш с ${reserveMin} мин резерв ✓`, tone: 'good' };
+    }
+    if (reserveMin >= 0) {
+      return { text: `${distText} км · пристигаш с ${reserveMin} мин резерв ⚠`, tone: 'warn' };
+    }
+    return { text: `${distText} км · недостатъчно тахо ✗`, tone: 'bad' };
+  }
+  return { text: `${distText} км · ~${etaMin} мин`, tone: 'neutral' };
+}
+
 const TruckParkingScreen: React.FC = () => {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<TruckParkingRouteProp>();
   const {
@@ -170,6 +335,8 @@ const TruckParkingScreen: React.FC = () => {
   const [webUrl, setWebUrl] = React.useState(url ?? TRANSPARKING_URL);
   const [target, setTarget] = React.useState<ParkingTarget | null>(selectedTarget ?? userTarget);
   const [status, setStatus] = React.useState<string>('');
+  const [statusTone, setStatusTone] = React.useState<StatusTone>('neutral');
+  const [nightMode, setNightMode] = React.useState(false);
 
   React.useEffect(() => {
     setWebUrl(url ?? TRANSPARKING_URL);
@@ -179,16 +346,16 @@ const TruckParkingScreen: React.FC = () => {
     setTarget(selectedTarget ?? userTarget);
   }, [selectedTarget, userTarget]);
 
-  const focusTarget = React.useCallback((next: ParkingTarget, reloadMap = false) => {
+  const focusTarget = React.useCallback((next: ParkingTarget, focusWebMap = false) => {
     setTarget(next);
     setStatus(next.label);
-    if (reloadMap) setWebUrl(urlWithFocus(next));
+    setStatusTone('neutral');
+    if (focusWebMap) webViewRef.current?.injectJavaScript(buildFocusScript(next));
   }, []);
 
   const handleAroundMe = React.useCallback(() => {
     if (userTarget) {
-      focusTarget(userTarget);
-      webViewRef.current?.injectJavaScript(buildLocateScript());
+      focusTarget(userTarget, true);
       return;
     }
     Geolocation.getCurrentPosition(
@@ -198,10 +365,12 @@ const TruckParkingScreen: React.FC = () => {
           lng: pos.coords.longitude,
           label: t('parking.myPosition'),
         };
-        focusTarget(next);
-        webViewRef.current?.injectJavaScript(buildLocateScript());
+        focusTarget(next, true);
       },
-      () => setStatus(t('parking.noGpsForParking')),
+      () => {
+        setStatus(t('parking.noGpsForParking'));
+        setStatusTone('neutral');
+      },
       { enableHighAccuracy: true, timeout: 9000, maximumAge: 10000 },
     );
   }, [focusTarget, t, userTarget]);
@@ -211,6 +380,7 @@ const TruckParkingScreen: React.FC = () => {
     const coord = pointAlongRoute(routeCoords, minutes * 60, routeDurationS);
     if (!coord) {
       setStatus(t('parking.noRouteForParking'));
+      setStatusTone('neutral');
       return;
     }
     focusTarget({
@@ -226,6 +396,7 @@ const TruckParkingScreen: React.FC = () => {
     if (target) return target;
     if (userTarget) return userTarget;
     setStatus(t('parking.pickParkingTarget'));
+    setStatusTone('neutral');
     return null;
   }, [target, t, userTarget]);
 
@@ -233,28 +404,52 @@ const TruckParkingScreen: React.FC = () => {
     const point = getActionTarget();
     if (!point) return;
     Linking.openURL(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${point.lat},${point.lng}`)
-      .catch(() => setStatus(t('parking.openExternalFailed')));
+      .catch(() => {
+        setStatus(t('parking.openExternalFailed'));
+        setStatusTone('neutral');
+      });
   }, [getActionTarget, t]);
 
   const openGoogleNav = React.useCallback(() => {
     const point = getActionTarget();
     if (!point) return;
     Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${point.lat},${point.lng}&travelmode=driving`)
-      .catch(() => setStatus(t('parking.openExternalFailed')));
+      .catch(() => {
+        setStatus(t('parking.openExternalFailed'));
+        setStatusTone('neutral');
+      });
   }, [getActionTarget, t]);
+
+  const toggleNightMode = React.useCallback(() => {
+    setNightMode(prev => {
+      const next = !prev;
+      webViewRef.current?.injectJavaScript(buildNightModeScript(next));
+      return next;
+    });
+  }, []);
 
   const handleMessage = React.useCallback((event: any) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === 'tp-coords' && typeof msg.lat === 'number' && typeof msg.lng === 'number') {
-        focusTarget({ lat: msg.lat, lng: msg.lng, label: t('parking.selectedFromLiveMap') });
-      } else if (msg.type === 'tp-locate') {
-        setStatus(msg.found ? t('parking.locateTriggered') : t('parking.locateUnavailable'));
+        const next = { lat: msg.lat, lng: msg.lng, label: t('parking.selectedFromLiveMap') };
+        setTarget(next);
+        const richStatus = parkingStatusForTarget(next, userCoords, remainingDriveMin);
+        if (richStatus) {
+          setStatus(richStatus.text);
+          setStatusTone(richStatus.tone);
+        } else {
+          setStatus(t('parking.selectedFromLiveMap'));
+          setStatusTone('neutral');
+        }
+      } else if (msg.type === 'tp-focused') {
+        setStatus(msg.ok ? t('parking.focusedInTransParking') : t('parking.focusUnavailable'));
+        setStatusTone('neutral');
       }
     } catch {
       // ignore non-JSON WebView messages
     }
-  }, [focusTarget, t]);
+  }, [remainingDriveMin, t, userCoords]);
 
   const hasRoutePoint = Boolean(routeCoords && routeCoords.length > 1);
 
@@ -288,7 +483,12 @@ const TruckParkingScreen: React.FC = () => {
           geolocationEnabled={true}
           javaScriptEnabled={true}
           domStorageEnabled={true}
-          onLoadEnd={() => webViewRef.current?.injectJavaScript(CAPTURE_COORDS_SCRIPT)}
+          onLoadEnd={() => {
+            webViewRef.current?.injectJavaScript(CAPTURE_COORDS_SCRIPT);
+            webViewRef.current?.injectJavaScript(CLEAN_TRANSPARKING_POPUPS_SCRIPT);
+            if (nightMode) webViewRef.current?.injectJavaScript(buildNightModeScript(true));
+            if (target) webViewRef.current?.injectJavaScript(buildFocusScript(target));
+          }}
           onMessage={handleMessage}
           userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         />
@@ -297,10 +497,20 @@ const TruckParkingScreen: React.FC = () => {
             {target ? `${t('parking.target')}: ${target.label}` : t('parking.noTarget')}
           </Text>
           {!!status && (
-            <Text style={styles.targetStatus} numberOfLines={1}>{status}</Text>
+            <Text
+              style={[
+                styles.targetStatus,
+                statusTone === 'good' && styles.targetStatusGood,
+                statusTone === 'warn' && styles.targetStatusWarn,
+                statusTone === 'bad' && styles.targetStatusBad,
+              ]}
+              numberOfLines={1}
+            >
+              {status}
+            </Text>
           )}
         </View>
-        <View style={styles.toolbar}>
+        <View style={[styles.toolbar, { paddingBottom: Math.max(insets.bottom + 14, 24) }]}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -316,6 +526,7 @@ const TruckParkingScreen: React.FC = () => {
             <ToolButton icon="google-street-view" label={t('parking.streetView')} onPress={openStreetView} />
             <ToolButton icon="navigation-variant" label={t('parking.googleNav')} onPress={openGoogleNav} />
             <ToolButton icon="reload" label={t('parking.reload')} onPress={() => webViewRef.current?.reload()} />
+            <ToolButton icon="weather-night" label="Нощен" onPress={toggleNightMode} active={nightMode} />
           </ScrollView>
         </View>
       </View>
@@ -328,14 +539,16 @@ const ToolButton = ({
   label,
   onPress,
   disabled,
+  active,
 }: {
   icon: string;
   label: string;
   onPress: () => void;
   disabled?: boolean;
+  active?: boolean;
 }) => (
   <TouchableOpacity
-    style={[styles.toolButton, disabled && styles.toolButtonDisabled]}
+    style={[styles.toolButton, active && styles.toolButtonActive, disabled && styles.toolButtonDisabled]}
     onPress={onPress}
     activeOpacity={0.78}
     disabled={disabled}
@@ -416,12 +629,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  targetStatusGood: {
+    color: '#00ff88',
+  },
+  targetStatusWarn: {
+    color: '#ffb020',
+  },
+  targetStatusBad: {
+    color: '#ff4d6d',
+  },
   toolbar: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    paddingVertical: 10,
+    paddingTop: 10,
     backgroundColor: 'rgba(10, 10, 26, 0.94)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(0, 191, 255, 0.32)',
@@ -431,8 +653,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   toolButton: {
-    minWidth: 92,
-    height: 48,
+    minWidth: 104,
+    height: 54,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(0, 191, 255, 0.45)',
@@ -444,6 +666,10 @@ const styles = StyleSheet.create({
   toolButtonDisabled: {
     borderColor: 'rgba(255,255,255,0.14)',
     backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  toolButtonActive: {
+    borderColor: '#b58cff',
+    backgroundColor: 'rgba(181, 140, 255, 0.22)',
   },
   toolButtonText: {
     color: '#ffffff',
