@@ -43,7 +43,9 @@ export interface TachoLiveData {
 export type BleStatus = 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
 
 export interface Se5000RawPacket {
+  serviceUuid: string;
   charUuid: string;
+  base64: string;
   hex: string;
   ts: string;
 }
@@ -186,9 +188,11 @@ export class TachoBleService {
           charUuid,
           (error, characteristic) => {
             if (error || !characteristic?.value) return;
-            const bytes = base64ToBytes(characteristic.value);
+            const b64 = characteristic.value;
+            const bytes = base64ToBytes(b64);
             const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            const pkt: Se5000RawPacket = { charUuid, hex, ts: new Date().toISOString() };
+            console.log(`[tacho][se5000][raw] service=${svc.uuid} char=${charUuid} base64=${b64} hex=${hex}`);
+            const pkt: Se5000RawPacket = { serviceUuid: svc.uuid, charUuid, base64: b64, hex, ts: new Date().toISOString() };
             this.onRawPacketCallback?.(pkt);
             this.hasReceivedLiveData = true;
             this._clearNoLiveDataTimer();

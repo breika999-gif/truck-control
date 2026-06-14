@@ -156,7 +156,7 @@ const TachoScreen: React.FC = () => {
               </Text>
               {rawPackets.map((pkt, i) => (
                 <Text key={i} style={styles.gattLine} selectable>
-                  {pkt.charUuid.slice(0, 8)} {pkt.ts.slice(11, 19)}{'\n'}  {pkt.hex}
+                  {pkt.serviceUuid.slice(0, 8)}/{pkt.charUuid.slice(0, 8)} {pkt.ts.slice(11, 19)}{'\n'}  {pkt.hex}
                 </Text>
               ))}
             </ScrollView>
@@ -179,7 +179,7 @@ const TachoScreen: React.FC = () => {
       
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('tacho.title')}</Text>
-        <Text style={styles.headerSubtitle}>VDO DTCO 4.1 / Smart 2</Text>
+        <Text style={styles.headerSubtitle}>VDO DTCO 4.1 / Smart 2 · Stoneridge SE5000</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
