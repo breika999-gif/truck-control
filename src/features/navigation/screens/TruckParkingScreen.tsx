@@ -156,14 +156,18 @@ const CAPTURE_COORDS_SCRIPT = `
       if (window.__truckaiParkingHooked) return true;
       window.__truckaiParkingHooked = true;
 
+      function inEurope(lat, lng) {
+        return lat >= 34 && lat <= 72 && lng >= -12 && lng <= 45;
+      }
+
       function parseCoords(text) {
         var matches = String(text || '').match(/-?\\d{1,3}\\.\\d{4,}/g);
         if (!matches || matches.length < 2) return null;
         for (var i = 0; i < matches.length - 1; i++) {
           var a = parseFloat(matches[i]);
           var b = parseFloat(matches[i + 1]);
-          if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return { lat: a, lng: b };
-          if (Math.abs(a) <= 180 && Math.abs(b) <= 90) return { lat: b, lng: a };
+          if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && inEurope(a, b)) return { lat: a, lng: b };
+          if (Math.abs(a) <= 180 && Math.abs(b) <= 90 && inEurope(b, a)) return { lat: b, lng: a };
         }
         return null;
       }
@@ -189,11 +193,24 @@ const CAPTURE_COORDS_SCRIPT = `
         setTimeout(function () {
           try {
             var el = event.target;
-            var chunks = [location.href];
-            for (var i = 0; el && i < 6; i++, el = el.parentElement) {
-              chunks.push(el.href || '', el.getAttribute && el.getAttribute('data-lat') || '', el.getAttribute && el.getAttribute('data-lng') || '', el.textContent || '');
+            // Priority 1: explicit data-lat/data-lng attributes (most reliable)
+            for (var j = 0, cur = el; cur && j < 8; j++, cur = cur.parentElement) {
+              var dLat = cur.getAttribute && cur.getAttribute('data-lat');
+              var dLng = cur.getAttribute && cur.getAttribute('data-lng');
+              if (dLat && dLng) {
+                var pLat = parseFloat(dLat), pLng = parseFloat(dLng);
+                if (!isNaN(pLat) && !isNaN(pLng) && inEurope(pLat, pLng)) {
+                  window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: pLat, lng: pLng }));
+                  return;
+                }
+              }
             }
-            var coords = parseCoords(chunks.join(' '));
+            // Priority 2: regex over text content only (skip href to avoid Google Maps URLs)
+            var textChunks = [];
+            for (var i = 0, node = el; node && i < 6; i++, node = node.parentElement) {
+              textChunks.push(node.textContent || '');
+            }
+            var coords = parseCoords(textChunks.join(' '));
             if (coords && window.ReactNativeWebView) {
               window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: coords.lat, lng: coords.lng }));
             }
