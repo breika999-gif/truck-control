@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
-import { TachoBleService, TachoLiveData, BleStatus } from '../TachoBleService';
+import { TachoBleService, TachoLiveData, BleStatus, Se5000RawPacket } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
@@ -32,6 +32,7 @@ export interface TachoBleState {
   status: BleStatus;
   statusMsg: string;
   liveData: TachoLiveData | null;
+  rawPackets: Se5000RawPacket[];
   foundDevices: Device[];
   isConnected: boolean;
   deviceName: string | null;
@@ -63,6 +64,7 @@ const INITIAL_STATE: TachoBleState = {
   status: 'idle',
   statusMsg: i18n.t('tacho.notConnected'),
   liveData: null,
+  rawPackets: [],
   foundDevices: [],
   isConnected: false,
   deviceName: null,
@@ -128,9 +130,15 @@ function handleData(data: TachoLiveData) {
   sendToBackend(data).catch(() => {/* silent */});
 }
 
+function handleRawPacket(pkt: Se5000RawPacket) {
+  const MAX = 20;
+  const next = [pkt, ...sharedState.rawPackets].slice(0, MAX);
+  patchState({ rawPackets: next });
+}
+
 function connectToKnownOrSelectedDevice(device: Device) {
-  patchState({ deviceName: device.name ?? device.localName ?? device.id });
-  ensureService().connectToTacho(device, handleData, handleStatus);
+  patchState({ deviceName: device.name ?? device.localName ?? device.id, rawPackets: [] });
+  ensureService().connectToTacho(device, handleData, handleStatus, handleRawPacket);
 }
 
 function handleDeviceFound(device: Device) {
@@ -187,6 +195,7 @@ export function useTachoBluetooth() {
       statusMsg: i18n.t('tacho.disconnected'),
       isConnected: false,
       liveData: null,
+      rawPackets: [],
       deviceName: null,
     });
   };
@@ -212,6 +221,7 @@ export function useTachoBluetooth() {
     connected: state.isConnected,
     data,
     gattDump: sharedService?.getGattDump() ?? [],
+    rawPackets: state.rawPackets,
     startScan,
     connectToDevice,
     disconnect,

@@ -21,6 +21,7 @@ const TachoScreen: React.FC = () => {
     isConnected,
     foundDevices,
     gattDump,
+    rawPackets,
     startScan,
     connectToDevice,
     disconnect,
@@ -148,7 +149,19 @@ const TachoScreen: React.FC = () => {
             {statusMsg || t('tacho.waitingLiveDataStatus')}
           </Text>
           <Text style={styles.waitingHint}>{t('tacho.waitingLiveDataHint')}</Text>
-          {gattDump.length > 0 && (
+          {rawPackets.length > 0 && (
+            <ScrollView style={styles.gattDump} nestedScrollEnabled>
+              <Text style={[styles.gattLine, { color: '#ffff88', marginBottom: 4 }]}>
+                RAW PACKETS ({rawPackets.length}):
+              </Text>
+              {rawPackets.map((pkt, i) => (
+                <Text key={i} style={styles.gattLine} selectable>
+                  {pkt.charUuid.slice(0, 8)} {pkt.ts.slice(11, 19)}{'\n'}  {pkt.hex}
+                </Text>
+              ))}
+            </ScrollView>
+          )}
+          {rawPackets.length === 0 && gattDump.length > 0 && (
             <ScrollView style={styles.gattDump} nestedScrollEnabled>
               {gattDump.map((line, i) => (
                 <Text key={i} style={styles.gattLine} selectable>{line}</Text>

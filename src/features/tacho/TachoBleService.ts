@@ -8,7 +8,7 @@
 
 import { BleManager, Device, Characteristic, State } from 'react-native-ble-plx';
 import { decode as atob } from 'base-64';
-import { VDO_BLE_CONFIG, VdoDataInterpreter } from './VdoItsProtocol';
+import { VDO_BLE_CONFIG, SE5000_BLE_CONFIG, isSE5000Device, VdoDataInterpreter } from './VdoItsProtocol';
 import { TachoParser } from './TachoParser';
 import i18n from '../../i18n';
 
@@ -42,11 +42,18 @@ export interface TachoLiveData {
 
 export type BleStatus = 'idle' | 'scanning' | 'connecting' | 'connected' | 'error';
 
+export interface Se5000RawPacket {
+  charUuid: string;
+  hex: string;
+  ts: string;
+}
+
 export class TachoBleService {
   private manager: BleManager;
   private device: Device | null = null;
   private onDataCallback: ((data: TachoLiveData) => void) | null = null;
   private onStatusCallback: ((status: BleStatus, msg?: string) => void) | null = null;
+  private onRawPacketCallback: ((pkt: Se5000RawPacket) => void) | null = null;
   private scanTimeout: ReturnType<typeof setTimeout> | null = null;
   private noLiveDataTimeout: ReturnType<typeof setTimeout> | null = null;
   private hasReceivedLiveData = false;
@@ -136,9 +143,11 @@ export class TachoBleService {
     device: Device,
     onData: (data: TachoLiveData) => void,
     onStatus: (status: BleStatus, msg?: string) => void,
+    onRawPacket?: (pkt: Se5000RawPacket) => void,
   ): Promise<void> {
     this.onDataCallback = onData;
     this.onStatusCallback = onStatus;
+    this.onRawPacketCallback = onRawPacket ?? null;
     this.reportedMonitorErrors.clear();
 
     try {
@@ -153,15 +162,39 @@ export class TachoBleService {
       onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
       this._startNoLiveDataTimer();
 
-      // Subscribe to live activity changes
-      this._subscribeActivity(connected);
-      // Subscribe to HOS time summary
-      this._subscribeHosTimes(connected);
-      // Subscribe to speed
-      this._subscribeSpeed(connected);
+      if (isSE5000Device(deviceName)) {
+        // Stoneridge SE5000 — subscribe raw to all proprietary characteristics for protocol discovery
+        this._subscribeSE5000Raw(connected);
+      } else {
+        // VDO DTCO — standard ITS characteristics
+        this._subscribeActivity(connected);
+        this._subscribeHosTimes(connected);
+        this._subscribeSpeed(connected);
+      }
 
     } catch (err: any) {
       onStatus('error', i18n.t('tacho.connectionFailed', { error: err?.message ?? err }));
+    }
+  }
+
+  // ── SE5000: subscribe all proprietary characteristics, emit raw hex ──
+  private _subscribeSE5000Raw(device: Device): void {
+    for (const svc of SE5000_BLE_CONFIG.SERVICES) {
+      for (const charUuid of svc.characteristics) {
+        device.monitorCharacteristicForService(
+          svc.uuid,
+          charUuid,
+          (error, characteristic) => {
+            if (error || !characteristic?.value) return;
+            const bytes = base64ToBytes(characteristic.value);
+            const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            const pkt: Se5000RawPacket = { charUuid, hex, ts: new Date().toISOString() };
+            this.onRawPacketCallback?.(pkt);
+            this.hasReceivedLiveData = true;
+            this._clearNoLiveDataTimer();
+          },
+        );
+      }
     }
   }
 
