@@ -29,6 +29,7 @@ function readUInt16LE(bytes: Uint8Array, offset: number): number {
 
 // ── Device name patterns that identify a VDO/Stoneridge tachograph ──
 const TACHO_NAME_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge'];
+const NO_LIVE_DATA_TIMEOUT_MS = 10000;
 
 export interface TachoLiveData {
   activity: string;
@@ -47,6 +48,9 @@ export class TachoBleService {
   private onDataCallback: ((data: TachoLiveData) => void) | null = null;
   private onStatusCallback: ((status: BleStatus, msg?: string) => void) | null = null;
   private scanTimeout: ReturnType<typeof setTimeout> | null = null;
+  private noLiveDataTimeout: ReturnType<typeof setTimeout> | null = null;
+  private hasReceivedLiveData = false;
+  private reportedMonitorErrors = new Set<string>();
 
   constructor() {
     this.manager = new BleManager();
@@ -135,6 +139,7 @@ export class TachoBleService {
   ): Promise<void> {
     this.onDataCallback = onData;
     this.onStatusCallback = onStatus;
+    this.reportedMonitorErrors.clear();
 
     try {
       const deviceName = device.name ?? device.id;
@@ -144,7 +149,9 @@ export class TachoBleService {
       this.device = connected;
 
       await connected.discoverAllServicesAndCharacteristics();
-      onStatus('connected', i18n.t('tacho.connectedDevice', { device: deviceName }));
+      const gattSummary = await this._describeGatt(connected);
+      onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
+      this._startNoLiveDataTimer();
 
       // Subscribe to live activity changes
       this._subscribeActivity(connected);
@@ -164,7 +171,11 @@ export class TachoBleService {
       VDO_BLE_CONFIG.SERVICE_UUID,
       VDO_BLE_CONFIG.CHARACTERISTICS.ACTIVITY,
       (error, characteristic) => {
-        if (error || !characteristic?.value) return;
+        if (error) {
+          this._reportMonitorError('activity', error.message);
+          return;
+        }
+        if (!characteristic?.value) return;
         this._handleActivityUpdate(characteristic);
       },
     );
@@ -176,7 +187,11 @@ export class TachoBleService {
       VDO_BLE_CONFIG.SERVICE_UUID,
       VDO_BLE_CONFIG.CHARACTERISTICS.HOS_TIMES,
       (error, characteristic) => {
-        if (error || !characteristic?.value) return;
+        if (error) {
+          this._reportMonitorError('hos', error.message);
+          return;
+        }
+        if (!characteristic?.value) return;
         this._handleHosUpdate(characteristic);
       },
     );
@@ -188,10 +203,84 @@ export class TachoBleService {
       VDO_BLE_CONFIG.SERVICE_UUID,
       VDO_BLE_CONFIG.CHARACTERISTICS.VEHICLE_SPEED,
       (error, characteristic) => {
-        if (error || !characteristic?.value) return;
+        if (error) {
+          this._reportMonitorError('speed', error.message);
+          return;
+        }
+        if (!characteristic?.value) return;
         this._handleSpeedUpdate(characteristic);
       },
     );
+  }
+
+  private _gattDump: string[] = [];
+
+  getGattDump(): string[] {
+    return this._gattDump;
+  }
+
+  private async _describeGatt(device: Device): Promise<string> {
+    try {
+      const services = await device.services();
+      const serviceIds = services.map(s => s.uuid.toLowerCase());
+      const hasVdoService = serviceIds.includes(VDO_BLE_CONFIG.SERVICE_UUID.toLowerCase());
+
+      const dump: string[] = [];
+      await Promise.all(
+        services.map(async service => {
+          const chars = await device.characteristicsForService(service.uuid).catch(() => []);
+          const flags = chars.map(c => {
+            const f = [];
+            if (c.isNotifiable) f.push('N');
+            if (c.isIndicatable) f.push('I');
+            if (c.isReadable) f.push('R');
+            return `  ${c.uuid} [${f.join('')}]`;
+          });
+          dump.push(`SVC ${service.uuid}`);
+          dump.push(...flags);
+        }),
+      );
+
+      this._gattDump = dump;
+      return hasVdoService
+        ? i18n.t('tacho.gattVdoFound', { count: services.length })
+        : i18n.t('tacho.gattVdoMissing', { count: services.length });
+    } catch (err: any) {
+      const error = err?.message ?? String(err);
+      this._gattDump = [`error: ${error}`];
+      return i18n.t('tacho.gattInspectFailed', { error });
+    }
+  }
+
+  private _startNoLiveDataTimer(): void {
+    this._clearNoLiveDataTimer();
+    this.hasReceivedLiveData = false;
+    this.noLiveDataTimeout = setTimeout(() => {
+      if (!this.hasReceivedLiveData) {
+        this._reportConnectedDiagnostic(i18n.t('tacho.waitingLiveDataStatus'));
+      }
+    }, NO_LIVE_DATA_TIMEOUT_MS);
+  }
+
+  private _clearNoLiveDataTimer(): void {
+    if (this.noLiveDataTimeout) {
+      clearTimeout(this.noLiveDataTimeout);
+      this.noLiveDataTimeout = null;
+    }
+  }
+
+  private _reportMonitorError(channel: string, message?: string): void {
+    if (this.reportedMonitorErrors.has(channel)) return;
+    this.reportedMonitorErrors.add(channel);
+    this._reportConnectedDiagnostic(i18n.t('tacho.liveReadFailed', {
+      channel,
+      error: message ?? i18n.t('common.error'),
+    }));
+  }
+
+  private _reportConnectedDiagnostic(message: string): void {
+    console.warn('[tacho]', message);
+    this.onStatusCallback?.('connected', message);
   }
 
   // ── Decode Activity byte ──────────────────────────────────────────
@@ -229,6 +318,8 @@ export class TachoBleService {
   // ── Emit combined live data ───────────────────────────────────────
   private _emitUpdate(): void {
     if (!this.onDataCallback) return;
+    this.hasReceivedLiveData = true;
+    this._clearNoLiveDataTimer();
     this.onDataCallback({
       activity: TachoParser.parseActivity(this._lastActivity.toString(16)),
       activityCode: this._lastActivity,
@@ -245,10 +336,12 @@ export class TachoBleService {
       await this.device.cancelConnection();
       this.device = null;
     }
+    this._clearNoLiveDataTimer();
     this.onStatusCallback?.('idle', i18n.t('tacho.disconnected'));
   }
 
   destroy(): void {
+    this._clearNoLiveDataTimer();
     this.manager.destroy();
   }
 }

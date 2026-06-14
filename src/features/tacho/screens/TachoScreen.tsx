@@ -20,6 +20,7 @@ const TachoScreen: React.FC = () => {
     liveData,
     isConnected,
     foundDevices,
+    gattDump,
     startScan,
     connectToDevice,
     disconnect,
@@ -135,6 +136,30 @@ const TachoScreen: React.FC = () => {
     );
   };
 
+  const renderWaitingForData = () => {
+    if (!isConnected || liveData) return null;
+
+    return (
+      <View style={styles.waitingCard}>
+        <Icon name="timer-sand" size={26} color={colors.warning} />
+        <View style={styles.waitingTextContainer}>
+          <Text style={styles.waitingTitle}>{t('tacho.waitingLiveDataTitle')}</Text>
+          <Text style={styles.waitingText}>
+            {statusMsg || t('tacho.waitingLiveDataStatus')}
+          </Text>
+          <Text style={styles.waitingHint}>{t('tacho.waitingLiveDataHint')}</Text>
+          {gattDump.length > 0 && (
+            <ScrollView style={styles.gattDump} nestedScrollEnabled>
+              {gattDump.map((line, i) => (
+                <Text key={i} style={styles.gattLine} selectable>{line}</Text>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
@@ -149,6 +174,7 @@ const TachoScreen: React.FC = () => {
         
         {isConnected && renderActivity()}
         {isConnected && renderProgress()}
+        {renderWaitingForData()}
 
         {!isConnected ? (
           <TouchableOpacity
@@ -285,6 +311,47 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.md,
     marginBottom: spacing.lg,
+  },
+  waitingCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  waitingTextContainer: {
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+  waitingTitle: {
+    ...typography.h3,
+    color: colors.warning,
+    marginBottom: 4,
+  },
+  waitingText: {
+    ...typography.body,
+    color: colors.text,
+  },
+  waitingHint: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 6,
+  },
+  gattDump: {
+    maxHeight: 220,
+    marginTop: 10,
+    backgroundColor: '#111',
+    borderRadius: 6,
+    padding: 6,
+  },
+  gattLine: {
+    fontFamily: 'monospace',
+    fontSize: 10,
+    color: '#7fff7f',
+    lineHeight: 15,
   },
   timeRow: {
     flexDirection: 'row',

@@ -211,6 +211,7 @@ export function useTachoBluetooth() {
     ...state,
     connected: state.isConnected,
     data,
+    gattDump: sharedService?.getGattDump() ?? [],
     startScan,
     connectToDevice,
     disconnect,
