@@ -253,7 +253,9 @@ const MapScreen: React.FC = () => {
     setWaypointNames(plan.waypointNames);
     waypointsRef.current = plan.waypoints;
     waypointNamesRef.current = plan.waypointNames;
-    void navigateTo(plan.destination, plan.destinationName, plan.waypoints);
+    navigateTo(plan.destination, plan.destinationName, plan.waypoints).catch((err: unknown) => {
+      console.error('navigateTo failed:', err);
+    });
   }, [navigateTo, screenRoute.params?.dispatcherPlan, setWaypointNames, setWaypoints, waypointNamesRef, waypointsRef]);
 
   // ── Hooks Integration ──────────────────────────────────────────────
@@ -372,11 +374,15 @@ const MapScreen: React.FC = () => {
     if (target === 'gpt') {
       setGeminiChatOpen(false);
       setGptChatOpen(true);
-      void sendGptText(text);
+      sendGptText(text).catch((err: unknown) => {
+        console.error('sendGptText failed:', err);
+      });
     } else {
       setGptChatOpen(false);
       setGeminiChatOpen(true);
-      void sendGeminiText(text, { forceGemini: true });
+      sendGeminiText(text, { forceGemini: true }).catch((err: unknown) => {
+        console.error('sendGeminiText failed:', err);
+      });
     }
   }, [sendGeminiText, sendGptText, setChatInput, setGeminiChatOpen, setGptChatOpen]);
 

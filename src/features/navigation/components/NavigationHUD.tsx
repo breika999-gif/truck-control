@@ -248,6 +248,13 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
       : hosWarning === 'wont_arrive'
       ? t('hud.willNotArrive')
       : t('hud.watchTime');
+  const speedCircleAnimatedStyle = useMemo(() => ({ backgroundColor: speedingBg }), [speedingBg]);
+  const roadGradeCircleStyle = useMemo(() => ({
+    borderColor: (roadGrade ?? 0) > 0 ? '#ff9500' : '#ff3b30',
+  }), [roadGrade]);
+  const hosWarningBorderStyle = useMemo(() => ({ borderLeftColor: hosWarningColor }), [hosWarningColor]);
+  const hosWarningDotStyle = useMemo(() => ({ backgroundColor: hosWarningColor }), [hosWarningColor]);
+  const startButtonFlexStyle = useMemo(() => ({ flex: navigating ? 0 : 2 }), [navigating]);
 
   if (!route && !navigating && speedLimit === null) return null;
   const speedRowStyle = compactOnly
@@ -347,15 +354,15 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 <Animated.View style={[
                   styles.speedCircle, 
                   speed > speedLimit && styles.speedCircleExceeded,
-                  { backgroundColor: speedingBg }
+                  speedCircleAnimatedStyle,
                 ]}>
-                  <Text style={[styles.speedCircleNum, speed > speedLimit && { color: '#fff' }]}>{speedLimit}</Text>
+                  <Text style={[styles.speedCircleNum, speed > speedLimit && hudStyles.speedLimitExceededText]}>{speedLimit}</Text>
                 </Animated.View>
               )}
 
               {/* Road Grade Warning (Step D) */}
               {roadGrade != null && Math.abs(roadGrade) > 5 && (
-                <View style={[styles.gradeCircle, { borderColor: roadGrade > 0 ? '#ff9500' : '#ff3b30' }]}>
+                <View style={[styles.gradeCircle, roadGradeCircleStyle]}>
                   <Text style={styles.gradeEmoji}>{roadGrade > 0 ? '⛰️' : '📉'}</Text>
                   <Text style={styles.gradeVal}>{Math.abs(Math.round(roadGrade))}%</Text>
                 </View>
@@ -411,8 +418,8 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           {/* Drag handle */}
           <View style={styles.sheetHandle} />
           {hosWarning && (
-            <View style={[hudStyles.hosWarningBanner, { borderLeftColor: hosWarningColor }]}>
-              <View style={[hudStyles.hosWarningDot, { backgroundColor: hosWarningColor }]} />
+            <View style={[hudStyles.hosWarningBanner, hosWarningBorderStyle]}>
+              <View style={[hudStyles.hosWarningDot, hosWarningDotStyle]} />
               <Text style={hudStyles.hosWarningText}>{hosWarningLabel}</Text>
             </View>
           )}
@@ -506,8 +513,8 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           {hillWarnings.length > 0 && (
             <View style={styles.congestionRow}>
               {hillWarnings.map((w, i) => (
-                <View key={i} style={[styles.congestionChip, { backgroundColor: 'rgba(255,68,68,0.15)', borderColor: '#FF9500' }]}>
-                  <Text style={[styles.congestionText, { color: '#FF9500' }]}>{w.text}</Text>
+                <View key={i} style={[styles.congestionChip, hudStyles.hillWarningChip]}>
+                  <Text style={[styles.congestionText, hudStyles.hillWarningText]}>{w.text}</Text>
                 </View>
               ))}
             </View>
@@ -576,7 +583,7 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             >
               {waypointNames.map((name, i) => (
                 <View key={i} style={styles.waypointChip}>
-                  <Icon name="map-marker-plus" size={14} color="#ff8c00" style={{ marginRight: 4 }} />
+                  <Icon name="map-marker-plus" size={14} color="#ff8c00" style={hudStyles.waypointAddIcon} />
                   <Text style={styles.waypointChipText} numberOfLines={1}>
                     {i + 1}. {name}
                   </Text>
@@ -616,24 +623,24 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
             </TouchableOpacity>
           )}
 
-          <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.xs }}>
+          <View style={hudStyles.actionRow}>
             {!navigating && (
               <TouchableOpacity
-                style={[styles.startBtn, { flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(0,191,255,0.4)' }]}
+                style={[styles.startBtn, hudStyles.detailsButton]}
                 onPress={() => {
                   if (onFetchElevation) onFetchElevation();
                   if (onFetchWeather) onFetchWeather();
                 }}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.startBtnText, { fontSize: 16 }]}>📊 {t('hud.details')}</Text>
+                <Text style={[styles.startBtnText, hudStyles.detailsButtonText]}>📊 {t('hud.details')}</Text>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity
               style={[
                 styles.startBtn,
-                { flex: navigating ? 0 : 2 },
+                startButtonFlexStyle,
                 navigating ? styles.startBtnActive : !userCoords ? styles.startBtnDisabled : null,
               ]}
               onPress={navigating ? onStop : onStart}
@@ -654,6 +661,9 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
 });
 
 const hudStyles = StyleSheet.create({
+  speedLimitExceededText: {
+    color: '#fff',
+  },
   speedRingWrap: {
     position: 'relative',
     alignItems: 'center',
@@ -786,6 +796,29 @@ const hudStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900',
     lineHeight: 15,
+  },
+  hillWarningChip: {
+    backgroundColor: 'rgba(255,68,68,0.15)',
+    borderColor: '#FF9500',
+  },
+  hillWarningText: {
+    color: '#FF9500',
+  },
+  waypointAddIcon: {
+    marginRight: 4,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  detailsButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(0,191,255,0.4)',
+  },
+  detailsButtonText: {
+    fontSize: 16,
   },
   hosWarningBanner: {
     flexDirection: 'row',
