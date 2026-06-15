@@ -8,19 +8,24 @@ import os
 import re
 import subprocess
 import sys
-import json
 import anthropic
 
 ISSUE_NUMBER = os.environ["ISSUE_NUMBER"]
 ISSUE_TITLE  = os.environ.get("ISSUE_TITLE", "")
 ISSUE_BODY   = os.environ.get("ISSUE_BODY", "")
 GH_TOKEN     = os.environ["GH_TOKEN"]
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+if not ANTHROPIC_API_KEY:
+    print("ANTHROPIC_API_KEY is missing — skipping AI fix.")
+    subprocess.run(["bash", "-c", 'echo "pr_url=" >> $GITHUB_OUTPUT'], check=False)
+    sys.exit(0)
 
 # ── 1. Extract source file paths from stack trace ─────────────────────────────
-FILE_PATTERN = re.compile(r'(src/[^\s:()]+\.[tj]sx?|backend/[^\s:()]+\.py)')
+FILE_PATTERN = re.compile(r'((?:src|backend)[/\\][^\s:()]+\.(?:[tj]sx?|py)|App\.tsx|index\.js)')
 
 def extract_files(text: str) -> list[str]:
-    found = FILE_PATTERN.findall(text)
+    found = [f.replace("\\", "/") for f in FILE_PATTERN.findall(text)]
     # deduplicate, keep order
     seen: set[str] = set()
     result = []
@@ -130,6 +135,10 @@ for diff_text in diff_blocks:
         print(f"Patch failed: {proc.stderr.decode()}")
 
 # ── 7. Commit ─────────────────────────────────────────────────────────────────
+subprocess.run(["npm", "ci"], check=True)
+subprocess.run(["npx", "tsc", "--noEmit"], check=True)
+subprocess.run(["npm", "test", "--", "--passWithNoTests"], check=True)
+
 subprocess.run(["git", "add", "-A"], check=True)
 status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
 if not status.stdout.strip():

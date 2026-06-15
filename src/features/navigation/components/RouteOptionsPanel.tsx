@@ -18,7 +18,9 @@ interface RouteOptionsPanelProps {
   onDismiss: () => void;
   onStart: (
     congestionGeoJSON: any,
-    trafficAlerts: any
+    trafficAlerts: any,
+    selectedOption?: RouteOption,
+    selectedIdx?: number | null
   ) => void;
   /** Current driven seconds this HOS session */
   drivingSeconds?: number;
@@ -260,7 +262,7 @@ const RouteOptionsPanel: React.FC<RouteOptionsPanelProps> = ({
                   style={styles.routeStartBtn}
                   activeOpacity={0.85}
                   onPress={() => {
-                    onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts);
+                    onStart(selOpt?.congestion_geojson, selOpt?.traffic_alerts, selOpt, effectiveSelectedRouteIdx);
                   }}
                 >
                   <Text style={styles.routeStartBtnTxt}>🚀 {t('hud.startDriving')}</Text>

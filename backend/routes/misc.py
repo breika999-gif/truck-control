@@ -29,6 +29,8 @@ class LRUCache(OrderedDict):
 
 _route_cache = LRUCache(maxsize=200)
 _ROUTE_CACHE_TTL = 300
+_ROUTE_RESTRICTION_DEADLINE_S = 6.0
+_ROUTE_FAST_OVERPASS_TIMEOUT_S = 4.0
 
 def _search_parking_tomtom(lat: float, lng: float, radius_m: int = 20000) -> list:
     from services.poi_service import _tool_find_truck_parking
@@ -189,15 +191,16 @@ def _restriction_query(bbox: str) -> str:
         clauses.append(f'way["{tag}"]({bbox});')
     return f'[out:json][timeout:10];({"".join(clauses)});out center 400;'
 
-def _overpass_restrictions(query: str) -> list:
+def _overpass_restrictions(query: str, timeout_s: float = 12, max_endpoints: int | None = None) -> list:
     last_error = None
-    for endpoint in _OVERPASS_ENDPOINTS:
+    endpoints = _OVERPASS_ENDPOINTS[:max_endpoints] if max_endpoints else _OVERPASS_ENDPOINTS
+    for endpoint in endpoints:
         try:
             r = requests.post(
                 endpoint,
                 data={"data": query},
                 headers=_OVERPASS_HEADERS,
-                timeout=12,
+                timeout=timeout_s,
             )
             r.raise_for_status()
             return r.json().get("elements", [])
@@ -232,12 +235,12 @@ def _normalize_restriction(tag: str, raw: str) -> dict | None:
         return {"type": "hazmat", "value": raw_text, "value_num": 0}
     return None
 
-def _extract_route_restrictions(geometry: dict, include_status: bool = False):
+def _extract_route_restrictions(geometry: dict, include_status: bool = False, fast: bool = False):
     coords = geometry.get("coordinates", [])
     if len(coords) < 2:
         return ([], False) if include_status else []
 
-    max_points = 48
+    max_points = 24 if fast else 48
     if len(coords) > max_points:
         step = len(coords) / max_points
         coords = [coords[int(i * step)] for i in range(max_points)]
@@ -249,7 +252,12 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
         dy = coords[i][1] - coords[i - 1][1]
         approx_m += (dx * dx + dy * dy) ** 0.5 * 111000
 
-    max_segments = 4 if approx_m <= 250000 else 2
+    if fast:
+        max_segments = 2 if approx_m <= 250000 else 1
+        deadline = _cache_time.monotonic() + _ROUTE_RESTRICTION_DEADLINE_S
+    else:
+        max_segments = 4 if approx_m <= 250000 else 2
+        deadline = None
     seg_size = max(2, (len(coords) + max_segments - 1) // max_segments)
     segments = []
     for start in range(0, len(coords), seg_size):
@@ -262,10 +270,17 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False):
     results, seen = [], set()
     successful_checks = 0
     for seg in segments[:max_segments]:
+        if deadline is not None and _cache_time.monotonic() >= deadline:
+            print("[OVERPASS] route restriction fast deadline reached", flush=True)
+            break
         lats, lngs = [c[1] for c in seg], [c[0] for c in seg]
         bbox = f"{min(lats)-0.006},{min(lngs)-0.006},{max(lats)+0.006},{max(lngs)+0.006}"
         try:
-            elements = _overpass_restrictions(_restriction_query(bbox))
+            if deadline is not None:
+                remaining_s = max(1.0, min(_ROUTE_FAST_OVERPASS_TIMEOUT_S, deadline - _cache_time.monotonic()))
+                elements = _overpass_restrictions(_restriction_query(bbox), timeout_s=remaining_s, max_endpoints=1)
+            else:
+                elements = _overpass_restrictions(_restriction_query(bbox))
             successful_checks += 1
         except Exception as e:
             print(f"[OVERPASS] restriction check failed for bbox {bbox}: {e}", flush=True)
@@ -560,7 +575,6 @@ def calculate_route():
                 _tomtom_congestion_geojson(ar, raw_alt_geom)
             )
             alt_traffic_alerts = _tomtom_traffic_alerts(ar, raw_alt_geom)
-            alt_restrictions = _extract_route_restrictions(alt_geom) if include_restrictions and alt_m <= 400000 else []
             alternatives.append({
                 "label": ["Алтернатива 1", "Алтернатива 2"][idx],
                 "color": ["#B922FF", "#08F384"][idx],
@@ -573,7 +587,7 @@ def calculate_route():
                 "traffic_alerts": alt_traffic_alerts,
                 "steps": _tomtom_steps(ar, alt_m),
                 "maxspeeds": _tomtom_speed_limits(ar),
-                "restrictions": alt_restrictions,
+                "restrictions": [],
             })
 
         # Section indices match the raw TomTom polyline. If we replace the geometry with snapped
@@ -584,7 +598,7 @@ def calculate_route():
             _tomtom_congestion_geojson(rt, raw_geom)
         )
         traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
-        restrictions = _extract_route_restrictions(geom) if include_restrictions and total_m <= 400000 else []
+        restrictions = _extract_route_restrictions(geom, fast=True) if include_restrictions and total_m <= 400000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)

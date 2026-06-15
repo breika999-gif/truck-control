@@ -1,0 +1,13 @@
+{
+  "DE": { "weekend": true, "sat_end": "22:00", "sun_end": "22:00" },
+  "AT": { "weekend": true, "sat_end": "15:00", "sun_end": "22:00" },
+  "FR": { "weekend": true, "sat_end": "22:00", "sun_end": "22:00" },
+  "ES": { "weekend": true, "sat_end": "22:00", "sun_end": "22:00" },
+  "CH": { "weekend": true, "sat_end": "00:00", "sun_end": "22:00" },
+  "IT": { "weekend": true, "sat_end": "14:00", "sun_end": "22:00" },
+  "PL": { "weekend": true, "sat_end": "18:00", "sun_end": "22:00" },
+  "BG": { "weekend": false },
+  "RO": { "weekend": false },
+  "HU": { "weekend": false },
+  "GR": { "weekend": false }
+}

@@ -49,7 +49,7 @@ function packFromStatus(name: string, metadata: PackMetadata, status: PackStatus
     requiredTiles: status.requiredResourceCount ?? 0,
     completedBytes: status.completedResourceSize ?? 0,
     state: packState(status),
-    percentage: Math.max(0, Math.min(100, status.percentage ?? 0)),
+    percentage: Math.max(0, Math.min(100, Number.isFinite(status.percentage) ? status.percentage : 0)),
   };
 }
 

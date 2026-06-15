@@ -156,3 +156,7 @@ video_review/
 !android/gradlew.bat
 run-android.bat
 TruckAI-logcat.bat
+
+# Local task docs and media
+TASK_*.md
+*.mp4

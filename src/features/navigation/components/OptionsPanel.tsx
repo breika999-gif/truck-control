@@ -280,6 +280,13 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
                 iconBg="rgba(76,175,80,0.15)"
                 iconColor="#4CAF50"
               />
+              <Row
+                icon="crown"
+                label={t('options.proTrial')}
+                onPress={() => { navigation.navigate('Paywall'); close(); }}
+                iconBg="rgba(255,209,102,0.15)"
+                iconColor="#FFD166"
+              />
 
               {/* Map */}
               <Divider />

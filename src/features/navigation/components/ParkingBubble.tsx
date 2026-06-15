@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
@@ -8,6 +8,8 @@ import { POICard } from '../../../shared/services/backendApi';
 import { styles, NEON } from '../screens/MapScreen.styles';
 import { fmtDistance, ttsSpeak, openInBrowser, getTransParkingUrl } from '../utils/mapUtils';
 import type { RootStackParamList } from '../../../shared/types/navigation';
+import { fetchParkingWeather, type ParkingWeather } from '../api/weather';
+import { fetchNearestFuel, type NearestFuel } from '../api/tilequery';
 
 interface ParkingBubbleProps {
   parking: POICard;
@@ -22,6 +24,10 @@ interface ParkingBubbleProps {
 
 type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
+function fmtFuelDistance(distM: number): string {
+  return distM < 1000 ? `${distM} м` : `${(distM / 1000).toFixed(1)} км`;
+}
+
 const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   parking,
   onClose,
@@ -35,7 +41,33 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
   const { t } = useTranslation();
   const navigation = useNavigation<NavProp>();
   const remainAfterTravel = hosLimitS - drivingSeconds - (parking.travel_time ?? 0);
+  const arrivalTime: string | null = parking.travel_time
+    ? (() => {
+        const d = new Date(Date.now() + parking.travel_time * 1000);
+        return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+      })()
+    : null;
   const [tpLoading, setTpLoading] = useState(false);
+  const [weather, setWeather] = useState<ParkingWeather | null>(null);
+  const [fuel, setFuel] = useState<NearestFuel | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWeather(null);
+    fetchParkingWeather(parking.lat, parking.lng).then(w => {
+      if (!cancelled) setWeather(w);
+    });
+    return () => { cancelled = true; };
+  }, [parking.lat, parking.lng]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFuel(null);
+    fetchNearestFuel(parking.lat, parking.lng).then(f => {
+      if (!cancelled) setFuel(f);
+    });
+    return () => { cancelled = true; };
+  }, [parking.lat, parking.lng]);
 
   return (
     <View style={[styles.parkingBubble, { top: topOffset }]}>
@@ -64,6 +96,7 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
           ]}>
             <Text style={[styles.pkBadgeTxt, { fontSize: 11 }]}>
               🕐 {Math.round(parking.travel_time / 60)} {t('parking.minutesShort')}
+              {arrivalTime ? `  ·  ${t('parking.arrivesAt', { time: arrivalTime })}` : ''}
             </Text>
           </View>
         )}
@@ -80,6 +113,14 @@ const ParkingBubble: React.FC<ParkingBubbleProps> = ({
           {remainAfterTravel > 0
             ? t('parking.remainingAfter', { minutes: Math.round(remainAfterTravel / 60) })
             : t('parking.lateBy', { minutes: Math.round(-remainAfterTravel / 60) })}
+        </Text>
+      )}
+
+      {(fuel || weather) && (
+        <Text style={styles.parkingWeatherRow} numberOfLines={1}>
+          {fuel ? `⛽ ${fuel.name} · ${fmtFuelDistance(fuel.distM)}` : ''}
+          {fuel && weather ? '  ·  ' : ''}
+          {weather ? `${weather.icon} ${weather.tempC}°C${weather.label ? ` · ${weather.label}` : ''}` : ''}
         </Text>
       )}
 

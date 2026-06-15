@@ -22,7 +22,7 @@ const TiltControls: React.FC<TiltControlsProps> = ({
   if (!visible) return null;
 
   const positionStyle = position === 'middleLeft'
-    ? { left: 14, right: undefined, top: '46%' as const, bottom: undefined, transform: [{ translateY: -46 }] }
+    ? { left: 16, right: undefined, top: '56%' as const, bottom: undefined, transform: [{ translateY: -44 }] }
     : { bottom: bottomOffset };
 
   return (

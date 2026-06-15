@@ -31,4 +31,5 @@ export type RootStackParamList = {
   } | undefined;
   OfflineMaps: undefined;
   Licenses: undefined;
+  Paywall: undefined;
 };

@@ -101,6 +101,19 @@ function formatRestrictionLabel(point: RestrictionLayerPoint): string {
   return `${rounded}${point.type === 'maxweight' ? 't' : 'm'}`;
 }
 
+function duplicateRestrictionOffset(index: number): [number, number] {
+  if (index <= 0) return [0, 0];
+  const offsets: [number, number][] = [
+    [0.00028, 0],
+    [-0.00028, 0],
+    [0, 0.00028],
+    [0, -0.00028],
+    [0.00022, 0.00022],
+    [-0.00022, 0.00022],
+  ];
+  return offsets[(index - 1) % offsets.length];
+}
+
 function toPointGeoJSON(
   items: Array<{ lng: number; lat: number }>,
 ): GeoJSON.FeatureCollection {
@@ -319,23 +332,32 @@ const MapLayers: React.FC<MapLayersProps> = ({
     [gradeProfile, route],
   );
 
-  const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: restrictionPoints
-      .filter(rp => Number.isFinite(rp.lat) && Number.isFinite(rp.lng))
-      .map((rp, i) => ({
-        type: 'Feature',
-        id: i,
-        geometry: { type: 'Point', coordinates: [rp.lng, rp.lat] },
-        properties: {
-          value: rp.value,
-          value_num: rp.value_num,
-          label: formatRestrictionLabel(rp),
-          numeric: isNumericRestriction(rp.type),
-          type: rp.type,
-        },
-      })),
-  }), [restrictionPoints]);
+  const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
+    const duplicateCounts = new Map<string, number>();
+    return {
+      type: 'FeatureCollection',
+      features: restrictionPoints
+        .filter(rp => Number.isFinite(rp.lat) && Number.isFinite(rp.lng))
+        .map((rp, i) => {
+          const key = `${rp.lng.toFixed(5)}:${rp.lat.toFixed(5)}`;
+          const duplicateIndex = duplicateCounts.get(key) ?? 0;
+          duplicateCounts.set(key, duplicateIndex + 1);
+          const [offsetLng, offsetLat] = duplicateRestrictionOffset(duplicateIndex);
+          return {
+            type: 'Feature',
+            id: i,
+            geometry: { type: 'Point', coordinates: [rp.lng + offsetLng, rp.lat + offsetLat] },
+            properties: {
+              value: rp.value,
+              value_num: rp.value_num,
+              label: formatRestrictionLabel(rp),
+              numeric: isNumericRestriction(rp.type),
+              type: rp.type,
+            },
+          };
+        }),
+    };
+  }, [restrictionPoints]);
 
   const parkingGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',

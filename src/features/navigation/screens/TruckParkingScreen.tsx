@@ -25,6 +25,7 @@ type TruckParkingRouteProp = RouteProp<RootStackParamList, 'TruckParking'>;
 
 const NEON = '#00bfff';
 const TRANSPARKING_URL = 'https://truckerapps.eu/transparking/bg/map/';
+const MAX_LIVE_PICK_DISTANCE_M = 120_000;
 
 type ParkingTarget = {
   lat: number;
@@ -51,6 +52,15 @@ function distM(a: [number, number], b: [number, number]): number {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 6371000 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+}
+
+function isReasonableLivePick(
+  point: ParkingTarget,
+  refs: Array<[number, number] | null | undefined>,
+): boolean {
+  const usableRefs = refs.filter(Boolean) as [number, number][];
+  if (usableRefs.length === 0) return true;
+  return usableRefs.some(ref => distM(ref, [point.lng, point.lat]) <= MAX_LIVE_PICK_DISTANCE_M);
 }
 
 function pointAlongRoute(coords: [number, number][] | undefined, targetS: number, durationS?: number): [number, number] | null {
@@ -163,13 +173,131 @@ const CAPTURE_COORDS_SCRIPT = `
       function parseCoords(text) {
         var matches = String(text || '').match(/-?\\d{1,3}\\.\\d{4,}/g);
         if (!matches || matches.length < 2) return null;
+        var candidates = [];
         for (var i = 0; i < matches.length - 1; i++) {
           var a = parseFloat(matches[i]);
           var b = parseFloat(matches[i + 1]);
-          if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && inEurope(a, b)) return { lat: a, lng: b };
-          if (Math.abs(a) <= 180 && Math.abs(b) <= 90 && inEurope(b, a)) return { lat: b, lng: a };
+          if (Math.abs(a) <= 90 && Math.abs(b) <= 180 && inEurope(a, b)) candidates.push({ lat: a, lng: b });
+          if (Math.abs(a) <= 180 && Math.abs(b) <= 90 && inEurope(b, a)) candidates.push({ lat: b, lng: a });
+        }
+        return pickNearestToMapCenter(candidates);
+      }
+
+      function getMapCenter() {
+        try {
+          if (!window.map || !window.map.getCenter) return null;
+          var center = window.map.getCenter();
+          var lat = typeof center.lat === 'function' ? center.lat() : center.lat;
+          var lng = typeof center.lng === 'function' ? center.lng() : center.lng;
+          if (typeof lat === 'number' && typeof lng === 'number' && inEurope(lat, lng)) return { lat: lat, lng: lng };
+        } catch (e) {}
+        return null;
+      }
+
+      function distKm(a, b) {
+        var toRad = Math.PI / 180;
+        var lat1 = a.lat * toRad;
+        var lat2 = b.lat * toRad;
+        var dLat = (b.lat - a.lat) * toRad;
+        var dLng = (b.lng - a.lng) * toRad;
+        var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return 6371 * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+      }
+
+      function coerceLatLng(value) {
+        if (!value) return null;
+        var lat = typeof value.lat === 'function' ? value.lat() : value.lat;
+        var lng = typeof value.lng === 'function' ? value.lng() : value.lng;
+        if (typeof lat === 'number' && typeof lng === 'number' && inEurope(lat, lng)) {
+          return { lat: lat, lng: lng };
         }
         return null;
+      }
+
+      function postCoords(point, source) {
+        if (!point || !window.ReactNativeWebView) return;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'tp-coords',
+          lat: point.lat,
+          lng: point.lng,
+          source: source || 'unknown'
+        }));
+      }
+
+      function trackMarker(marker, fallbackPosition) {
+        if (!marker || marker.__truckaiTracked) return marker;
+        marker.__truckaiTracked = true;
+        var send = function () {
+          var pos = null;
+          try {
+            pos = marker.getPosition ? coerceLatLng(marker.getPosition()) : null;
+            if (!pos && marker.position) pos = coerceLatLng(marker.position);
+            if (!pos) pos = coerceLatLng(fallbackPosition);
+            postCoords(pos, 'marker');
+          } catch (e) {}
+        };
+        try {
+          if (marker.addListener) marker.addListener('click', send);
+          else if (window.google && google.maps && google.maps.event) google.maps.event.addListener(marker, 'click', send);
+        } catch (e) {}
+        return marker;
+      }
+
+      function hookGoogleMarkers() {
+        try {
+          if (!window.google || !google.maps || window.__truckaiGoogleMarkerHooked) return;
+          if (google.maps.Marker) {
+            var NativeMarker = google.maps.Marker;
+            var WrappedMarker = function (opts) {
+              var marker = new NativeMarker(opts || {});
+              return trackMarker(marker, opts && opts.position);
+            };
+            WrappedMarker.prototype = NativeMarker.prototype;
+            Object.keys(NativeMarker).forEach(function (key) {
+              try { WrappedMarker[key] = NativeMarker[key]; } catch (e) {}
+            });
+            google.maps.Marker = WrappedMarker;
+          }
+          if (google.maps.marker && google.maps.marker.AdvancedMarkerElement) {
+            var NativeAdvanced = google.maps.marker.AdvancedMarkerElement;
+            var WrappedAdvanced = function (opts) {
+              var marker = new NativeAdvanced(opts || {});
+              return trackMarker(marker, opts && opts.position);
+            };
+            WrappedAdvanced.prototype = NativeAdvanced.prototype;
+            Object.keys(NativeAdvanced).forEach(function (key) {
+              try { WrappedAdvanced[key] = NativeAdvanced[key]; } catch (e) {}
+            });
+            google.maps.marker.AdvancedMarkerElement = WrappedAdvanced;
+          }
+          window.__truckaiGoogleMarkerHooked = true;
+        } catch (e) {}
+      }
+
+      function pickNearestToMapCenter(candidates) {
+        if (!candidates || !candidates.length) return null;
+        var center = getMapCenter();
+        if (!center) return candidates[0];
+        var best = null;
+        var bestKm = Infinity;
+        candidates.forEach(function (candidate) {
+          var km = distKm(center, candidate);
+          if (km < bestKm) {
+            best = candidate;
+            bestKm = km;
+          }
+        });
+        return best && bestKm <= 250 ? best : null;
+      }
+
+      function isInsideGoogleMap(start) {
+        for (var el = start, i = 0; el && i < 8; i += 1, el = el.parentElement) {
+          var cls = String(el.className || '');
+          var id = String(el.id || '');
+          if (cls.indexOf('gm-style') >= 0 || id.toLowerCase().indexOf('map') >= 0) return true;
+        }
+        return false;
       }
 
       function autoDismissDialogs() {
@@ -192,6 +320,7 @@ const CAPTURE_COORDS_SCRIPT = `
       document.addEventListener('click', function (event) {
         setTimeout(function () {
           try {
+            hookGoogleMarkers();
             var el = event.target;
             // Priority 1: explicit data-lat/data-lng attributes (most reliable)
             for (var j = 0, cur = el; cur && j < 8; j++, cur = cur.parentElement) {
@@ -200,7 +329,7 @@ const CAPTURE_COORDS_SCRIPT = `
               if (dLat && dLng) {
                 var pLat = parseFloat(dLat), pLng = parseFloat(dLng);
                 if (!isNaN(pLat) && !isNaN(pLng) && inEurope(pLat, pLng)) {
-                  window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: pLat, lng: pLng }));
+                  postCoords({ lat: pLat, lng: pLng }, 'data-attrs');
                   return;
                 }
               }
@@ -211,8 +340,12 @@ const CAPTURE_COORDS_SCRIPT = `
               textChunks.push(node.textContent || '');
             }
             var coords = parseCoords(textChunks.join(' '));
-            if (coords && window.ReactNativeWebView) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-coords', lat: coords.lat, lng: coords.lng }));
+            if (coords) {
+              postCoords(coords, 'text');
+              return;
+            }
+            if (isInsideGoogleMap(el) && window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'tp-error', message: 'No reliable parking marker coordinates found' }));
             }
           } catch (e) {}
         }, 250);
@@ -228,6 +361,8 @@ const CAPTURE_COORDS_SCRIPT = `
         }, 600);
       }
 
+      hookGoogleMarkers();
+      setInterval(hookGoogleMarkers, 500);
       autoDismissDialogs();
       new MutationObserver(scheduleAutoDismiss).observe(document.documentElement, { childList: true, subtree: true });
     } catch (e) {
@@ -588,6 +723,15 @@ const TruckParkingScreen: React.FC = () => {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === 'tp-coords' && typeof msg.lat === 'number' && typeof msg.lng === 'number') {
         const next = { lat: msg.lat, lng: msg.lng, label: t('parking.selectedFromLiveMap') };
+        if (!isReasonableLivePick(next, [
+          userCoords,
+          target ? [target.lng, target.lat] : null,
+          userTarget ? [userTarget.lng, userTarget.lat] : null,
+        ])) {
+          setStatus(t('parking.badParkingCoords'));
+          setStatusTone('warn');
+          return;
+        }
         setTarget(next);
         const richStatus = parkingStatusForTarget(next, userCoords, remainingDriveMin);
         if (richStatus) {
@@ -604,7 +748,7 @@ const TruckParkingScreen: React.FC = () => {
     } catch {
       // ignore non-JSON WebView messages
     }
-  }, [remainingDriveMin, t, userCoords]);
+  }, [remainingDriveMin, t, target, userCoords, userTarget]);
 
   const hasRoutePoint = Boolean(routeCoords && routeCoords.length > 1);
 
@@ -638,6 +782,7 @@ const TruckParkingScreen: React.FC = () => {
           geolocationEnabled={true}
           javaScriptEnabled={true}
           domStorageEnabled={true}
+          injectedJavaScriptBeforeContentLoaded={CAPTURE_COORDS_SCRIPT}
           onLoadEnd={() => {
             webViewRef.current?.injectJavaScript(CAPTURE_COORDS_SCRIPT);
             webViewRef.current?.injectJavaScript(CLEAN_TRANSPARKING_POPUPS_SCRIPT);

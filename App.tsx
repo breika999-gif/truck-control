@@ -27,15 +27,22 @@ import TruckParkingScreen from './src/features/navigation/screens/TruckParkingSc
 import DispatcherScreen from './src/features/navigation/screens/DispatcherScreen';
 import OfflineRegionsScreen from './src/features/offline/screens/OfflineRegionsScreen';
 import { LicensesScreen } from './src/features/legal/screens/LicensesScreen';
+import PaywallScreen from './src/features/billing/screens/PaywallScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-function SentryCrashFallback({ error, onReset }: { error: Error; onReset: () => void }) {
+function formatCrashMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Unknown error';
+}
+
+function SentryCrashFallback({ error, onReset }: { error: unknown; onReset: () => void }) {
   return (
     <View style={crashStyles.container}>
       <Text style={crashStyles.title}>Нещо се счупи</Text>
       <Text style={crashStyles.subtitle}>Грешката е докладвана автоматично.</Text>
-      <Text style={crashStyles.errorMsg}>{error.message}</Text>
+      <Text style={crashStyles.errorMsg}>{formatCrashMessage(error)}</Text>
       <TouchableOpacity style={crashStyles.button} onPress={onReset}>
         <Text style={crashStyles.buttonText}>Опитай пак</Text>
       </TouchableOpacity>
@@ -142,6 +149,14 @@ function App() {
             headerStyle: { backgroundColor: colors.bgSecondary },
             headerTintColor: colors.text,
             headerTitleStyle: { fontWeight: '600' },
+          }}
+        />
+        <Stack.Screen
+          name="Paywall"
+          component={PaywallScreen}
+          options={{
+            presentation: 'modal',
+            headerShown: false,
           }}
         />
       </Stack.Navigator>

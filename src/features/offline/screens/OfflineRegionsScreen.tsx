@@ -17,17 +17,43 @@ import { useTranslation } from 'react-i18next';
 import { colors, spacing } from '../../../shared/constants/theme';
 import { useOfflineMaps, type OfflinePack } from '../hooks/useOfflineMaps';
 
-const REGIONS: Array<{ key: string; bounds: [number, number, number, number]; note?: string }> = [
-  { key: 'bulgariaFull', bounds: [22.3, 41.2, 28.6, 44.2], note: '~800 MB' },
-  { key: 'westBulgaria', bounds: [22.3, 41.8, 24.5, 43.8] },
-  { key: 'romania', bounds: [22.0, 43.5, 30.0, 48.3] },
-  { key: 'greece', bounds: [20.0, 35.0, 26.5, 41.8] },
-  { key: 'serbia', bounds: [18.8, 42.2, 23.0, 46.2] },
-  { key: 'turkeyThrace', bounds: [26.0, 40.5, 32.0, 42.5] },
+type OfflineRegion = {
+  key: string;
+  flag: string;
+  estimateMb: number;
+  bounds: [number, number, number, number];
+};
+
+const REGIONS: OfflineRegion[] = [
+  { key: 'spain', flag: '🇪🇸', estimateMb: 2100, bounds: [-9.6, 35.8, 4.4, 43.9] },
+  { key: 'portugal', flag: '🇵🇹', estimateMb: 850, bounds: [-9.6, 36.8, -6.1, 42.2] },
+  { key: 'france', flag: '🇫🇷', estimateMb: 2600, bounds: [-5.3, 41.2, 9.8, 51.2] },
+  { key: 'belgium', flag: '🇧🇪', estimateMb: 520, bounds: [2.5, 49.4, 6.5, 51.6] },
+  { key: 'netherlands', flag: '🇳🇱', estimateMb: 620, bounds: [3.2, 50.7, 7.3, 53.7] },
+  { key: 'luxembourg', flag: '🇱🇺', estimateMb: 180, bounds: [5.6, 49.4, 6.6, 50.2] },
+  { key: 'germany', flag: '🇩🇪', estimateMb: 2800, bounds: [5.5, 47.2, 15.3, 55.2] },
+  { key: 'switzerland', flag: '🇨🇭', estimateMb: 620, bounds: [5.9, 45.8, 10.6, 47.9] },
+  { key: 'austria', flag: '🇦🇹', estimateMb: 900, bounds: [9.4, 46.3, 17.2, 49.1] },
+  { key: 'italyNorth', flag: '🇮🇹', estimateMb: 1200, bounds: [6.6, 43.6, 13.8, 47.2] },
+  { key: 'czechia', flag: '🇨🇿', estimateMb: 760, bounds: [12.0, 48.5, 18.9, 51.1] },
+  { key: 'poland', flag: '🇵🇱', estimateMb: 1900, bounds: [14.0, 49.0, 24.2, 54.9] },
+  { key: 'slovakia', flag: '🇸🇰', estimateMb: 520, bounds: [16.8, 47.7, 22.7, 49.7] },
+  { key: 'hungary', flag: '🇭🇺', estimateMb: 720, bounds: [16.0, 45.7, 22.9, 48.7] },
+  { key: 'slovenia', flag: '🇸🇮', estimateMb: 320, bounds: [13.3, 45.4, 16.7, 46.9] },
+  { key: 'croatia', flag: '🇭🇷', estimateMb: 780, bounds: [13.1, 42.2, 19.6, 46.7] },
+  { key: 'serbia', flag: '🇷🇸', estimateMb: 700, bounds: [18.8, 42.2, 23.1, 46.3] },
+  { key: 'romania', flag: '🇷🇴', estimateMb: 1400, bounds: [20.2, 43.5, 29.9, 48.4] },
+  { key: 'bulgaria', flag: '🇧🇬', estimateMb: 800, bounds: [22.3, 41.2, 28.7, 44.3] },
+  { key: 'greece', flag: '🇬🇷', estimateMb: 1200, bounds: [19.3, 34.7, 28.4, 41.9] },
+  { key: 'turkeyThrace', flag: '🇹🇷', estimateMb: 650, bounds: [26.0, 40.3, 32.2, 42.7] },
 ];
 
 function formatMb(bytes: number): string {
   return `${Math.max(0, bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatEstimateMb(mb: number): string {
+  return `~${mb.toLocaleString('en-US')} MB`;
 }
 
 const OfflineRegionsScreen: React.FC = () => {
@@ -130,17 +156,25 @@ const OfflineRegionsScreen: React.FC = () => {
                 <Icon name="close" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
+            <Text style={styles.regionHint}>{t('offline.countryHint')}</Text>
             {REGIONS.map(region => {
               const regionName = t(`offline.regions.${region.key}`);
+              const displayName = `${region.flag} ${regionName}`;
               return (
               <TouchableOpacity
                 key={region.key}
                 style={styles.regionRow}
-                onPress={() => startDownload(regionName, region.bounds)}
+                onPress={() => startDownload(displayName, region.bounds)}
               >
+                <Text style={styles.regionFlag}>{region.flag}</Text>
+                <View style={styles.regionInfo}>
+                  <Text style={styles.regionName}>{regionName}</Text>
+                  <Text style={styles.regionSub}>{t('offline.zoomRange')}</Text>
+                </View>
+                <View style={styles.regionMbBadge}>
+                  <Text style={styles.regionMbText}>{formatEstimateMb(region.estimateMb)}</Text>
+                </View>
                 <Icon name="download-outline" size={21} color="#00BFFF" />
-                <Text style={styles.regionName}>{regionName}</Text>
-                {region.note && <Text style={styles.regionNote}>{region.note}</Text>}
               </TouchableOpacity>
             );})}
           </View>
@@ -176,9 +210,14 @@ const styles = StyleSheet.create({
   modalCard: { borderRadius: 8, padding: spacing.md, backgroundColor: colors.bgSecondary, borderWidth: 1, borderColor: colors.border },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: spacing.sm },
   modalTitle: { color: colors.text, fontSize: 17, fontWeight: '800' },
-  regionRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
-  regionName: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '700' },
-  regionNote: { color: '#F1C40F', fontSize: 11, fontWeight: '700' },
+  regionHint: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginBottom: spacing.xs },
+  regionRow: { minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  regionFlag: { fontSize: 27, width: 36, textAlign: 'center' },
+  regionInfo: { flex: 1 },
+  regionName: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  regionSub: { color: colors.textMuted, fontSize: 10, marginTop: 2 },
+  regionMbBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 4, backgroundColor: 'rgba(241,196,15,0.12)', borderWidth: 1, borderColor: 'rgba(241,196,15,0.35)' },
+  regionMbText: { color: '#F1C40F', fontSize: 11, fontWeight: '800' },
 });
 
 export default OfflineRegionsScreen;

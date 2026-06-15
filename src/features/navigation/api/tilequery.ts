@@ -12,10 +12,24 @@
  * Callers are responsible for throttling (don't spam the API).
  */
 
+import Config from 'react-native-config';
 import { MAPBOX_PUBLIC_TOKEN } from '../../../shared/constants/config';
 
 const BASE = 'https://api.mapbox.com/v4';
 const TIMEOUT_MS = 5_000;
+const TOMTOM_KEY = Config.TOMTOM_API_KEY ?? '';
+
+type AbortSignalWithTimeout = typeof AbortSignal & {
+  timeout?: (milliseconds: number) => AbortSignal;
+};
+
+function timeoutSignal(milliseconds: number): AbortSignal | undefined {
+  const nativeSignal = (AbortSignal as AbortSignalWithTimeout).timeout?.(milliseconds);
+  if (nativeSignal) return nativeSignal;
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), milliseconds);
+  return controller.signal;
+}
 
 /** Fetch with a manual abort-signal timeout (compatible with all RN versions). */
 async function fetchWithTimeout(url: string): Promise<Response> {
@@ -75,6 +89,11 @@ export interface RoadStructureCandidate {
   structure?: string;
   layer?: string;
   source?: 'mapbox-streets-v8';
+}
+
+export interface NearestFuel {
+  name: string;
+  distM: number;
 }
 
 function isLngLatPair(value: unknown): value is [number, number] {
@@ -180,5 +199,29 @@ export async function fetchNearbyRestrictions(
     };
   } catch {
     return none;
+  }
+}
+
+export async function fetchNearestFuel(
+  lat: number,
+  lng: number,
+): Promise<NearestFuel | null> {
+  if (!TOMTOM_KEY) return null;
+  try {
+    const url =
+      'https://api.tomtom.com/search/2/nearbySearch/.json' +
+      `?lat=${lat}&lon=${lng}&radius=3000&categorySet=7311&limit=1` +
+      `&key=${TOMTOM_KEY}`;
+    const res = await fetch(url, { signal: timeoutSignal(4000) });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const result = json.results?.[0];
+    if (!result) return null;
+    return {
+      name: result.poi?.name ?? 'Гориво',
+      distM: Math.round(result.dist ?? 0),
+    };
+  } catch {
+    return null;
   }
 }

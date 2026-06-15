@@ -808,9 +808,9 @@ export const styles = StyleSheet.create({
   },
   tiltBtn: {
     ...baseNeonBtn,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     elevation: 10,
     shadowOpacity: 0.7,
     shadowRadius: 6,
@@ -1829,6 +1829,11 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     marginBottom: 8,
+  },
+  parkingWeatherRow: {
+    fontSize: 12,
+    color: '#aaa',
+    marginBottom: 4,
   },
   parkingBubbleBadgeRow: {
     flexDirection: 'row',

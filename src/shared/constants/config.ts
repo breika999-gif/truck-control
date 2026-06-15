@@ -2,6 +2,7 @@ import Config from 'react-native-config';
 
 // Sentry DSN — set SENTRY_DSN in .env (never commit the real value)
 export const SENTRY_DSN: string = Config.SENTRY_DSN ?? '';
+export const SENTRY_ENVIRONMENT: string = Config.SENTRY_ENVIRONMENT ?? (__DEV__ ? 'development' : 'production');
 
 // Public Mapbox token — safe to commit (pk. prefix)
 export const MAPBOX_PUBLIC_TOKEN =
@@ -16,6 +17,9 @@ export const BACKEND_URL = __DEV__
 
 // Internal app token for backend endpoints that are not public.
 export const APP_INTERNAL_TOKEN: string = Config.APP_INTERNAL_TOKEN ?? '';
+
+// RevenueCat Android public SDK key — set REVENUECAT_ANDROID_API_KEY in .env.
+export const REVENUECAT_ANDROID_API_KEY: string = Config.REVENUECAT_ANDROID_API_KEY ?? '';
 
 // Default map center — Bulgaria
 export const MAP_CENTER = {
