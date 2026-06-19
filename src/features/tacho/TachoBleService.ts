@@ -164,14 +164,19 @@ export class TachoBleService {
       onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
       this._startNoLiveDataTimer();
 
-      if (isSE5000Device(deviceName)) {
-        // Stoneridge SE5000 — subscribe raw to all proprietary characteristics for protocol discovery
-        this._subscribeSE5000Raw(connected);
-      } else {
-        // VDO DTCO — standard ITS characteristics
+      const hasVdoLiveService = await this._hasService(connected, VDO_BLE_CONFIG.SERVICE_UUID);
+      if (hasVdoLiveService) {
         this._subscribeActivity(connected);
         this._subscribeHosTimes(connected);
         this._subscribeSpeed(connected);
+        this._readVdoLiveOnce(connected);
+      }
+
+      if (isSE5000Device(deviceName)) {
+        // Stoneridge SE5000 may expose standard ITS plus proprietary channels.
+        this._subscribeSE5000Raw(connected);
+      } else if (!hasVdoLiveService) {
+        this._reportConnectedDiagnostic(i18n.t('tacho.waitingLiveDataStatus'));
       }
 
     } catch (err: any) {
@@ -194,8 +199,6 @@ export class TachoBleService {
             console.log(`[tacho][se5000][raw] service=${svc.uuid} char=${charUuid} base64=${b64} hex=${hex}`);
             const pkt: Se5000RawPacket = { serviceUuid: svc.uuid, charUuid, base64: b64, hex, ts: new Date().toISOString() };
             this.onRawPacketCallback?.(pkt);
-            this.hasReceivedLiveData = true;
-            this._clearNoLiveDataTimer();
           },
         );
       }
@@ -254,6 +257,11 @@ export class TachoBleService {
 
   getGattDump(): string[] {
     return this._gattDump;
+  }
+
+  private async _hasService(device: Device, serviceUuid: string): Promise<boolean> {
+    const services = await device.services().catch(() => []);
+    return services.some(service => service.uuid.toLowerCase() === serviceUuid.toLowerCase());
   }
 
   private async _describeGatt(device: Device): Promise<string> {
@@ -327,6 +335,7 @@ export class TachoBleService {
 
   private _handleActivityUpdate(characteristic: Characteristic): void {
     const bytes = base64ToBytes(characteristic.value!);
+    if (bytes.length < 1) return;
     const activityByte = bytes[0];
     const { status } = VdoDataInterpreter.decodeActivity(activityByte);
     this._lastActivity = status;
@@ -336,6 +345,7 @@ export class TachoBleService {
   // ── Decode HOS Times (bytes 0-1: remaining driving min, bytes 2-3: daily driven min)
   private _handleHosUpdate(characteristic: Characteristic): void {
     const bytes = base64ToBytes(characteristic.value!);
+    if (bytes.length < 4) return;
     // VDO ITS: bytes 0-1 = remaining driving time in minutes (little-endian)
     const remDrivingMin = readUInt16LE(bytes, 0);
     // bytes 2-3 = daily driven minutes (little-endian)
@@ -347,9 +357,39 @@ export class TachoBleService {
   // ── Decode Speed (km/h, 2 bytes little-endian, value / 256) ──────
   private _handleSpeedUpdate(characteristic: Characteristic): void {
     const bytes = base64ToBytes(characteristic.value!);
+    if (bytes.length < 2) return;
     const rawSpeed = readUInt16LE(bytes, 0);
     this._lastSpeed = Math.round(rawSpeed / 256);
     this._emitUpdate();
+  }
+
+  private _readVdoLiveOnce(device: Device): void {
+    device.readCharacteristicForService(
+      VDO_BLE_CONFIG.SERVICE_UUID,
+      VDO_BLE_CONFIG.CHARACTERISTICS.ACTIVITY,
+    )
+      .then(characteristic => {
+        if (characteristic.value) this._handleActivityUpdate(characteristic);
+      })
+      .catch(() => undefined);
+
+    device.readCharacteristicForService(
+      VDO_BLE_CONFIG.SERVICE_UUID,
+      VDO_BLE_CONFIG.CHARACTERISTICS.HOS_TIMES,
+    )
+      .then(characteristic => {
+        if (characteristic.value) this._handleHosUpdate(characteristic);
+      })
+      .catch(() => undefined);
+
+    device.readCharacteristicForService(
+      VDO_BLE_CONFIG.SERVICE_UUID,
+      VDO_BLE_CONFIG.CHARACTERISTICS.VEHICLE_SPEED,
+    )
+      .then(characteristic => {
+        if (characteristic.value) this._handleSpeedUpdate(characteristic);
+      })
+      .catch(() => undefined);
   }
 
   // ── Emit combined live data ───────────────────────────────────────

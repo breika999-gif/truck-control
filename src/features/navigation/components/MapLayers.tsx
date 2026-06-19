@@ -323,10 +323,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
   const hasTachoRange = Boolean(tachoRangeGeoJSON?.features.length);
   const routeGlowColor = lightMode ? 'rgba(0,122,255,0.30)' : 'rgba(19,217,255,0.52)';
   const routeCasingColor = lightMode ? '#071426' : '#06244A';
-  const routeBaseColor = hasDriveSegments || hasTachoRange ? 'rgba(0,0,0,0)' : routeLineColor;
+  const routeBaseColor = hasDriveSegments ? 'rgba(0,0,0,0)' : routeLineColor;
   const routeMainWidth = ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 9, 15, 15] as any;
   const routeCasingWidth = ['interpolate', ['linear'], ['zoom'], 5, 8, 10, 14, 15, 23] as any;
   const routeGlowWidth = ['interpolate', ['linear'], ['zoom'], 5, 13, 10, 22, 15, 36] as any;
+  const tachoRangeWidth = ['interpolate', ['linear'], ['zoom'], 5, 2, 10, 3.5, 15, 5, 17, 6] as any;
   const gradeOverlayGeoJSON = React.useMemo(
     () => buildGradeOverlayGeoJSON(route, gradeProfile),
     [gradeProfile, route],
@@ -412,17 +413,24 @@ const MapLayers: React.FC<MapLayersProps> = ({
             style={{ lineColor: '#FF9100', lineWidth: 7, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
+            id="traffic-severe"
+            sourceLayerID="traffic"
+            slot="top"
+            filter={['==', ['get', 'congestion'], 'severe']}
+            style={{ lineColor: '#FA0000', lineWidth: 8, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
+          />
+          <Mapbox.LineLayer
             id="traffic-closed-bg"
             sourceLayerID="traffic"
             slot="top"
-            filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
+            filter={['==', ['get', 'congestion'], 'closed']}
             style={{ lineColor: '#FA0000', lineWidth: 9, lineOpacity: 1.0, lineCap: 'round', lineJoin: 'round' }}
           />
           <Mapbox.LineLayer
             id="traffic-closed-stripe"
             sourceLayerID="traffic"
             slot="top"
-            filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
+            filter={['==', ['get', 'congestion'], 'closed']}
             style={{
               lineColor: '#ffffff',
               lineWidth: 9,
@@ -436,7 +444,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="traffic-sign-closed"
             sourceLayerID="traffic"
             slot="top"
-            filter={['any', ['==', ['get', 'congestion'], 'closed'], ['==', ['get', 'congestion'], 'severe']]}
+            filter={['==', ['get', 'congestion'], 'closed']}
             minZoomLevel={6}
             style={{
               symbolPlacement: 'line-center',
@@ -669,8 +677,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
             filter={['==', ['get', 'status'], 'safe']}
             style={{
               lineColor: '#23E06F',
-              lineWidth: routeMainWidth,
-              lineOpacity: 0.98,
+              lineWidth: tachoRangeWidth,
+              lineOpacity: 0.92,
               lineCap: 'round',
               lineJoin: 'round',
               lineBlur: lightMode ? 0 : 0.2,
@@ -684,8 +692,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
             filter={['==', ['get', 'status'], 'warning']}
             style={{
               lineColor: '#FFD12A',
-              lineWidth: routeMainWidth,
-              lineOpacity: 0.98,
+              lineWidth: tachoRangeWidth,
+              lineOpacity: 0.92,
               lineCap: 'round',
               lineJoin: 'round',
               lineBlur: lightMode ? 0 : 0.25,
@@ -699,8 +707,8 @@ const MapLayers: React.FC<MapLayersProps> = ({
             filter={['==', ['get', 'status'], 'over']}
             style={{
               lineColor: '#FF2D3D',
-              lineWidth: routeMainWidth,
-              lineOpacity: 0.98,
+              lineWidth: tachoRangeWidth,
+              lineOpacity: 0.92,
               lineCap: 'round',
               lineJoin: 'round',
               lineBlur: lightMode ? 0 : 0.3,
