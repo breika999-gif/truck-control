@@ -448,8 +448,8 @@ export async function fetchProximityAlerts(
 }
 
 /** Fetch all user-reported speed cameras from the POI store. */
-export async function fetchReportedCameras(): Promise<POICard[]> {
-  const pois = await listPOIs('speed_camera');
+export async function fetchReportedCameras(userEmail?: string): Promise<POICard[]> {
+  const pois = await listPOIs('speed_camera', userEmail);
   return pois.map(p => ({
     name: p.name,
     lat: p.lat,

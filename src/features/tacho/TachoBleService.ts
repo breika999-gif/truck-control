@@ -196,7 +196,7 @@ export class TachoBleService {
             const b64 = characteristic.value;
             const bytes = base64ToBytes(b64);
             const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            console.log(`[tacho][se5000][raw] service=${svc.uuid} char=${charUuid} base64=${b64} hex=${hex}`);
+            if (__DEV__) { console.log(`[tacho][se5000][raw] service=${svc.uuid} char=${charUuid} hex=${hex}`); }
             const pkt: Se5000RawPacket = { serviceUuid: svc.uuid, charUuid, base64: b64, hex, ts: new Date().toISOString() };
             this.onRawPacketCallback?.(pkt);
           },

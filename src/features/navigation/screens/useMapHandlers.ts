@@ -793,7 +793,7 @@ export function useMapHandlers({
     playCameraAlert();
     if (userCoords) {
       await reportCamera(userCoords[1], userCoords[0], googleUser?.email);
-      fetchReportedCameras().then(cams => {
+      fetchReportedCameras(googleUser?.email).then(cams => {
         if (cams.length > 0) setReportedCameras(cams);
       }).catch(() => {});
     }

@@ -85,16 +85,7 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 def _build_tacho_context_block(user_email: str = "") -> str:
     """Format tacho_live_context for Gemini system prompt."""
-    ctx = {}
-    if user_email:
-        ctx = tacho_live_context.get(user_email) or {}
-    else:
-        ctx = tacho_live_context.get("") or {}
-        if not ctx:
-            for candidate in tacho_live_context.values():
-                if candidate:
-                    ctx = candidate
-                    break
+    ctx = tacho_live_context.get(user_email) or {} if user_email else {}
     if not ctx:
         return ''
 

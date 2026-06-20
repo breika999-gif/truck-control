@@ -23,6 +23,7 @@ interface UseMapBootstrapArgs {
   profile: VehicleProfile | null;
   route: RouteResult | null;
   setLightMode: (isDay: boolean) => void;
+  userEmailRef: MutableRefObject<{ email?: string } | null>;
 }
 
 export function useMapBootstrap({
@@ -31,6 +32,7 @@ export function useMapBootstrap({
   profile,
   route,
   setLightMode,
+  userEmailRef,
 }: UseMapBootstrapArgs) {
   const [reachMarker, setReachMarker] = useState<{ coords: [number, number]; label: string } | null>(null);
   const [navCongestionGeoJSON, setNavCongestionGeoJSON] = useState<GeoJSON.FeatureCollection | null>(null);
@@ -66,7 +68,7 @@ export function useMapBootstrap({
 
   useEffect(() => {
     if (!route) return;
-    fetchReportedCameras()
+    fetchReportedCameras(userEmailRef.current?.email)
       .then(cameras => { if (cameras.length > 0) setReportedCameras(cameras); })
       .catch(() => {});
   }, [route]);

@@ -219,27 +219,28 @@ def _transparking_cache_refresh() -> None:
             return
 
         now = now_iso()
-        inserted = 0
+        rows = []
+        for f in features:
+            props = f.get("properties", {})
+            pid = props.get("id")
+            name = props.get("title", "")
+            coords = f.get("geometry", {}).get("coordinates", [])
+            if not pid or len(coords) < 2:
+                continue
+            # TransParking returns [lat, lng], unlike GeoJSON's usual [lng, lat].
+            lat, lng = coords[0], coords[1]
+            rows.append((str(pid), name, float(lat), float(lng), now))
+
+        # Atomic swap: insert all new rows then delete old ones in one transaction.
+        # This prevents a partial/empty cache if the process is interrupted mid-write.
         with get_db() as db:
-            db.execute("DELETE FROM transparking_cache")
+            db.executemany(
+                "INSERT OR REPLACE INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            db.execute("DELETE FROM transparking_cache WHERE refreshed_at != ?", (now,))
             db.commit()
-            for i, f in enumerate(features):
-                props = f.get("properties", {})
-                pid = props.get("id")
-                name = props.get("title", "")
-                coords = f.get("geometry", {}).get("coordinates", [])
-                if not pid or len(coords) < 2:
-                    continue
-                # TransParking returns [lat, lng], unlike GeoJSON's usual [lng, lat].
-                lat, lng = coords[0], coords[1]
-                db.execute(
-                    "INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
-                    (str(pid), name, float(lat), float(lng), now)
-                )
-                inserted += 1
-                if inserted % 5000 == 0:
-                    db.commit()
-            db.commit()
+        inserted = len(rows)
     except Exception as e:
         print(f"[TRANSPARKING] cache refresh failed: {e}", flush=True)
 

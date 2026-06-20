@@ -8,7 +8,7 @@ from config import FLASK_PORT, FLASK_DEBUG
 sentry_sdk.init(
     dsn=os.environ.get('SENTRY_DSN', ''),
     integrations=[FlaskIntegration()],
-    environment='development' if os.environ.get('FLASK_DEBUG') else 'production',
+    environment='development' if FLASK_DEBUG else 'production',
     traces_sample_rate=0.05,
     send_default_pii=False,
 )

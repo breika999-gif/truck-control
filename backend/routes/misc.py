@@ -675,6 +675,83 @@ def complete_route_log():
         conn.commit()
     return jsonify({"ok": updated > 0})
 
+_LANDING_SYSTEM = (
+    "You are TruckExpoAI's website assistant. Answer concisely (2-4 sentences max). "
+    "Detect the visitor's language from their message and respond in the same language. "
+    "You know everything about TruckExpoAI — a professional HGV truck navigation app for Android:\n"
+    "• AI: GPT-4o for navigation commands + Gemini 2.0 Flash as AI co-driver\n"
+    "• Maps: Mapbox GL with 3D buildings, traffic layers, terrain\n"
+    "• Routing: TomTom truck-safe routing (HGV weight/height/width/hazmat)\n"
+    "• TransParking: 59,436 truck parking spots offline database\n"
+    "• Google Places fallback when TomTom search finds nothing\n"
+    "• Tachograph: EU 561/2006 compliance + Bluetooth BLE tachograph integration\n"
+    "• Truck bans: real-time weekend/holiday restrictions via trafficban.com\n"
+    "• Voice: speak to the AI, it navigates and answers questions\n"
+    "• POI management: save custom stops with TomTom geocoding\n"
+    "• Offline maps support, Sentry crash reporting\n"
+    "• Pricing: free tier available + Pro plans via in-app purchase (RevenueCat)\n"
+    "• Platform: Android now, iOS coming\n"
+    "• Beta access: email ceo@truckexpoai.com\n"
+    "Do NOT make up features. If unsure, say to contact ceo@truckexpoai.com."
+)
+
+_LANDING_RATE: dict = {}
+_LANDING_RATE_MAX_IPS = 2000  # prevent unbounded growth
+
+@misc_bp.post("/api/landing-chat")
+def landing_chat():
+    import time as _t
+    # Use remote_addr only — X-Forwarded-For is trivially spoofed
+    ip = request.remote_addr or "unknown"
+    now = _t.time()
+    window = _LANDING_RATE.get(ip, [])
+    window = [ts for ts in window if now - ts < 60]
+    if len(window) >= 10:
+        return jsonify({"ok": False, "error": "Too many requests"}), 429
+    window.append(now)
+    # Evict oldest entries when dict grows too large
+    if len(_LANDING_RATE) > _LANDING_RATE_MAX_IPS:
+        oldest = sorted(_LANDING_RATE, key=lambda k: _LANDING_RATE[k][-1] if _LANDING_RATE[k] else 0)
+        for k in oldest[:200]:
+            _LANDING_RATE.pop(k, None)
+    _LANDING_RATE[ip] = window
+
+    body = _get_body()
+    user_msg = (body.get("message") or "")[:500].strip()
+    if not user_msg:
+        return jsonify({"ok": False, "error": "message required"}), 400
+
+    raw_history = body.get("history") or []
+    if not isinstance(raw_history, list):
+        raw_history = []
+    history = [
+        {"role": h.get("role", "user"), "text": str(h.get("text", ""))[:300]}
+        for h in raw_history[-6:]
+        if isinstance(h, dict)
+    ]
+
+    from services.gemini_service import _gemini_client, _gemini_ready
+    if not _gemini_ready:
+        return jsonify({"ok": False, "error": "AI unavailable"}), 503
+
+    contents = []
+    for h in history:
+        role = "user" if h["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": h["text"]}]})
+    contents.append({"role": "user", "parts": [{"text": user_msg}]})
+
+    try:
+        from config import GEMINI_MODEL
+        resp = _gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config={"system_instruction": _LANDING_SYSTEM, "temperature": 0.5, "max_output_tokens": 200},
+        )
+        return jsonify({"ok": True, "reply": (resp.text or "").strip()})
+    except Exception:
+        return jsonify({"ok": False, "error": "AI temporarily unavailable"}), 500
+
+
 @misc_bp.post("/api/transcribe")
 @require_app_token
 def whisper_transcribe():

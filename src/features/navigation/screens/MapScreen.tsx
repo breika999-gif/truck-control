@@ -122,6 +122,8 @@ const MapScreen: React.FC = () => {
   const [parkingSource, setParkingSource]     = useState<'gpt' | 'route' | null>(null);
   const [fuelResults, setFuelResults]         = useState<POICard[]>([]);
   const [cameraResults, setCameraResults]     = useState<POICard[]>([]);
+  // Declared before useMapBootstrap so it can be passed as a ref; synced to googleUser below.
+  const _mapBootstrapEmailRef = useRef<{ email?: string } | null>(null);
   const {
     activeStructureWarningKeyRef, backendOnline, buildRoutePOIScanRef,
     dismissedStructureWarningsRef, drivingSecondsRef, isMountedRef,
@@ -131,7 +133,7 @@ const MapScreen: React.FC = () => {
     setNavCongestionGeoJSON, setNavCongestionGeoJSONRef, setNavTrafficAlerts,
     setReachMarker, setReportedCameras, setTunnelWarningRef,
     showReachMarkerForText, stoppedSinceRef,
-  } = useMapBootstrap({ cameraRef, navigating, profile, route, setLightMode });
+  } = useMapBootstrap({ cameraRef, navigating, profile, route, setLightMode, userEmailRef: _mapBootstrapEmailRef });
 
   const {
     navigateTo,
@@ -272,6 +274,8 @@ const MapScreen: React.FC = () => {
     starredPOIs,
     setStarredPOIs,
   } = useSessionBootstrap({ setTachoSummaryRef });
+  // Keep _mapBootstrapEmailRef in sync so camera fetches include the user's email
+  _mapBootstrapEmailRef.current = googleUser;
 
   const {
     voiceMuted, setVoiceMuted, voiceMutedRef, lastSpokenStepRef, speak
