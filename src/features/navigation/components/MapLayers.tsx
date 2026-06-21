@@ -1151,12 +1151,12 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* Route alternatives */}
-      {mapIsLoaded && routeOptions.map((opt, i) => {
+      {/* Route alternatives — hidden while navigating; skip degenerate geometries */}
+      {mapIsLoaded && !route && routeOptions.map((opt, i) => {
         const effectiveSelectedRouteIdx = selectedRouteIdx ?? (routeOptions.length > 0 ? 0 : null);
         const isSelected = effectiveSelectedRouteIdx === i;
-        if (isSelected && route) return null;
         const coords = opt.geometry.coordinates;
+        if (coords.length < 3) return null;
         const midCoord = coords[Math.floor(coords.length / 2)] as [number, number];
         const fastestDuration = routeOptions[0]?.duration ?? 0;
         const diffMin = Math.round((opt.duration - fastestDuration) / 60);
@@ -1168,14 +1168,21 @@ const MapLayers: React.FC<MapLayersProps> = ({
               ? `${diffMin} ${t('routeOptions.minutesShort')}`
               : t('route.equal');
         
+        const hasCongestionShape = (opt.congestion_geojson?.features ?? []).some(
+          (f: any) => (f?.geometry?.coordinates?.length ?? 0) >= 3,
+        );
+        const optShape = hasCongestionShape
+          ? (opt.congestion_geojson as unknown as GeoJSON.FeatureCollection)
+          : ({ type: 'Feature', properties: {}, geometry: opt.geometry } as GeoJSON.Feature);
+
         return (
           <React.Fragment key={`route-opt-${i}`}>
-            <Mapbox.ShapeSource id={`route-opt-src-${i}`} shape={(opt.congestion_geojson as unknown as GeoJSON.FeatureCollection) || { type: 'Feature', properties: {}, geometry: opt.geometry }} tolerance={0} onPress={() => handleSelectRouteOption(i)}>
+            <Mapbox.ShapeSource id={`route-opt-src-${i}`} shape={optShape} tolerance={0} onPress={() => handleSelectRouteOption(i)}>
               <Mapbox.LineLayer
                 id={`route-opt-line-${i}`} slot={isSelected ? 'middle' : 'bottom'}
-                style={{ 
-                  lineColor: opt.congestion_geojson ? ['match', ['get', 'congestion'], 'low', '#0A84FF', 'moderate', '#ffcc00', 'heavy', '#ff4444', 'severe', '#8b0000', '#0A84FF'] : opt.color,
-                  lineWidth: isSelected ? 6 : 4, lineOpacity: isSelected ? 0.92 : 0.45, lineCap: 'round', lineJoin: 'round' 
+                style={{
+                  lineColor: hasCongestionShape ? ['match', ['get', 'congestion'], 'low', '#0A84FF', 'moderate', '#ffcc00', 'heavy', '#ff4444', 'severe', '#8b0000', '#0A84FF'] : opt.color,
+                  lineWidth: isSelected ? 6 : 4, lineOpacity: isSelected ? 0.92 : 0.45, lineCap: 'round', lineJoin: 'round'
                 }}
               />
             </Mapbox.ShapeSource>
