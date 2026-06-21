@@ -121,6 +121,7 @@ src/shared/assets/nav_glow.png
 
 # Aider AI editor artifacts
 .aider*
+*.aider*
 
 # Python scripts / analysis (temp)
 analyze_json.py
