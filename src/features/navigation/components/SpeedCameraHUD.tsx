@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Text, View } from 'react-native';
+import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { styles } from '../screens/MapScreen.styles';
 
@@ -8,6 +8,8 @@ interface SpeedCameraHUDProps {
   distM: number;
   bottomOffset: number;
   flashAnim: Animated.Value;
+  onZoom?: () => void;
+  isZoomed?: boolean;
 }
 
 const SpeedCameraHUD: React.FC<SpeedCameraHUDProps> = ({
@@ -15,6 +17,8 @@ const SpeedCameraHUD: React.FC<SpeedCameraHUDProps> = ({
   distM,
   bottomOffset,
   flashAnim,
+  onZoom,
+  isZoomed,
 }) => {
   const { t } = useTranslation();
 
@@ -43,8 +47,26 @@ const SpeedCameraHUD: React.FC<SpeedCameraHUDProps> = ({
         <Text style={styles.cameraHUDDist}>{distM} {t('units.meterShort')}</Text>
         <Text style={styles.cameraHUDLabel}>{t('camera.label')}</Text>
       </View>
+      {onZoom && (
+        <TouchableOpacity onPress={onZoom} style={hudStyles.zoomBtn} activeOpacity={0.75}>
+          <Text style={hudStyles.zoomBtnText}>{isZoomed ? '⦿' : '🔍'}</Text>
+        </TouchableOpacity>
+      )}
     </Animated.View>
   );
 };
+
+const hudStyles = StyleSheet.create({
+  zoomBtn: {
+    marginLeft: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  zoomBtnText: { fontSize: 18 },
+});
 
 export default React.memo(SpeedCameraHUD);

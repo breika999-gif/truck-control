@@ -118,6 +118,27 @@ if not diff_blocks:
     subprocess.run(["bash", "-c", 'echo "pr_url=" >> $GITHUB_OUTPUT'], check=False)
     sys.exit(0)
 
+# Only stack-trace source files may be changed. This enforces AGENTS.md even if
+# the model suggests touching workflows, native projects, secrets, or config.
+allowed_files = set(affected_files)
+safe_diff_blocks = []
+for diff_text in diff_blocks:
+    changed_paths = {
+        match.replace("\\", "/")
+        for match in re.findall(r'^\+\+\+ b/(.+)$', diff_text, re.MULTILINE)
+        if match != "/dev/null"
+    }
+    if changed_paths and changed_paths.issubset(allowed_files):
+        safe_diff_blocks.append(diff_text)
+    else:
+        print(f"Rejected patch outside affected files: {sorted(changed_paths)}")
+
+diff_blocks = safe_diff_blocks
+if not diff_blocks:
+    print("No policy-compliant diffs found — skipping PR.")
+    subprocess.run(["bash", "-c", 'echo "pr_url=" >> $GITHUB_OUTPUT'], check=False)
+    sys.exit(0)
+
 # ── 6. Create branch and apply patches ───────────────────────────────────────
 branch = f"codex/crash-fix-{ISSUE_NUMBER}"
 
@@ -137,6 +158,7 @@ for diff_text in diff_blocks:
 # ── 7. Commit ─────────────────────────────────────────────────────────────────
 subprocess.run(["npm", "ci"], check=True)
 subprocess.run(["npx", "tsc", "--noEmit"], check=True)
+subprocess.run(["npm", "run", "lint"], check=True)
 subprocess.run(["npm", "test", "--", "--passWithNoTests"], check=True)
 
 subprocess.run(["git", "add", "-A"], check=True)

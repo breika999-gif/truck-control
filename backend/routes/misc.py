@@ -3,6 +3,7 @@ from flask import Blueprint, jsonify, request
 from config import TOMTOM_API_KEY
 from database import get_db
 from utils.helpers import _is_rate_limited, _get_body, now_iso, require_app_token, validate_coords
+from utils.redis_client import get_redis
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
@@ -697,24 +698,42 @@ _LANDING_SYSTEM = (
 
 _LANDING_RATE: dict = {}
 _LANDING_RATE_MAX_IPS = 2000  # prevent unbounded growth
+import threading as _threading
+_landing_rate_lock = _threading.Lock()
+
+
+def _landing_rate_limited(ip: str, limit: int = 10, window_s: int = 60) -> bool:
+    with _landing_rate_lock:
+        try:
+            client = get_redis()
+            if client is not None:
+                key = f"rate:landing:{ip}:{window_s}"
+                count = client.incr(key)
+                if count == 1:
+                    client.expire(key, window_s)
+                return count > limit
+        except Exception:
+            pass
+
+        import time as _t
+        now = _t.time()
+        window = [ts for ts in _LANDING_RATE.get(ip, []) if now - ts < window_s]
+        if len(window) >= limit:
+            return True
+        window.append(now)
+        if len(_LANDING_RATE) > _LANDING_RATE_MAX_IPS:
+            oldest = sorted(_LANDING_RATE, key=lambda k: _LANDING_RATE[k][-1] if _LANDING_RATE[k] else 0)
+            for key in oldest[:200]:
+                _LANDING_RATE.pop(key, None)
+        _LANDING_RATE[ip] = window
+        return False
 
 @misc_bp.post("/api/landing-chat")
 def landing_chat():
-    import time as _t
     # Use remote_addr only — X-Forwarded-For is trivially spoofed
     ip = request.remote_addr or "unknown"
-    now = _t.time()
-    window = _LANDING_RATE.get(ip, [])
-    window = [ts for ts in window if now - ts < 60]
-    if len(window) >= 10:
+    if _landing_rate_limited(ip):
         return jsonify({"ok": False, "error": "Too many requests"}), 429
-    window.append(now)
-    # Evict oldest entries when dict grows too large
-    if len(_LANDING_RATE) > _LANDING_RATE_MAX_IPS:
-        oldest = sorted(_LANDING_RATE, key=lambda k: _LANDING_RATE[k][-1] if _LANDING_RATE[k] else 0)
-        for k in oldest[:200]:
-            _LANDING_RATE.pop(k, None)
-    _LANDING_RATE[ip] = window
 
     body = _get_body()
     user_msg = (body.get("message") or "")[:500].strip()

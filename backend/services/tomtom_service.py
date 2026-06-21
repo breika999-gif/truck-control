@@ -382,7 +382,27 @@ def _tomtom_speed_limits(route: dict) -> list:
         speed_kmh = round(value * 1.609) if unit in ("MPH", "mph") else int(value)
         start, end = sec.get("startPointIndex", 0), sec.get("endPointIndex", total_pts - 1)
         for i in range(start, min(end + 1, total_pts)): speeds[i] = speed_kmh
-    return [{"speed": s, "unit": "km/h"} if s is not None else {"unknown": True} for s in speeds]
+    # Forward-fill: propagate last known limit into unknown segments
+    last = None
+    for i in range(len(speeds)):
+        if speeds[i] is not None:
+            last = speeds[i]
+        elif last is not None:
+            speeds[i] = last
+    # Backward-fill: fill leading Nones using first known value
+    first = next((s for s in speeds if s is not None), None)
+    if first is not None:
+        for i in range(len(speeds)):
+            if speeds[i] is None:
+                speeds[i] = first
+            else:
+                break
+    # EU HGV cap fallback (90 km/h) when TomTom has no data at all
+    HGV_EU_CAP = 90
+    return [
+        {"speed": s, "unit": "km/h"} if s is not None else {"speed": HGV_EU_CAP, "unit": "km/h", "fallback": True}
+        for s in speeds
+    ]
 
 def _tomtom_lane_banner(instr: dict) -> dict | None:
     lg, msg = instr.get("laneGuidance"), instr.get("message", "")

@@ -16,6 +16,7 @@
  */
 
 import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../constants/config';
+import { loadSavedAccount } from './accountManager';
 import type {
   POICard as _POICard,
   BackendHealth,
@@ -65,10 +66,61 @@ interface NearbyParkingResponse { ok?: boolean; spots?: NearbyParkingCard[]; poi
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 45_000; // Gemini 2.0-flash + optional GPT-4o nav forward can take 20-35s
+const jwtTokens = new Map<string, string>();
+const jwtRequests = new Map<string, Promise<string>>();
+
+function requiresJwt(path: string): boolean {
+  return [
+    '/api/pois',
+    '/api/parking/',
+    '/api/poi-along-route',
+    '/api/cameras',
+    '/api/proximity-alerts',
+    '/api/places/',
+    '/api/tacho/',
+    '/api/rest/log',
+    '/api/chat',
+    '/api/gemini/chat',
+  ].some(prefix => path.startsWith(prefix));
+}
+
+async function fetchJwt(userEmail?: string): Promise<string> {
+  const savedEmail = userEmail?.trim() || (await loadSavedAccount())?.email;
+  const email = savedEmail?.trim().toLowerCase();
+  if (!email) throw new Error('Google account required');
+
+  const cached = jwtTokens.get(email);
+  if (cached) return cached;
+
+  const pending = jwtRequests.get(email);
+  if (pending) return pending;
+
+  const request = fetch(`${BACKEND_URL}/api/auth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_email: email, app_token: APP_INTERNAL_TOKEN }),
+  }).then(async response => {
+    if (!response.ok) throw new Error(`Auth HTTP ${response.status}`);
+    const data = await response.json() as { token?: string };
+    if (!data.token) throw new Error('Auth token missing');
+    jwtTokens.set(email, data.token);
+    return data.token;
+  }).finally(() => {
+    jwtRequests.delete(email);
+  });
+
+  jwtRequests.set(email, request);
+  return request;
+}
+
+export async function getBackendAuthHeaders(userEmail?: string): Promise<Record<string, string>> {
+  return { Authorization: `Bearer ${await fetchJwt(userEmail)}` };
+}
 
 async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
+  authEmail?: string,
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -76,7 +128,12 @@ async function apiRequest<T>(
   try {
     const headers = new Headers(options.headers);
     if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    headers.set('X-App-Token', APP_INTERNAL_TOKEN);
+    if (requiresJwt(path)) {
+      const authHeaders = await getBackendAuthHeaders(authEmail === '__retry__' ? undefined : authEmail);
+      Object.entries(authHeaders).forEach(([name, value]) => headers.set(name, value));
+    } else {
+      headers.set('X-App-Token', APP_INTERNAL_TOKEN);
+    }
 
     const res = await fetch(`${BACKEND_URL}${path}`, {
       signal: controller.signal,
@@ -85,6 +142,13 @@ async function apiRequest<T>(
     });
 
     if (!res.ok) {
+      if (res.status === 401 && requiresJwt(path) && authEmail !== '__retry__') {
+        // Token may be expired — clear cache and retry once
+        const email = authEmail?.trim().toLowerCase()
+          || (await loadSavedAccount())?.email?.trim().toLowerCase();
+        if (email) jwtTokens.delete(email);
+        return apiRequest<T>(path, options, '__retry__');
+      }
       const body = await res.json().catch(() => ({}));
       throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
     }
@@ -280,7 +344,7 @@ export async function listPOIs(category?: string, userEmail?: string): Promise<S
     if (category)   params.set('category',   category);
     if (userEmail)  params.set('user_email', userEmail);
     const qs = params.toString() ? `?${params.toString()}` : '';
-    const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(`/api/pois${qs}`);
+    const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(`/api/pois${qs}`, {}, userEmail);
     return res.ok ? res.pois : [];
   } catch {
     return [];
@@ -292,7 +356,7 @@ export async function savePOI(poi: POIPayload): Promise<SavedPOI | null> {
     const res = await apiRequest<{ ok: boolean; poi: SavedPOI }>('/api/pois', {
       method: 'POST',
       body: JSON.stringify(poi),
-    });
+    }, poi.user_email);
     return res.ok ? res.poi : null;
   } catch {
     return null;
@@ -304,7 +368,7 @@ export async function deletePOI(id: number, userEmail?: string): Promise<boolean
     const qs = userEmail ? `?user_email=${encodeURIComponent(userEmail)}` : '';
     const res = await apiRequest<{ ok: boolean }>(`/api/pois/${id}${qs}`, {
       method: 'DELETE',
-    });
+    }, userEmail);
     return res.ok;
   } catch {
     return false;
@@ -377,7 +441,7 @@ export async function logRestStop(data: {
         duration_min: data.durationMin,
         started_at: data.startedAt,
       }),
-    });
+    }, data.userEmail);
   } catch {
     // Rest history is best-effort and must never interrupt tachograph state.
   }
@@ -413,7 +477,7 @@ export async function saveTachoSession(
       method: 'POST',
       body: JSON.stringify(session),
       signal,
-    });
+    }, session.user_email);
     return res.ok ? res : null;
   } catch {
     return null;
@@ -424,7 +488,7 @@ export async function saveTachoSession(
 export async function fetchTachoSummary(userEmail?: string): Promise<TachoSummary | null> {
   try {
     const params = userEmail ? `?user_email=${encodeURIComponent(userEmail)}` : '';
-    const res = await apiRequest<TachoSummary>(`/api/tacho/summary${params}`);
+    const res = await apiRequest<TachoSummary>(`/api/tacho/summary${params}`, {}, userEmail);
     return res.ok ? res : null;
   } catch {
     return null;
@@ -469,7 +533,7 @@ export async function reportCamera(
     const res = await apiRequest<{ ok: boolean }>('/api/cameras/report', {
       method: 'POST',
       body: JSON.stringify({ lat, lng, user_email: userEmail }),
-    });
+    }, userEmail);
     return res.ok;
   } catch {
     return false;
@@ -481,14 +545,11 @@ export async function fetchCamerasAlongRoute(
   signal?: AbortSignal,
 ): Promise<POICard[]> {
   try {
-    const { BACKEND_URL } = await import('../constants/config');
-    const res = await fetch(`${BACKEND_URL}/api/cameras-along-route`, {
+    const data = await apiRequest<{ cameras?: POICard[] }>('/api/cameras-along-route', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
       body: JSON.stringify({ coords }),
       signal,
     });
-    const data = await res.json();
     return (data.cameras ?? []) as POICard[];
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err;
@@ -511,13 +572,11 @@ export async function fetchPOIsAlongRoute(
         coords[coords.length - 1],
       ];
   try {
-    const res = await fetch(`${BACKEND_URL}/api/poi-along-route`, {
+    const data = await apiRequest<{ pois?: POICard[] }>('/api/poi-along-route', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
       body: JSON.stringify({ coords: sampled, category }),
       signal,
     });
-    const data = await res.json();
     return (data.pois ?? []) as POICard[];
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err;

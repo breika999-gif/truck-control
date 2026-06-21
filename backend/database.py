@@ -1,51 +1,132 @@
 import sqlite3
 import os
+import re
 import threading
 import requests
 from datetime import datetime, timezone
-from config import FLASK_DEBUG
+from config import DATABASE_URL
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "truckai.db"))
+USE_POSTGRES = DATABASE_URL.startswith("postgres")
 
 # Ensure DB directory exists (critical for Railway volumes)
 _db_dir = os.path.dirname(DB_PATH)
 if _db_dir and not os.path.exists(_db_dir):
     os.makedirs(_db_dir, exist_ok=True)
 
-class ClosingConnection(sqlite3.Connection):
+class CursorAdapter:
+    def __init__(self, cursor, lastrowid=None):
+        self._cursor = cursor
+        self._lastrowid = lastrowid
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid if self._lastrowid is not None else getattr(self._cursor, "lastrowid", None)
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+
+class DatabaseConnection:
+    def __init__(self):
+        self.is_postgres = USE_POSTGRES
+        if self.is_postgres:
+            import psycopg2
+
+            self._conn = psycopg2.connect(DATABASE_URL)
+        else:
+            self._conn = sqlite3.connect(DB_PATH)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=3000")
+
+    def _cursor(self):
+        if not self.is_postgres:
+            return self._conn.cursor()
+        from psycopg2.extras import RealDictCursor
+
+        return self._conn.cursor(cursor_factory=RealDictCursor)
+
+    def _sql(self, query: str) -> str:
+        return query.replace("?", "%s") if self.is_postgres else query
+
+    def execute(self, query: str, params=()):
+        cursor = self._cursor()
+        sql = self._sql(query)
+        return_id = bool(
+            self.is_postgres
+            and "RETURNING" not in sql.upper()
+            and re.match(r"\s*INSERT\s+INTO\s+(pois|routes)\b", sql, re.IGNORECASE)
+        )
+        if return_id:
+            sql = f"{sql.rstrip().rstrip(';')} RETURNING id"
+        cursor.execute(sql, params)
+        lastrowid = None
+        if return_id:
+            row = cursor.fetchone()
+            lastrowid = row["id"] if row else None
+        return CursorAdapter(cursor, lastrowid)
+
+    def executemany(self, query: str, params):
+        cursor = self._cursor()
+        cursor.executemany(self._sql(query), params)
+        return CursorAdapter(cursor)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        self._conn.close()
+
+    def __enter__(self):
+        return self
+
     def __exit__(self, exc_type, exc_value, traceback):
         try:
-            return super().__exit__(exc_type, exc_value, traceback)
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
         finally:
             self.close()
+        return False
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, factory=ClosingConnection)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=3000")
-    return conn
+
+def get_db() -> DatabaseConnection:
+    return DatabaseConnection()
 
 def init_db() -> None:
+    id_column = "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
     with get_db() as conn:
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS pois (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        {id_column},
                 name      TEXT    NOT NULL,
                 address   TEXT,
                 category  TEXT    NOT NULL DEFAULT 'custom',
                 lat       REAL    NOT NULL,
                 lng       REAL    NOT NULL,
                 notes     TEXT,
+                user_email TEXT   NOT NULL DEFAULT '',
                 created_at TEXT   NOT NULL
             )
             """
         )
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS chat_history (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                id         {id_column},
                 user_email TEXT NOT NULL DEFAULT '',
                 role       TEXT NOT NULL,
                 message    TEXT NOT NULL,
@@ -54,14 +135,15 @@ def init_db() -> None:
             """
         )
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS tacho_sessions (
-                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                id             {id_column},
                 user_email     TEXT    NOT NULL DEFAULT '',
                 date           TEXT    NOT NULL,
                 start_time     TEXT    NOT NULL,
                 end_time       TEXT,
-                driven_seconds INTEGER NOT NULL DEFAULT 0
+                driven_seconds INTEGER NOT NULL DEFAULT 0,
+                type           TEXT    NOT NULL DEFAULT 'driving'
             )
             """
         )
@@ -104,9 +186,9 @@ def init_db() -> None:
             """
         )
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS routes (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                id               {id_column},
                 user_email       TEXT,
                 origin_name      TEXT,
                 destination_name TEXT,
@@ -124,9 +206,9 @@ def init_db() -> None:
             """
         )
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS rest_log (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                id           {id_column},
                 user_email   TEXT,
                 lat          REAL,
                 lng          REAL,
@@ -139,27 +221,22 @@ def init_db() -> None:
         )
         conn.commit()
     
-    # Migration
-    try:
-        with get_db() as db:
-            db.execute("ALTER TABLE pois ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
-            db.commit()
-    except Exception:
-        pass
-    try:
-        with get_db() as db:
-            db.execute("ALTER TABLE tacho_sessions ADD COLUMN type TEXT NOT NULL DEFAULT 'driving'")
-            db.commit()
-    except Exception:
-        pass
-    try:
-        with get_db() as db:
-            db.execute("ALTER TABLE chat_history ADD COLUMN user_email TEXT NOT NULL DEFAULT ''")
-            db.commit()
-    except Exception:
-        pass
+    migrations = (
+        ("pois", "user_email", "TEXT NOT NULL DEFAULT ''"),
+        ("tacho_sessions", "type", "TEXT NOT NULL DEFAULT 'driving'"),
+        ("chat_history", "user_email", "TEXT NOT NULL DEFAULT ''"),
+    )
+    for table, column, definition in migrations:
+        try:
+            with get_db() as db:
+                if USE_POSTGRES:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
+                else:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        except Exception:
+            pass
 
-def row_to_poi(row: sqlite3.Row) -> dict:
+def row_to_poi(row) -> dict:
     return {
         "id":         row["id"],
         "name":       row["name"],
@@ -189,8 +266,9 @@ def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
 
     try:
         insert_pair()
-    except sqlite3.OperationalError as exc:
-        if "no such table" not in str(exc).lower():
+    except Exception as exc:
+        error = str(exc).lower()
+        if "no such table" not in error and "does not exist" not in error:
             raise
         init_db()
         insert_pair()
@@ -235,7 +313,15 @@ def _transparking_cache_refresh() -> None:
         # This prevents a partial/empty cache if the process is interrupted mid-write.
         with get_db() as db:
             db.executemany(
-                "INSERT OR REPLACE INTO transparking_cache (pointid, name, lat, lng, refreshed_at) VALUES (?, ?, ?, ?, ?)",
+                """
+                INSERT INTO transparking_cache (pointid, name, lat, lng, refreshed_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(pointid) DO UPDATE SET
+                    name=excluded.name,
+                    lat=excluded.lat,
+                    lng=excluded.lng,
+                    refreshed_at=excluded.refreshed_at
+                """,
                 rows,
             )
             db.execute("DELETE FROM transparking_cache WHERE refreshed_at != ?", (now,))
@@ -287,6 +373,7 @@ import time as _cache_time
 
 _poi_cache: dict = {}   # key → (result, expires_at)
 _POI_CACHE_TTL = 600    # 10 minutes
+_poi_lock = threading.Lock()
 
 def _poi_cache_key(fn: str, lat: float, lng: float, radius_m: int = 0) -> str:
     return f"{fn}:{round(lat, 2)}:{round(lng, 2)}:{radius_m}"
@@ -299,7 +386,8 @@ def _poi_cache_get(key: str):
     return None
 
 def _poi_cache_set(key: str, result: list) -> None:
-    if len(_poi_cache) >= 200:
-        oldest = min(_poi_cache, key=lambda k: _poi_cache[k][1])
-        _poi_cache.pop(oldest, None)
-    _poi_cache[key] = (result, _cache_time.time() + _POI_CACHE_TTL)
+    with _poi_lock:
+        if len(_poi_cache) >= 200:
+            oldest = min(_poi_cache, key=lambda k: _poi_cache[k][1])
+            _poi_cache.pop(oldest, None)
+        _poi_cache[key] = (result, _cache_time.time() + _POI_CACHE_TTL)

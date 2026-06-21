@@ -15,7 +15,7 @@ interface RouteTimelineProps {
   trafficSegments?: TrafficSegment[];
 }
 
-const PIN_SIZE = 28;
+const PIN_SIZE = 26;
 const PIN_HALF = PIN_SIZE / 2;
 const PIN_TOP_PAD = 10;
 
@@ -133,25 +133,25 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    right: 15,
-    top: '20%',
-    bottom: '30%',
-    width: 40,
+    right: 12,
+    top: '18%',
+    bottom: '47%',
+    width: 32,
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(0,0,0,0.30)',
-    borderRadius: 20,
-    paddingVertical: 10,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    borderRadius: 16,
+    paddingVertical: 8,
     zIndex: 30,
     elevation: 20,
   },
   finishFlag: {
-    fontSize: 16,
+    fontSize: 14,
     zIndex: 3,
   },
   lineTrack: {
     flex: 1,
-    width: 4,
+    width: 3,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 2,
     position: 'relative',
@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   },
   totalLabel: {
     color: 'rgba(255,255,255,0.55)',
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '600',
     textAlign: 'center',
   },

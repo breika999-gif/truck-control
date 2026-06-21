@@ -23,6 +23,8 @@ TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 MAPBOX_PUBLIC_TOKEN = os.getenv("MAPBOX_PUBLIC_TOKEN", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-preview-04-17")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+REDIS_URL = os.getenv("REDIS_URL", "")
 
 # ── Flask Configuration ─────────────────────────────────────────────────────
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5050)))

@@ -71,7 +71,7 @@ export function useMapBootstrap({
     fetchReportedCameras(userEmailRef.current?.email)
       .then(cameras => { if (cameras.length > 0) setReportedCameras(cameras); })
       .catch(() => {});
-  }, [route]);
+  }, [route, userEmailRef]);
 
   useEffect(() => {
     const hour = new Date().getHours();

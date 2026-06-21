@@ -1,4 +1,5 @@
 import { APP_INTERNAL_TOKEN, MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
+import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
 
 export interface GeoPlace {
   id: string;
@@ -89,9 +90,10 @@ export async function suggestPlacesGoogle(
   const params = new URLSearchParams({ q: query.trim(), lat: String(lat), lng: String(lng) });
 
   try {
+    const authHeaders = await getBackendAuthHeaders();
     const res = await fetch(`${BACKEND_URL}/api/places/search?${params}`, {
       signal,
-      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+      headers: authHeaders,
     });
     if (!res.ok) return [];
     const data = await res.json();

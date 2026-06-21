@@ -10,9 +10,10 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus, Se5000RawPacket } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
-import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
+import { BACKEND_URL } from '../../../shared/constants/config';
 import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
 import { loadSavedAccount } from '../../../shared/services/accountManager';
+import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
 import i18n from '../../../i18n';
 
 async function requestBlePermissions(): Promise<boolean> {
@@ -237,9 +238,10 @@ function activityFromCode(activityCode: number): 'driving' | 'rest' | 'work' | '
 
 async function sendToBackend(data: TachoLiveData): Promise<void> {
   const userEmail = await resolveUserEmail();
+  const authHeaders = await getBackendAuthHeaders(userEmail);
   await fetch(`${BACKEND_URL}/api/tacho/live_update`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({
       user_email: userEmail,
       tacho_live_context: {

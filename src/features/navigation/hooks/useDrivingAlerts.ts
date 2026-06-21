@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Animated } from 'react-native';
-import type { MutableRefObject } from 'react';
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import {
   cumulativeRouteDistances,
   haversineMeters,
@@ -194,7 +194,7 @@ export function useDrivingAlerts({
   lanePulseOn,
 }: UseDrivingAlertsArgs) {
   const { playSpeedAlert, playCameraAlert } = useSoundAlerts(voiceMutedRef);
-  const [cameraAlert, setCameraAlert] = useState<{ dist: number; name: string } | null>(null);
+  const [cameraAlert, setCameraAlert] = useState<{ dist: number; name: string; lat: number; lng: number } | null>(null);
   const [overtakingResults, setOvertakingResults] = useState<ProximityAlerts['overtaking']>([]);
   const [urgentParkingResults, setUrgentParkingResults] = useState<POICard[]>([]);
   const [tunnelWarning, setTunnelWarning] = useState<string | null>(null);
@@ -265,7 +265,12 @@ export function useDrivingAlerts({
       .sort((a, b) => a.alongRouteM - b.alongRouteM || a.lateralRouteM - b.lateralRouteM)[0];
 
     if (!nearest || nearest.alongRouteM >= 900) { setCameraAlert(null); return; }
-    setCameraAlert({ dist: Math.max(0, Math.round(nearest.alongRouteM)), name: nearest.name });
+    setCameraAlert({
+      dist: Math.max(0, Math.round(nearest.alongRouteM)),
+      name: nearest.name,
+      lat: nearest.lat as number,
+      lng: nearest.lng as number,
+    });
     const now = Date.now();
     if (now - lastCameraWarnRef.current >= 10_000) {
       lastCameraWarnRef.current = now;
@@ -428,7 +433,7 @@ export function useDrivingAlerts({
 
   return {
     cameraAlert,
-    setCameraAlert,
+    setCameraAlert: setCameraAlert as Dispatch<SetStateAction<{ dist: number; name: string } | null>>,
     overtakingResults,
     setOvertakingResults,
     urgentParkingResults,

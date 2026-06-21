@@ -1,20 +1,19 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify
 from database import get_db
-from utils.helpers import _get_body, now_iso, require_app_token, tacho_live_context, validate_coords
+from utils.auth import require_auth
+from utils.helpers import _get_body, now_iso, tacho_live_context, validate_coords
 from services.tacho_service import _tacho_summary
 
 tacho_bp = Blueprint('tacho', __name__)
 _REST_TYPES = {"break_45min", "daily_9h", "daily_11h", "reduced_9h"}
 
 @tacho_bp.route('/api/tacho/live_update', methods=['POST'])
-@require_app_token
+@require_auth
 def tacho_live_update():
-    global tacho_live_context
     try:
         data = _get_body()
         ctx = data.get('tacho_live_context', {})
-        user_email = (data.get('user_email') or '').strip()
-        tacho_live_context[user_email].update({
+        tacho_live_context.update(g.user_email, {
             'current_activity':      ctx.get('current_activity', 'unknown'),
             'activity_code':         ctx.get('activity_code', -1),
             'driving_time_left_min': ctx.get('driving_time_left_min', 0),
@@ -27,11 +26,10 @@ def tacho_live_update():
         return jsonify({'ok': False, 'error': str(e)}), 400
 
 @tacho_bp.post("/api/tacho/session")
-@require_app_token
+@require_auth
 def tacho_save_session():
     body = _get_body()
-    email = (body.get("user_email") or "").strip()
-    if not email: return jsonify({"ok": False, "error": "user_email required"}), 400
+    email = g.user_email
     secs, stype = int(body.get("driven_seconds") or 0), (body.get("type") or "driving").strip()
     if secs <= 0: return jsonify({"ok": False, "error": "driven_seconds must be > 0"}), 400
     with get_db() as db:
@@ -40,12 +38,12 @@ def tacho_save_session():
     return jsonify({"ok": True, **_tacho_summary(email)})
 
 @tacho_bp.get("/api/tacho/summary")
-@require_app_token
+@require_auth
 def tacho_get_summary():
-    return jsonify({"ok": True, **_tacho_summary((request.args.get("user_email") or "").strip())})
+    return jsonify({"ok": True, **_tacho_summary(g.user_email)})
 
 @tacho_bp.post("/api/rest/log")
-@require_app_token
+@require_auth
 def log_rest_stop():
     body = _get_body()
     lat, lng = validate_coords(body.get("lat"), body.get("lng"))
@@ -74,7 +72,7 @@ def log_rest_stop():
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                (body.get("user_email") or "").strip(),
+                g.user_email,
                 lat, lng, rest_type, duration_min,
                 started_at.strip(),
                 now,

@@ -128,7 +128,6 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
   const isLoaded = useVehicleStore(state => state.isLoaded);
   const setIsLoaded = useVehicleStore(state => state.setIsLoaded);
   const routeDistance = route?.distance;
-  const activeHgvNoOvertaking = proximityAlerts?.activeHgvNoOvertaking === true;
   const tachoRemainingMin = useMemo(() => {
     const liveRemaining = bluetoothTacho?.liveData?.drivingTimeLeftMin;
     if (Number.isFinite(liveRemaining)) return Math.max(0, Math.round(liveRemaining as number));
@@ -294,11 +293,6 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
                 </Text>
                 <Text style={styles.speedUnit}>{t('hud.speedUnit')}</Text>
               </View>
-              {activeHgvNoOvertaking && (
-                <View style={hudStyles.hgvNoOvertakingBadge} pointerEvents="none">
-                  <Image source={ICON_NO_OVERTAKING} style={hudStyles.hgvNoOvertakingImage} />
-                </View>
-              )}
             </View>
             <TouchableOpacity
               style={[
@@ -350,14 +344,26 @@ const NavigationHUD: React.FC<NavigationHUDProps> = memo(({
           
           {!compactOnly && (
             <View style={styles.signColumn}>
-              {speedLimit != null && (
+              {(speedLimit != null || navigating) && (
                 <Animated.View style={[
-                  styles.speedCircle, 
-                  speed > speedLimit && styles.speedCircleExceeded,
+                  styles.speedCircle,
+                  speed > (speedLimit ?? Infinity) && styles.speedCircleExceeded,
                   speedCircleAnimatedStyle,
+                  speedLimit == null && hudStyles.speedCircleUnknown,
                 ]}>
-                  <Text style={[styles.speedCircleNum, speed > speedLimit && hudStyles.speedLimitExceededText]}>{speedLimit}</Text>
+                  <Text style={[
+                    styles.speedCircleNum,
+                    speed > (speedLimit ?? Infinity) && hudStyles.speedLimitExceededText,
+                    speedLimit == null && hudStyles.speedCircleUnknownText,
+                  ]}>
+                    {speedLimit ?? '—'}
+                  </Text>
                 </Animated.View>
+              )}
+              {proximityAlerts?.activeHgvNoOvertaking && (
+                <View style={hudStyles.noOvertakingBadge}>
+                  <Image source={ICON_NO_OVERTAKING} style={hudStyles.noOvertakingIcon} />
+                </View>
               )}
 
               {/* Road Grade Warning (Step D) */}
@@ -664,30 +670,34 @@ const hudStyles = StyleSheet.create({
   speedLimitExceededText: {
     color: '#fff',
   },
+  speedCircleUnknown: {
+    borderColor: '#888',
+    backgroundColor: '#f5f5f5',
+    opacity: 0.7,
+  },
+  speedCircleUnknownText: {
+    color: '#888',
+    fontSize: 18,
+  },
   speedRingWrap: {
     position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  hgvNoOvertakingBadge: {
-    position: 'absolute',
-    right: -38,
-    top: -8,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: '#FFFFFF',
+  noOvertakingBadge: {
+    marginTop: 4,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    borderWidth: 3,
+    borderColor: '#FF3B30',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#FF2D2D',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
-    elevation: 12,
   },
-  hgvNoOvertakingImage: {
-    width: 58,
-    height: 58,
+  noOvertakingIcon: {
+    width: 36,
+    height: 36,
     resizeMode: 'contain',
   },
   loadToggle: {

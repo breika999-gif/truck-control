@@ -18,6 +18,8 @@ from routes.gemini import gemini_bp
 from routes.poi import poi_bp
 from routes.tacho import tacho_bp
 from routes.misc import misc_bp
+from routes.auth import auth_bp
+from routes.sentry_webhook import sentry_webhook_bp
 
 app = Flask(__name__)
 cors_origins = [
@@ -36,6 +38,8 @@ app.register_blueprint(gemini_bp)
 app.register_blueprint(poi_bp)
 app.register_blueprint(tacho_bp)
 app.register_blueprint(misc_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(sentry_webhook_bp)
 
 # Initialize DB schema and background tasks (works with both gunicorn and dev server)
 if os.environ.get("WERKZEUG_RUN_MAIN") != "false":

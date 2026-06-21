@@ -3,27 +3,77 @@ import json
 import math
 import os
 import time
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from functools import wraps
 from hmac import compare_digest
 from flask import jsonify, request
+from utils.redis_client import get_redis
 
 # ── Global State ────────────────────────────────────────────────────────────
 _rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
-tacho_live_context = defaultdict(dict)   # user_email → live data from BLE tachograph
+
+
+class TachoLiveContextStore:
+    def __init__(self):
+        self._fallback = defaultdict(dict)
+        self._lock = threading.Lock()
+
+    def get(self, user_email: str) -> dict:
+        if not user_email:
+            return {}
+        try:
+            client = get_redis()
+            if client is not None:
+                values = client.hgetall(f"tacho:{user_email}")
+                if values:
+                    return {key: json.loads(value) for key, value in values.items()}
+        except Exception:
+            pass
+        return dict(self._fallback.get(user_email) or {})
+
+    def update(self, user_email: str, values: dict) -> None:
+        if not user_email:
+            return
+        try:
+            client = get_redis()
+            if client is not None:
+                key = f"tacho:{user_email}"
+                client.hset(key, mapping={name: json.dumps(value) for name, value in values.items()})
+                client.expire(key, 3600)
+                return
+        except Exception:
+            pass
+        with self._lock:
+            self._fallback[user_email].update(values)
+
+
+tacho_live_context = TachoLiveContextStore()
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _is_rate_limited(limit: int, window_s: int = 60) -> bool:
     """Returns True if current request IP has exceeded `limit` requests."""
     ip = request.remote_addr or "unknown"
+    try:
+        client = get_redis()
+        if client is not None:
+            key = f"rate:{request.endpoint or 'unknown'}:{ip}:{window_s}"
+            count = client.incr(key)
+            if count == 1:
+                client.expire(key, window_s)
+            return count > limit
+    except Exception:
+        pass
+
     now = time.monotonic()
-    timestamps = _rate_data[ip]
-    _rate_data[ip] = [t for t in timestamps if now - t < window_s]
-    if len(_rate_data[ip]) >= limit:
+    key = f"{request.endpoint or 'unknown'}:{ip}"
+    timestamps = _rate_data[key]
+    _rate_data[key] = [t for t in timestamps if now - t < window_s]
+    if len(_rate_data[key]) >= limit:
         return True
-    _rate_data[ip].append(now)
+    _rate_data[key].append(now)
     return False
 
 def _strip_md_fence(s: str) -> str:

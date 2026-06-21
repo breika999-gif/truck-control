@@ -10,9 +10,8 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useTranslation } from 'react-i18next';
-import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
-import type { SavedPOI } from '../../../shared/services/backendApi';
+import { listPOIs, type SavedPOI } from '../../../shared/services/backendApi';
 
 interface Props {
   visible: boolean;
@@ -30,12 +29,8 @@ const POIHistoryModal: React.FC<Props> = ({ visible, onClose, googleUser, onNavi
     if (!visible || !googleUser?.email) { setItems([]); return; }
     let cancelled = false;
     setLoading(true);
-    fetch(`${BACKEND_URL}/api/pois?user_email=${encodeURIComponent(googleUser.email)}`, {
-      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
-    })
-      .then(r => r.ok ? r.json() : { pois: [] })
-      .then(d => {
-        const pois = Array.isArray(d) ? d : Array.isArray(d?.pois) ? d.pois : [];
+    listPOIs(undefined, googleUser.email)
+      .then(pois => {
         if (!cancelled) setItems(pois);
       })
       .catch(() => { if (!cancelled) setItems([]); })

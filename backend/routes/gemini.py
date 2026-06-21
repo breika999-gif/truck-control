@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from flask import Blueprint, jsonify
+from flask import Blueprint, g, jsonify
 from google import genai as _google_genai
 import requests as _requests
 from config import (
@@ -14,6 +14,7 @@ from services.gemini_service import (
 )
 from services.gpt_service import _run_gpt4o_internal, _gpt4o_ready
 from services.tacho_service import _tacho_summary
+from utils.auth import require_auth
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
     _extract_nav_intent, _extract_app_intent, _strip_md_fence,
@@ -93,14 +94,14 @@ def _digest_tacho_log(tacho_log) -> str:
 
 
 @gemini_bp.post("/api/gemini/chat")
-@require_app_token
+@require_auth
 def gemini_chat():
     if _is_rate_limited(limit=30, window_s=60):
         return jsonify({"ok": False, "error": "Твърде много заявки. Изчакай минута."}), 429
     if not _gemini_ready:
         if _gpt4o_ready:
             body = _get_body()
-            user_email = (body.get("user_email") or "").strip()
+            user_email = g.user_email
             result = _run_gpt4o_internal((body.get("message") or "").strip(), body.get("history") or [], body.get("context") or {}, user_email=user_email)
             return jsonify({"ok": True, "reply": result.get("reply", "Разбрах, колега."), "action": result.get("action")})
         return jsonify({"ok": False, "error": "Gemini не е конфигуриран."}), 503
@@ -109,7 +110,8 @@ def gemini_chat():
     user_msg = (body.get("message") or "").strip()
     if not user_msg: return jsonify({"ok": False, "error": "message is required"}), 400
 
-    history, context, user_email = body.get("history") or [], body.get("context") or {}, (body.get("user_email") or "").strip()
+    history, context = body.get("history") or [], body.get("context") or {}
+    user_email = g.user_email
     request_role = (body.get("role") or "").strip()
     reach = maybe_reach_answer(user_msg, context)
     if reach:
@@ -303,4 +305,3 @@ def gemini_validate():
         err = str(e)
         msg = "Невалиден API ключ." if "API_KEY_INVALID" in err else "Квотата е изчерпана." if "429" in err else f"Грешка: {err[:120]}"
         return jsonify({"ok": False, "error": msg}), 400
-

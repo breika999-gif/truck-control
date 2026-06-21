@@ -1,8 +1,9 @@
 import math
 import requests
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
-from utils.helpers import _is_rate_limited, _get_body, now_iso, require_app_token, validate_coords
+from utils.auth import require_auth
+from utils.helpers import _is_rate_limited, _get_body, now_iso, validate_coords
 from services.tomtom_service import _tomtom_along_route
 from services.tomtom_service import _tomtom_search
 from services.poi_service import _tool_find_truck_parking, _tool_find_speed_cameras, _tool_find_overtaking_restrictions, _tool_find_fuel
@@ -195,10 +196,9 @@ def _validated_route_coords(coords):
     return validated
 
 @poi_bp.get("/api/pois")
-@require_app_token
+@require_auth
 def list_pois():
-    email = (request.args.get("user_email") or "").strip()
-    if not email: return jsonify({"error": "user_email required"}), 400
+    email = g.user_email
     cat = request.args.get("category")
     limit = min(max(request.args.get("limit", default=100, type=int) or 100, 1), 500)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
@@ -210,12 +210,11 @@ def list_pois():
     return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
 
 @poi_bp.post("/api/pois")
-@require_app_token
+@require_auth
 def save_poi():
     body = _get_body()
-    name, lat, lng, email = (body.get("name") or "").strip(), body.get("lat"), body.get("lng"), (body.get("user_email") or "").strip()
+    name, lat, lng, email = (body.get("name") or "").strip(), body.get("lat"), body.get("lng"), g.user_email
     if not name or lat is None or lng is None: return jsonify({"ok": False, "error": "name, lat, lng required"}), 400
-    if not email: return jsonify({"ok": False, "error": "user_email required"}), 400
     lat_f, lng_f = validate_coords(lat, lng)
     if lat_f is None:
         return jsonify({"ok": False, "error": "invalid coordinates"}), 400
@@ -226,17 +225,16 @@ def save_poi():
     return jsonify({"ok": True, "poi": row_to_poi(row)}), 201
 
 @poi_bp.delete("/api/pois/<int:poi_id>")
-@require_app_token
+@require_auth
 def delete_poi(poi_id: int):
-    email = (request.args.get("user_email") or _get_body().get("user_email") or "").strip()
-    if not email: return jsonify({"ok": False, "error": "email required"}), 400
+    email = g.user_email
     with get_db() as conn: 
         deleted = conn.execute("DELETE FROM pois WHERE id=? AND user_email=?", (poi_id, email)).rowcount
         conn.commit()
     return jsonify({"ok": deleted > 0})
 
 @poi_bp.get("/api/parking/nearby")
-@require_app_token
+@require_auth
 def nearby_truck_parking():
     if _is_rate_limited(limit=30, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
     try:
@@ -251,7 +249,7 @@ def nearby_truck_parking():
     return jsonify({"ok": True, "spots": spots, "pois": spots})
 
 @poi_bp.post("/api/poi-along-route")
-@require_app_token
+@require_auth
 def poi_along_route_v2():
     data = _get_body()
     coords, category = data.get("coords", []) or [], data.get("category", "truck_stop")
@@ -273,7 +271,7 @@ def poi_along_route_v2():
     return jsonify({"pois": results})
 
 @poi_bp.post("/api/cameras-along-route")
-@require_app_token
+@require_auth
 def cameras_along_route_v2():
     coords = _get_body().get("coords", [])
     if not coords or not isinstance(coords, list) or len(coords) < 2:
@@ -316,7 +314,7 @@ def cameras_along_route_v2():
     return jsonify({"cameras": cameras})
 
 @poi_bp.get("/api/proximity-alerts")
-@require_app_token
+@require_auth
 def proximity_alerts():
     lat, lng = validate_coords(request.args.get("lat"), request.args.get("lng"))
     rad = min(max(request.args.get("radius_m", default=5000, type=int) or 5000, 0), 15000)
@@ -326,10 +324,10 @@ def proximity_alerts():
     return jsonify({"ok": True, "cameras": cams.get("cameras", []), "overtaking": ovt.get("restrictions", []), "nearest_camera_m": cams.get("nearest_m", -1)})
 
 @poi_bp.post("/api/cameras/report")
-@require_app_token
+@require_auth
 def report_camera():
     body = _get_body()
-    lat, lng, email = body.get("lat"), body.get("lng"), body.get("user_email", "")
+    lat, lng, email = body.get("lat"), body.get("lng"), g.user_email
     if lat is None or lng is None: return jsonify({"ok": False, "error": "lat, lng required"}), 400
     lat_f, lng_f = validate_coords(lat, lng)
     if lat_f is None:
@@ -340,7 +338,7 @@ def report_camera():
     return jsonify({"ok": True})
 
 @poi_bp.get("/api/places/search")
-@require_app_token
+@require_auth
 def places_search():
     from services.poi_service import _google_places_fallback
     q = request.args.get("q", "").strip()
