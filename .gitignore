@@ -161,3 +161,4 @@ TruckAI-logcat.bat
 # Local task docs and media
 TASK_*.md
 *.mp4
+TruckExpoAI/
