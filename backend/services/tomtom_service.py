@@ -13,7 +13,7 @@ from utils.helpers import _haversine_m, now_iso
 
 _tomtom_ready = bool(TOMTOM_API_KEY)
 _match_cache: dict = {}
-_MATCH_CACHE_TTL_S = 300
+_MATCH_CACHE_TTL_S = 86400  # 24 h — snapped geometry doesn't change
 
 _TT_MANEUVER_DIR = {
     "TURN_LEFT":        "left",
@@ -223,38 +223,6 @@ def _mapbox_openlr_match(openlr_code: str) -> dict | None:
         print(f"[ROUTING] openlr match failed: {exc}", flush=True)
     return None
 
-def _tomtom_snap_to_roads(geometry: dict, vehicle_type: str = "Truck") -> tuple[dict, bool]:
-    coords = geometry.get("coordinates", [])
-    if not _tomtom_ready or len(coords) < 2:
-        return geometry, False
-    sampled = _sample_coords_for_snap(coords)
-    body = {
-        "points": [
-            {
-                "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": coord},
-                "properties": {},
-            }
-            for coord in sampled
-        ]
-    }
-    params = {
-        "key": TOMTOM_API_KEY,
-        "fields": "{route{type,geometry{type,coordinates}}}",
-        "vehicleType": vehicle_type,
-        "measurementSystem": "metric",
-        "offroadMargin": 20,
-    }
-    try:
-        r = requests.post("https://api.tomtom.com/snapToRoads/1", params=params, json=body, timeout=12)
-        r.raise_for_status()
-        snapped = _flat_route_coords(r.json().get("route", []))
-        if len(snapped) >= 2:
-            return {"type": "LineString", "coordinates": snapped}, True
-    except Exception:
-        pass
-    return geometry, False
-
 def _mapbox_match_geometry(geometry: dict, edge_only_m: int = 0) -> tuple[dict, bool]:
     """Snap TomTom geometry to Mapbox road network using Map Matching API.
     Returns (snapped_geometry, success). Falls back to original on any error.
@@ -334,7 +302,9 @@ def _get_avoidance_waypoints(origin_lat, origin_lng, dest_lng: float, avoid: lis
 def _tomtom_congestion_geojson(route: dict, geometry: dict) -> dict:
     coords = geometry.get("coordinates", [])
     sections = [s for s in route.get("sections", []) if s.get("sectionType") == "TRAFFIC"]
-    if not sections or len(coords) < 2:
+    if len(coords) < 3:
+        return {"type": "FeatureCollection", "features": []}
+    if not sections:
         return {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"congestion": "unknown"}, "geometry": geometry}]}
     _level = {"JAM": "heavy", "ROAD_WORK": "moderate", "ROAD_CLOSURE": "severe"}
     features = []
@@ -343,7 +313,7 @@ def _tomtom_congestion_geojson(route: dict, geometry: dict) -> dict:
         end   = min(sec.get("endPointIndex", start + 1) + 1, len(coords))
         level = _level.get(sec.get("simpleCategory", ""), "low")
         seg   = coords[start:end]
-        if len(seg) >= 2:
+        if len(seg) >= 3:
             features.append({"type": "Feature", "properties": {"congestion": level}, "geometry": {"type": "LineString", "coordinates": seg}})
     if not features: features = [{"type": "Feature", "properties": {"congestion": "low"}, "geometry": geometry}]
     return {"type": "FeatureCollection", "features": features}
