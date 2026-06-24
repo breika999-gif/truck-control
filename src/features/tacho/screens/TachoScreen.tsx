@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   StatusBar,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import type { Device } from 'react-native-ble-plx';
 import { useTranslation } from 'react-i18next';
 import { useTachoBluetooth } from '../hooks/useTachoBluetooth';
 import { colors, spacing, radius, typography } from '../../../shared/constants/theme';
@@ -19,13 +20,46 @@ const TachoScreen: React.FC = () => {
     statusMsg,
     liveData,
     isConnected,
+    lastDevice,
     foundDevices,
     gattDump,
     rawPackets,
     startScan,
+    reconnectLastDevice,
     connectToDevice,
     disconnect,
   } = useTachoBluetooth();
+  const [pendingDevice, setPendingDevice] = useState<Device | null>(null);
+
+  const wizardSteps = useMemo(() => {
+    const hasDevice = Boolean(pendingDevice || lastDevice || foundDevices.length > 0 || isConnected);
+    return [
+      {
+        key: 'scan',
+        label: t('tacho.wizardScan'),
+        active: status === 'scanning',
+        done: hasDevice,
+      },
+      {
+        key: 'pair',
+        label: t('tacho.wizardPair'),
+        active: !!pendingDevice && status !== 'connecting',
+        done: status === 'connecting' || isConnected,
+      },
+      {
+        key: 'connect',
+        label: t('tacho.wizardConnect'),
+        active: status === 'connecting',
+        done: isConnected,
+      },
+      {
+        key: 'live',
+        label: t('tacho.wizardLive'),
+        active: isConnected && !liveData,
+        done: !!liveData,
+      },
+    ];
+  }, [foundDevices.length, isConnected, lastDevice, liveData, pendingDevice, status, t]);
 
   const renderStatus = () => {
     let icon = 'bluetooth-off';
@@ -51,6 +85,68 @@ const TachoScreen: React.FC = () => {
         <View style={styles.statusTextContainer}>
           <Text style={styles.statusLabel}>{t('tacho.connectionStatus')}</Text>
           <Text style={[styles.statusValue, { color }]}>{statusMsg || t('tacho.notConnected')}</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const renderWizard = () => (
+    <View style={styles.wizardCard}>
+      <Text style={styles.wizardTitle}>{t('tacho.wizardTitle')}</Text>
+      <View style={styles.wizardSteps}>
+        {wizardSteps.map((step, index) => {
+          const color = step.done
+            ? colors.success
+            : step.active
+              ? colors.accent
+              : colors.textMuted;
+          return (
+            <View key={step.key} style={styles.wizardStep}>
+              <View style={[styles.wizardDot, { borderColor: color, backgroundColor: step.done ? color : 'transparent' }]}>
+                <Text style={[styles.wizardDotText, { color: step.done ? colors.bg : color }]}>
+                  {step.done ? '✓' : index + 1}
+                </Text>
+              </View>
+              <Text style={[styles.wizardLabel, { color }]} numberOfLines={2}>
+                {step.label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  const renderPairingConfirm = () => {
+    if (!pendingDevice || isConnected) return null;
+    const deviceName = pendingDevice.name ?? pendingDevice.localName ?? t('tacho.unnamedDevice');
+    return (
+      <View style={styles.pairingCard}>
+        <View style={styles.pairingHeader}>
+          <Icon name="cellphone-key" size={24} color={colors.warning} />
+          <Text style={styles.pairingTitle}>{t('tacho.pairingTitle')}</Text>
+        </View>
+        <Text style={styles.pairingDevice}>{deviceName}</Text>
+        <Text style={styles.pairingText}>{t('tacho.pairingInstructions')}</Text>
+        <View style={styles.pairingActions}>
+          <TouchableOpacity
+            style={[styles.smallButton, styles.secondaryButton]}
+            onPress={() => setPendingDevice(null)}
+            disabled={status === 'connecting'}
+          >
+            <Text style={styles.smallButtonText}>{t('common.cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.smallButton, styles.confirmButton]}
+            onPress={() => {
+              connectToDevice(pendingDevice);
+              setPendingDevice(null);
+            }}
+            disabled={status === 'connecting'}
+          >
+            <Icon name="bluetooth-connect" size={18} color={colors.text} />
+            <Text style={styles.smallButtonText}>{t('tacho.pairingConfirmed')}</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
@@ -183,16 +279,36 @@ const TachoScreen: React.FC = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        {renderWizard()}
         {renderStatus()}
         
         {isConnected && renderActivity()}
         {isConnected && renderProgress()}
         {renderWaitingForData()}
 
+        {!isConnected && lastDevice && !pendingDevice && (
+          <TouchableOpacity
+            style={[styles.button, styles.reconnectButton]}
+            onPress={reconnectLastDevice}
+            disabled={status === 'scanning' || status === 'connecting'}
+          >
+            <Icon name="bluetooth-transfer" size={22} color={colors.text} />
+            <View style={styles.reconnectTextWrap}>
+              <Text style={styles.buttonText}>{t('tacho.reconnectLast')}</Text>
+              <Text style={styles.reconnectSub} numberOfLines={1}>{lastDevice.name}</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {renderPairingConfirm()}
+
         {!isConnected ? (
           <TouchableOpacity
             style={[styles.button, styles.connectButton]}
-            onPress={startScan}
+            onPress={() => {
+              setPendingDevice(null);
+              startScan();
+            }}
             disabled={status === 'scanning' || status === 'connecting'}
           >
             <Icon name="bluetooth" size={24} color={colors.text} />
@@ -218,7 +334,7 @@ const TachoScreen: React.FC = () => {
               <TouchableOpacity
                 key={device.id}
                 style={styles.deviceItem}
-                onPress={() => connectToDevice(device)}
+                onPress={() => setPendingDevice(device)}
               >
                 <Icon name="bluetooth" size={18} color={colors.accent} />
                 <View style={styles.deviceInfo}>
@@ -234,8 +350,7 @@ const TachoScreen: React.FC = () => {
         <View style={styles.infoBox}>
           <Icon name="information-outline" size={20} color={colors.textMuted} />
           <Text style={styles.infoText}>
-            VDO DTCO: Settings → Bluetooth → Pairing{'\n'}
-            Stoneridge SE5000: Menu → BT Interface → Activate
+            {t('tacho.pairingHelp')}
           </Text>
         </View>
       </ScrollView>
@@ -277,8 +392,49 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     marginBottom: spacing.md,
   },
+  wizardCard: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  wizardTitle: {
+    ...typography.label,
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    marginBottom: spacing.sm,
+  },
+  wizardSteps: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  wizardStep: {
+    width: '24%',
+    alignItems: 'center',
+  },
+  wizardDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  wizardDotText: {
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  wizardLabel: {
+    ...typography.caption,
+    textAlign: 'center',
+    minHeight: 30,
+  },
   statusTextContainer: {
     marginLeft: spacing.md,
+    flex: 1,
   },
   statusLabel: {
     ...typography.label,
@@ -324,6 +480,62 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     borderRadius: radius.md,
     marginBottom: spacing.lg,
+  },
+  pairingCard: {
+    backgroundColor: colors.bgCard,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  pairingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  pairingTitle: {
+    ...typography.h3,
+    color: colors.warning,
+    marginLeft: spacing.sm,
+  },
+  pairingDevice: {
+    ...typography.body,
+    color: colors.text,
+    fontWeight: '800',
+    marginBottom: spacing.xs,
+  },
+  pairingText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  pairingActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  smallButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    paddingHorizontal: spacing.sm,
+  },
+  secondaryButton: {
+    backgroundColor: colors.bgSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  confirmButton: {
+    backgroundColor: colors.accent,
+  },
+  smallButtonText: {
+    ...typography.label,
+    color: colors.text,
+    marginLeft: 6,
+    textAlign: 'center',
   },
   waitingCard: {
     flexDirection: 'row',
@@ -412,6 +624,21 @@ const styles = StyleSheet.create({
   },
   connectButton: {
     backgroundColor: colors.accent,
+  },
+  reconnectButton: {
+    backgroundColor: colors.bgCard,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  reconnectTextWrap: {
+    marginLeft: spacing.sm,
+    flex: 1,
+    alignItems: 'center',
+  },
+  reconnectSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   disconnectButton: {
     backgroundColor: colors.bgCard,

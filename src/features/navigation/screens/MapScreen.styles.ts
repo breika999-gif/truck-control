@@ -834,7 +834,6 @@ export const styles = StyleSheet.create({
   // GPT-4o FAB (bottom-right) — navigation
   geminiFab: {
     position: 'absolute',
-    right: spacing.md,
     width: 56,
     height: 56,
     borderRadius: radius.full,

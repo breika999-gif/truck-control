@@ -1,5 +1,6 @@
 import type GeoJSON from 'geojson';
-import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
+import { BACKEND_URL } from '../../../shared/constants/config';
+import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
 import i18n from '../../../i18n';
 
 const ROUTE_FETCH_TIMEOUT_MS = 30_000;
@@ -183,9 +184,10 @@ export async function fetchRoute(
   }
 
   try {
+    const authHeaders = await getBackendAuthHeaders();
     const res = await fetch(`${BACKEND_URL}/api/routes/calculate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-App-Token': APP_INTERNAL_TOKEN },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       signal: controller.signal,
       body: JSON.stringify({
         origin,

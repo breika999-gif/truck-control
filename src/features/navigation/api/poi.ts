@@ -1,4 +1,13 @@
-import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../../../shared/constants/config';
+import { BACKEND_URL, APP_INTERNAL_TOKEN } from '../../../shared/constants/config';
+import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
+
+async function _geoAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    return await getBackendAuthHeaders();
+  } catch {
+    return APP_INTERNAL_TOKEN ? { 'X-App-Token': APP_INTERNAL_TOKEN } : {};
+  }
+}
 
 export type POICategory = 'gas_station' | 'parking' | 'rest_area' | 'truck_stop';
 
@@ -51,9 +60,10 @@ export async function searchNearbyPOI(
   });
 
   try {
+    const authHeaders = await _geoAuthHeaders();
     const res = await fetch(
       `${BACKEND_URL}/api/geocode?${params}`,
-      { headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
+      { headers: authHeaders },
     );
     if (!res.ok) return [];
     const data = await res.json();

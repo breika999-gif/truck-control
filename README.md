@@ -86,6 +86,35 @@ You've successfully run and modified your React Native App. :partying_face:
 
 If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
 
+# TruckExpoAI Production Notes
+
+Backend auth uses Google ID tokens from the Android app and issues short-lived JWT access tokens plus refresh tokens.
+
+Required Railway variables:
+
+```sh
+JWT_SECRET=<64 random hex chars>
+GOOGLE_OAUTH_CLIENT_ID=<Google OAuth web client id>
+DATABASE_URL=<Railway Postgres URL>
+REDIS_URL=<Railway Redis URL>
+APP_INTERNAL_TOKEN=<server-to-server cron token only>
+```
+
+Required Android `.env` variable:
+
+```sh
+GOOGLE_WEB_CLIENT_ID=<same Google OAuth web client id>
+```
+
+Recommended Railway Cron jobs:
+
+```sh
+POST /api/internal/cleanup
+POST /api/internal/refresh-parking
+```
+
+Both cron endpoints require `X-App-Token: APP_INTERNAL_TOKEN`. Do not ship `APP_INTERNAL_TOKEN` in the mobile app.
+
 # Learn More
 
 To learn more about React Native, take a look at the following resources:

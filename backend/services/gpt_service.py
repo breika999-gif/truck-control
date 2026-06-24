@@ -1,6 +1,8 @@
 import json
 import os
 import time
+import hashlib
+import threading
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from openai import AzureOpenAI, OpenAI
@@ -13,6 +15,7 @@ from utils.helpers import (
     _strip_md_fence, _extract_location_from_message, _build_voice_desc,
     maybe_reach_answer, _haversine_m,
 )
+from utils.redis_client import get_redis
 from database import _db_save_chat
 from services.tomtom_service import (
     _tool_navigate_to, _tool_suggest_routes, _get_avoidance_waypoints,
@@ -108,7 +111,11 @@ def _chat_completion_create(**kwargs):
 
 # ── Cache ────────────────────────────────────────────────────────────────────
 _gpt_cache: dict[str, tuple[dict, float]] = {}
+_gpt_cache_lock = threading.Lock()
 _GPT_CACHE_TTL = 600
+
+def _gpt_redis_key(key: str) -> str:
+    return "gpt:" + hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 FIND_PARKING_BREAK_TOOL = {
     "type": "function",
@@ -174,16 +181,32 @@ def pick_tools(msg: str) -> list:
     return []  # no tools for general chat
 
 def _gpt_cache_get(key: str) -> dict | None:
-    entry = _gpt_cache.get(key)
-    if entry and time.time() < entry[1]: return entry[0]
-    _gpt_cache.pop(key, None)
+    rc = get_redis()
+    if rc:
+        try:
+            raw = rc.get(_gpt_redis_key(key))
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+    with _gpt_cache_lock:
+        entry = _gpt_cache.get(key)
+        if entry and time.time() < entry[1]: return entry[0]
+        _gpt_cache.pop(key, None)
     return None
 
 def _gpt_cache_set(key: str, result: dict) -> None:
-    if len(_gpt_cache) >= 500:
-        oldest = min(_gpt_cache, key=lambda k: _gpt_cache[k][1])
-        _gpt_cache.pop(oldest, None)
-    _gpt_cache[key] = (result, time.time() + _GPT_CACHE_TTL)
+    rc = get_redis()
+    if rc:
+        try:
+            rc.setex(_gpt_redis_key(key), _GPT_CACHE_TTL, json.dumps(result, default=str))
+        except Exception:
+            pass
+    with _gpt_cache_lock:
+        if len(_gpt_cache) >= 500:
+            oldest = min(_gpt_cache, key=lambda k: _gpt_cache[k][1])
+            _gpt_cache.pop(oldest, None)
+        _gpt_cache[key] = (result, time.time() + _GPT_CACHE_TTL)
 
 # ── Logic ─────────────────────────────────────────────────────────────────────
 

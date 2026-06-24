@@ -1,5 +1,8 @@
 import React, { memo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  Dimensions,
+  PanResponder,
   View,
   Text,
   TouchableOpacity,
@@ -10,6 +13,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
+import type { PanResponderGestureState } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -24,10 +28,140 @@ import { HOS_LIMIT_S, POI_CATEGORIES } from '../utils/mapUtils';
 import type { RouteResult } from '../api/directions';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import type { MapMode, MapLayersConfig } from '../hooks/useMapUIState';
+import { spacing } from '../../../shared/constants/theme';
 import { styles as mapStyles, NEON } from '../screens/MapScreen.styles';
 import { isTablet } from '../../../shared/utils/screen';
 
 const LOGO = require('../../../shared/assets/TruckExpoAi.png');
+const OPTIONS_BUTTON_POS_KEY = '@truckai/options_button_position_v1';
+const OPTIONS_BUTTON_SIZE = 44;
+const OPTIONS_EDGE_PAD = 8;
+const OPTIONS_TOP_LIMIT = 58;
+
+type ButtonOffset = { x: number; y: number };
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function isButtonOffset(value: unknown): value is ButtonOffset {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<ButtonOffset>;
+  return (
+    typeof candidate.x === 'number' &&
+    Number.isFinite(candidate.x) &&
+    typeof candidate.y === 'number' &&
+    Number.isFinite(candidate.y)
+  );
+}
+
+function clampOptionsOffset(offset: ButtonOffset, baseTop: number): ButtonOffset {
+  const { width, height } = Dimensions.get('window');
+  const baseLeft = width - spacing.md - OPTIONS_BUTTON_SIZE;
+  const left = clamp(baseLeft + offset.x, OPTIONS_EDGE_PAD, width - OPTIONS_BUTTON_SIZE - OPTIONS_EDGE_PAD);
+  const top = clamp(baseTop + offset.y, OPTIONS_TOP_LIMIT, height - OPTIONS_BUTTON_SIZE - OPTIONS_EDGE_PAD);
+  return {
+    x: Math.round(left - baseLeft),
+    y: Math.round(top - baseTop),
+  };
+}
+
+function useDraggableOptionsButton(baseTop: number, onTap: () => void) {
+  const [offset, setOffset] = React.useState<ButtonOffset>({ x: 0, y: 0 });
+  const offsetRef = React.useRef(offset);
+  const dragStartRef = React.useRef(offset);
+  const longPressTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragEnabledRef = React.useRef(false);
+  const movedRef = React.useRef(false);
+  const longPressedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    offsetRef.current = offset;
+  }, [offset]);
+
+  React.useEffect(() => {
+    let mounted = true;
+    AsyncStorage.getItem(OPTIONS_BUTTON_POS_KEY)
+      .then(raw => {
+        if (!raw || !mounted) return;
+        const saved = JSON.parse(raw) as unknown;
+        if (isButtonOffset(saved)) {
+          setOffset(clampOptionsOffset(saved, baseTop));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [baseTop]);
+
+  const clearLongPressTimer = React.useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const saveOffset = React.useCallback(async (next: ButtonOffset) => {
+    try {
+      await AsyncStorage.setItem(OPTIONS_BUTTON_POS_KEY, JSON.stringify(next));
+    } catch {
+      // Button position is convenience state; ignore storage failures.
+    }
+  }, []);
+
+  const finishDrag = React.useCallback((persist = false) => {
+    clearLongPressTimer();
+    dragEnabledRef.current = false;
+    movedRef.current = false;
+    longPressedRef.current = false;
+    if (persist) void saveOffset(offsetRef.current);
+  }, [clearLongPressTimer, saveOffset]);
+
+  const panResponder = React.useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      dragStartRef.current = offsetRef.current;
+      movedRef.current = false;
+      longPressedRef.current = false;
+      dragEnabledRef.current = false;
+      clearLongPressTimer();
+      longPressTimerRef.current = setTimeout(() => {
+        longPressedRef.current = true;
+        dragEnabledRef.current = true;
+        dragStartRef.current = offsetRef.current;
+      }, 280);
+    },
+    onPanResponderMove: (_event, gesture: PanResponderGestureState) => {
+      if (!dragEnabledRef.current) {
+        if (Math.abs(gesture.dx) > 12 || Math.abs(gesture.dy) > 12) {
+          clearLongPressTimer();
+          movedRef.current = true;
+        }
+        return;
+      }
+      if (Math.abs(gesture.dx) > 1 || Math.abs(gesture.dy) > 1) movedRef.current = true;
+      const next = clampOptionsOffset({
+        x: dragStartRef.current.x + gesture.dx,
+        y: dragStartRef.current.y + gesture.dy,
+      }, baseTop);
+      offsetRef.current = next;
+      setOffset(next);
+    },
+    onPanResponderRelease: () => {
+      const wasDrag = dragEnabledRef.current && movedRef.current;
+      const wasTap = !longPressedRef.current && !movedRef.current;
+      if (wasTap) onTap();
+      finishDrag(wasDrag);
+    },
+    onPanResponderTerminate: () => finishDrag(dragEnabledRef.current && movedRef.current),
+  }), [baseTop, clearLongPressTimer, finishDrag, onTap]);
+
+  React.useEffect(() => () => clearLongPressTimer(), [clearLongPressTimer]);
+
+  return { offset, panHandlers: panResponder.panHandlers };
+}
 
 interface OptionsPanelProps {
   optionsOpen: boolean;
@@ -153,6 +287,8 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   handlePOISearch,
   sarMode,
   handleSARSearch,
+  googleUser,
+  setShowAccountModal,
   searchTop,
   isSearchingAlongRoute,
   handleSearchAlongRoute,
@@ -209,17 +345,32 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
   const summaryCurrentTime = summaryData?.current_time ?? new Date().toTimeString().slice(0, 5);
   const summaryDrivenMin = summaryData?.total_driven_min ?? summaryData?.driven_today_min ?? null;
   const summaryRemainingMin = summaryData?.remaining_drive_min ?? summaryData?.remaining_today_min ?? null;
+  const toggleOptions = React.useCallback(() => {
+    setOptionsOpen(v => !v);
+  }, [setOptionsOpen]);
+  const optionsButtonDrag = useDraggableOptionsButton(searchTop, toggleOptions);
 
   return (
     <>
       {/* Toggle button on map */}
-      <View style={[mapStyles.optionsContainer, { top: searchTop }]}>
-        <TouchableOpacity
+      <View
+        style={[
+          mapStyles.optionsContainer,
+          {
+            top: searchTop,
+            transform: [
+              { translateX: optionsButtonDrag.offset.x },
+              { translateY: optionsButtonDrag.offset.y },
+            ],
+          },
+        ]}
+      >
+        <View
           style={mapStyles.mapBtn}
-          onPress={() => setOptionsOpen(v => !v)}
+          {...optionsButtonDrag.panHandlers}
         >
           <Icon name={optionsOpen ? 'close' : 'tune-variant'} size={22} color="#FFFFFF" />
-        </TouchableOpacity>
+        </View>
       </View>
 
       {/* Full-screen TomTom-style drawer */}
@@ -235,11 +386,41 @@ const OptionsPanel: React.FC<OptionsPanelProps> = memo(({
             <View style={s.header}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Image source={LOGO} style={{ width: 32, height: 32, borderRadius: 6 }} resizeMode="contain" />
-                <Text style={s.headerTitle}>{t('options.menu')}</Text>
+                <View>
+                  <Text style={s.headerTitle}>{t('options.menu')}</Text>
+                  {googleUser ? (
+                    <Text style={s.headerEmail} numberOfLines={1}>{googleUser.email}</Text>
+                  ) : null}
+                </View>
               </View>
-              <TouchableOpacity onPress={close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                <Icon name="close" size={26} color="#FFFFFF" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {googleUser ? (
+                  <TouchableOpacity
+                    style={s.accountPill}
+                    onPress={() => { close(); setShowAccountModal(true); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <View style={s.accountAvatar}>
+                      <Text style={s.accountAvatarText}>
+                        {googleUser.email.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <Icon name="swap-horizontal" size={14} color="rgba(0,191,255,0.8)" />
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={s.accountPillDisconnected}
+                    onPress={() => { close(); setShowAccountModal(true); }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Icon name="account-circle-outline" size={16} color="rgba(255,255,255,0.5)" />
+                    <Text style={s.accountPillText}>{t('account.connect')}</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={close} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+                  <Icon name="close" size={26} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
             </View>
 
             <ScrollView
@@ -587,6 +768,53 @@ const s = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  headerEmail: {
+    color: 'rgba(0,191,255,0.7)',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 1,
+    maxWidth: 180,
+  },
+  accountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,191,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,191,255,0.25)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  accountPillDisconnected: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  accountPillText: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  accountAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#00BFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountAvatarText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: '900',
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 8 },

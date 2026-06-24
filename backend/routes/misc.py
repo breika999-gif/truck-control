@@ -1,8 +1,9 @@
-import os, json, math, requests, time as _cache_time
-from flask import Blueprint, jsonify, request
-from config import TOMTOM_API_KEY
+import hashlib, os, json, math, re, requests, time as _cache_time
+from flask import Blueprint, g, jsonify, request
+from config import MAPBOX_PUBLIC_TOKEN, TOMTOM_API_KEY
 from database import get_db
 from utils.helpers import _is_rate_limited, _get_body, now_iso, require_app_token, validate_coords
+from utils.auth import require_auth, require_auth_or_app_token
 from utils.redis_client import get_redis
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
@@ -13,25 +14,40 @@ from services.gpt_service import client
 
 misc_bp = Blueprint('misc', __name__)
 
+import threading as _threading
 from collections import OrderedDict
 
 class LRUCache(OrderedDict):
     def __init__(self, maxsize=200):
         self.maxsize = maxsize
+        self._lock = _threading.Lock()
         super().__init__()
     def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
+        with self._lock:
+            value = super().__getitem__(key)
+            self.move_to_end(key)
+            return value
     def __setitem__(self, key, value):
-        if key in self: self.move_to_end(key)
-        super().__setitem__(key, value)
-        if len(self) > self.maxsize: self.popitem(last=False)
+        with self._lock:
+            if super().__contains__(key): self.move_to_end(key)
+            super().__setitem__(key, value)
+            if len(self) > self.maxsize: self.popitem(last=False)
+    def __contains__(self, key):
+        with self._lock:
+            return super().__contains__(key)
 
 _route_cache = LRUCache(maxsize=200)
-_ROUTE_CACHE_TTL = 300
+_ROUTE_CACHE_TTL = 900
 _ROUTE_RESTRICTION_DEADLINE_S = 6.0
 _ROUTE_FAST_OVERPASS_TIMEOUT_S = 4.0
+_GEO_SEARCH_TTL_S = 30 * 86400
+_GEO_PLACE_TTL_S = 180 * 86400
+_NEGATIVE_CACHE_TTL_S = 3600
+_TILEQUERY_CACHE_TTL_S = 30 * 86400
+_TRUCK_BANS_CACHE_TTL_S = 12 * 3600
+
+def _cache_hash_key(prefix: str, value: str) -> str:
+    return f"{prefix}:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 def _search_parking_tomtom(lat: float, lng: float, radius_m: int = 20000) -> list:
     from services.poi_service import _tool_find_truck_parking
@@ -77,6 +93,41 @@ def health():
         "timestamp": now_iso()
     })
 
+@misc_bp.post("/api/internal/cleanup")
+@require_app_token
+def internal_cleanup():
+    """Railway Cron target: POST /api/internal/cleanup every 24h.
+    Deletes chat_history older than 30 days and expired truck_bans_cache rows."""
+    from database import get_db
+    from datetime import date, timedelta
+    cutoff_chat = (date.today() - timedelta(days=30)).isoformat()   # YYYY-MM-DD
+    cutoff_bans = (date.today() - timedelta(days=14)).isoformat()
+    deleted = {"chat_history": 0, "truck_bans_cache": 0}
+    try:
+        with get_db() as conn:
+            r = conn.execute(
+                "DELETE FROM chat_history WHERE created_at < ?",
+                (cutoff_chat,),
+            )
+            deleted["chat_history"] = r.rowcount if hasattr(r, "rowcount") else -1
+            r2 = conn.execute(
+                "DELETE FROM truck_bans_cache WHERE date < ?",
+                (cutoff_bans,),
+            )
+            deleted["truck_bans_cache"] = r2.rowcount if hasattr(r2, "rowcount") else -1
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "deleted": deleted})
+
+@misc_bp.post("/api/internal/refresh-parking")
+@require_app_token
+def internal_refresh_parking():
+    """Railway Cron target: refresh the TransParking cache without daemon threads."""
+    from database import _transparking_cache_refresh
+
+    _transparking_cache_refresh()
+    return jsonify({"ok": True})
+
 @misc_bp.post("/api/elevation")
 def elevation_profile():
     body = _get_body()
@@ -110,7 +161,7 @@ def elevation_profile():
         return jsonify({"ok": True, "elevations": None})
 
 @misc_bp.get("/api/geocode")
-@require_app_token
+@require_auth_or_app_token
 def geocode_proxy():
     query = request.args.get("query", "").strip()
     if not query:
@@ -118,12 +169,10 @@ def geocode_proxy():
     if not TOMTOM_API_KEY:
         return jsonify({"error": "TomTom API key not configured"}), 503
 
-    params = {
-        "key": TOMTOM_API_KEY,
-        "limit": _bounded_int(request.args.get("limit"), 10, 1, 20),
-        "language": "bg-BG",
-    }
+    limit = _bounded_int(request.args.get("limit"), 10, 1, 20)
+    params = {"key": TOMTOM_API_KEY, "limit": limit, "language": "bg-BG"}
     lat, lon = request.args.get("lat"), request.args.get("lon")
+    lat_f = lon_f = None
     if lat or lon:
         lat_f, lon_f = validate_coords(lat, lon)
         if lat_f is None:
@@ -135,30 +184,64 @@ def geocode_proxy():
     if request.args.get("typeahead") == "true":
         params["typeahead"] = "true"
 
+    _lat_r = round(lat_f, 1) if lat_f is not None else 0.0
+    _lng_r = round(lon_f, 1) if lon_f is not None else 0.0
+    _geo_rk = _cache_hash_key("geo:tt", f"{query.lower().strip()}:{_lat_r}:{_lng_r}:{limit}")
+    _geo_ttl = _GEO_SEARCH_TTL_S
+    _geo_rc = get_redis()
+    if _geo_rc:
+        try:
+            _cached = _geo_rc.get(_geo_rk)
+            if _cached:
+                return jsonify(json.loads(_cached))
+        except Exception:
+            pass
+
     try:
         url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query, safe='')}.json"
         resp = requests.get(url, params=params, timeout=8)
-        return jsonify(resp.json()), resp.status_code
+        body = resp.json()
+        if _geo_rc and resp.ok:
+            try:
+                _geo_rc.setex(_geo_rk, _NEGATIVE_CACHE_TTL_S if not body.get("results") else _geo_ttl, json.dumps(body, default=str))
+            except Exception:
+                pass
+        return jsonify(body), resp.status_code
     except requests.RequestException:
         return jsonify({"error": "geocoding unavailable"}), 502
     except ValueError:
         return jsonify({"error": "invalid geocoding response"}), 502
 
 @misc_bp.get("/api/geocode/place")
-@require_app_token
+@require_auth_or_app_token
 def geocode_place_proxy():
     entity_id = request.args.get("entity_id", "").strip()
     if not entity_id:
         return jsonify({"error": "missing entity_id"}), 400
     if not TOMTOM_API_KEY:
         return jsonify({"error": "TomTom API key not configured"}), 503
+    _place_rk = _cache_hash_key("geo:place", entity_id)
+    _place_rc = get_redis()
+    if _place_rc:
+        try:
+            _cached = _place_rc.get(_place_rk)
+            if _cached:
+                return jsonify(json.loads(_cached))
+        except Exception:
+            pass
     try:
         resp = requests.get(
             "https://api.tomtom.com/search/2/place.json",
             params={"entityId": entity_id, "key": TOMTOM_API_KEY, "language": "bg-BG"},
             timeout=8,
         )
-        return jsonify(resp.json()), resp.status_code
+        body = resp.json()
+        if _place_rc and resp.ok and body.get("results"):
+            try:
+                _place_rc.setex(_place_rk, _GEO_PLACE_TTL_S, json.dumps(body, default=str))
+            except Exception:
+                pass
+        return jsonify(body), resp.status_code
     except requests.RequestException:
         return jsonify({"error": "geocoding unavailable"}), 502
     except ValueError:
@@ -184,6 +267,178 @@ _OVERPASS_HEADERS = {
     "User-Agent": "TruckAI/1.0 route-restriction-checker",
     "Accept": "application/json",
 }
+_TRAFFICBAN_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://www.trafficban.com/",
+}
+
+def _collect_lng_lat_pairs(value, out=None):
+    out = out if out is not None else []
+    if (
+        isinstance(value, list)
+        and len(value) >= 2
+        and isinstance(value[0], (int, float))
+        and isinstance(value[1], (int, float))
+        and math.isfinite(value[0])
+        and math.isfinite(value[1])
+    ):
+        out.append([value[0], value[1]])
+        return out
+    if isinstance(value, list):
+        for item in value:
+            _collect_lng_lat_pairs(item, out)
+    return out
+
+def _nearest_coordinate(coords: list, fallback: list) -> list:
+    if not coords:
+        return fallback
+    best_coord = coords[0]
+    best = float("inf")
+    for coord in coords:
+        dx = coord[0] - fallback[0]
+        dy = coord[1] - fallback[1]
+        dist = dx * dx + dy * dy
+        if dist < best:
+            best = dist
+            best_coord = coord
+    return best_coord
+
+@misc_bp.get("/api/tilequery/restrictions")
+@require_auth
+def tilequery_restrictions_proxy():
+    lat, lng = validate_coords(request.args.get("lat"), request.args.get("lng"))
+    if lat is None:
+        return jsonify({"error": "invalid coordinates"}), 400
+    radius_m = _bounded_int(request.args.get("radius"), 400, 1, 5000)
+    none = {
+        "hasTunnel": False,
+        "tunnelDistance": 0,
+        "hasBridge": False,
+        "bridgeDistance": 0,
+        "candidates": [],
+        "rawFeatureCount": 0,
+    }
+    if not MAPBOX_PUBLIC_TOKEN:
+        return jsonify(none)
+
+    cache_key = _cache_hash_key("tile:restr", f"{round(lat, 3)}:{round(lng, 3)}:{radius_m}")
+    cache = get_redis()
+    if cache:
+        try:
+            cached = cache.get(cache_key)
+            if cached:
+                return jsonify(json.loads(cached))
+        except Exception:
+            pass
+
+    try:
+        resp = requests.get(
+            f"https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/tilequery/{lng},{lat}.json",
+            params={
+                "layers": "road",
+                "radius": radius_m,
+                "limit": 25,
+                "geometry": "linestring",
+                "access_token": MAPBOX_PUBLIC_TOKEN,
+            },
+            timeout=5,
+        )
+        if not resp.ok:
+            return jsonify(none), resp.status_code
+        data = resp.json()
+        features = data.get("features") or []
+        candidates = []
+        for feature in features:
+            props = feature.get("properties") or {}
+            structure = props.get("structure")
+            if structure not in ("tunnel", "bridge"):
+                continue
+            coords = _collect_lng_lat_pairs((feature.get("geometry") or {}).get("coordinates"))
+            nearest = _nearest_coordinate(coords, [lng, lat])
+            candidates.append({
+                "kind": "tunnel" if structure == "tunnel" else "bridge",
+                "distance": round(((props.get("tilequery") or {}).get("distance") or 0)),
+                "lng": nearest[0],
+                "lat": nearest[1],
+                "coordinates": coords,
+                "name": props.get("name_bg") or props.get("name"),
+                "roadClass": props.get("class"),
+                "structure": structure,
+                "layer": (props.get("tilequery") or {}).get("layer"),
+                "source": "mapbox-streets-v8",
+            })
+        candidates.sort(key=lambda item: item["distance"])
+        tunnels = [item for item in candidates if item["kind"] == "tunnel"]
+        bridges = [item for item in candidates if item["kind"] == "bridge"]
+        result = {
+            "hasTunnel": bool(tunnels),
+            "tunnelDistance": tunnels[0]["distance"] if tunnels else 0,
+            "hasBridge": bool(bridges),
+            "bridgeDistance": bridges[0]["distance"] if bridges else 0,
+            "candidates": candidates,
+            "rawFeatureCount": len(features),
+        }
+        if cache:
+            try:
+                cache.setex(cache_key, _TILEQUERY_CACHE_TTL_S, json.dumps(result, default=str))
+            except Exception:
+                pass
+        return jsonify(result)
+    except Exception:
+        return jsonify(none)
+
+@misc_bp.get("/api/truck-bans")
+@require_auth
+def truck_bans_proxy():
+    date = (request.args.get("date") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        return jsonify({"ok": False, "error": "invalid date"}), 400
+
+    cache_key = f"truck_bans:{date}"
+    cache = get_redis()
+    if cache:
+        try:
+            cached = cache.get(cache_key)
+            if cached:
+                return jsonify({"ok": True, "bans": json.loads(cached)})
+        except Exception:
+            pass
+
+    try:
+        requests.get("https://www.trafficban.com/", headers=_TRAFFICBAN_HEADERS, timeout=8)
+        js_resp = requests.get(
+            "https://www.trafficban.com/res/js/js.ban.list.for.date.html",
+            headers=_TRAFFICBAN_HEADERS,
+            timeout=8,
+        )
+        match = re.search(r"\?([A-Za-z0-9]{5,15})=", js_resp.text)
+        param_name = match.group(1) if match else "KHcYF42A"
+        key_resp = requests.get(
+            f"https://www.trafficban.com/res/json/json.get.key.html?d={date}",
+            headers=_TRAFFICBAN_HEADERS,
+            timeout=8,
+        )
+        key = (key_resp.json() or {}).get("key")
+        if not key:
+            return jsonify({"ok": False, "error": "session key failed"}), 502
+        bans_resp = requests.get(
+            f"https://www.trafficban.com/res/json/json.ban.list.for.date.html?{param_name}={key}&d={date}",
+            headers=_TRAFFICBAN_HEADERS,
+            timeout=8,
+        )
+        bans = bans_resp.json()
+        if not isinstance(bans, list):
+            return jsonify({"ok": False, "error": "invalid data"}), 502
+        if cache:
+            try:
+                cache.setex(cache_key, _TRUCK_BANS_CACHE_TTL_S, json.dumps(bans, default=str))
+            except Exception:
+                pass
+        return jsonify({"ok": True, "bans": bans})
+    except Exception:
+        return jsonify({"ok": False, "error": "truck bans unavailable"}), 502
 
 def _restriction_query(bbox: str) -> str:
     clauses = []
@@ -305,7 +560,7 @@ def _extract_route_restrictions(geometry: dict, include_status: bool = False, fa
     return results[:80]
 
 @misc_bp.post("/api/check-truck-restrictions")
-@require_app_token
+@require_auth
 def check_truck_restrictions():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"ok": False, "safe": False, "warnings": ["Проверката за ограничения е временно ограничена. Опитайте пак след малко."], "restrictions_checked": False, "error": "Rate limited"}), 429
     body = _get_body()
@@ -476,7 +731,7 @@ def _tomtom_steps(route: dict, total_m: int) -> list:
     return steps
 
 @misc_bp.route("/api/routes/calculate", methods=["POST"])
-@require_app_token
+@require_auth
 def calculate_route():
     if _is_rate_limited(limit=10, window_s=60): return jsonify({"error": "Rate limited"}), 429
     data = request.json or {}
@@ -495,9 +750,21 @@ def calculate_route():
         f"{truck.get('avoidUnpaved')}:{data.get('depart_at')}:vmax=90"
     )
     cache_key = f"route:{o_lat},{o_lng}:{d_lat},{d_lng}:{str(waypoints)}:{truck_key}:opt={data.get('optimize', False)}:restr={include_restrictions}"
-    if cache_key in _route_cache:
-        res, exp = _route_cache[cache_key]
-        if _cache_time.time() < exp: return jsonify(res)
+    _rredis = get_redis()
+    _rk = _cache_hash_key("rc", cache_key)
+    if _rredis:
+        try:
+            _rcached = _rredis.get(_rk)
+            if _rcached:
+                return jsonify(json.loads(_rcached))
+        except Exception:
+            pass
+    try:
+        if cache_key in _route_cache:
+            res, exp = _route_cache[cache_key]
+            if _cache_time.time() < exp: return jsonify(res)
+    except (KeyError, RuntimeError):
+        pass
     all_points = [origin] + waypoints + [destination]
     locations = ":".join(f"{p[1]},{p[0]}" for p in all_points)
     # Base avoid list — low emission zones + unpaved
@@ -602,12 +869,17 @@ def calculate_route():
         restrictions = _extract_route_restrictions(geom, fast=True) if include_restrictions and total_m <= 400000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}
+        if _rredis:
+            try:
+                _rredis.setex(_rk, _ROUTE_CACHE_TTL, json.dumps(final, default=str))
+            except Exception:
+                pass
         _route_cache[cache_key] = (final, _cache_time.time() + _ROUTE_CACHE_TTL)
         return jsonify(final)
     except Exception as e: return jsonify({"error": str(e)}), 500
 
 @misc_bp.post("/api/routes/start")
-@require_app_token
+@require_auth
 def start_route_log():
     data = _get_body()
     origin_lat, origin_lng = validate_coords(data.get("origin_lat"), data.get("origin_lng"))
@@ -650,7 +922,7 @@ def start_route_log():
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
             """,
             (
-                (data.get("user_email") or "").strip(),
+                g.user_email,
                 (data.get("origin_name") or "").strip(),
                 (data.get("destination_name") or "").strip(),
                 origin_lat, origin_lng, dest_lat, dest_lng,
@@ -662,7 +934,7 @@ def start_route_log():
     return jsonify({"ok": True, "route_id": cursor.lastrowid}), 201
 
 @misc_bp.post("/api/routes/complete")
-@require_app_token
+@require_auth
 def complete_route_log():
     try:
         route_id = int(_get_body().get("route_id"))
@@ -670,8 +942,8 @@ def complete_route_log():
         return jsonify({"ok": False, "error": "invalid route_id"}), 400
     with get_db() as conn:
         updated = conn.execute(
-            "UPDATE routes SET completed_at=? WHERE id=? AND completed_at IS NULL",
-            (now_iso(), route_id),
+            "UPDATE routes SET completed_at=? WHERE id=? AND user_email=? AND completed_at IS NULL",
+            (now_iso(), route_id, g.user_email),
         ).rowcount
         conn.commit()
     return jsonify({"ok": updated > 0})
@@ -772,7 +1044,7 @@ def landing_chat():
 
 
 @misc_bp.post("/api/transcribe")
-@require_app_token
+@require_auth
 def whisper_transcribe():
     if _is_rate_limited(limit=5, window_s=60): return jsonify({"error": "Rate limited"}), 429
     audio_file = request.files.get("audio")

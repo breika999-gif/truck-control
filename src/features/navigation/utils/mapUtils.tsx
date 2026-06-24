@@ -469,28 +469,43 @@ export const StableCamera = React.memo(
     const nativeCameraRef = React.useRef<any>(null);
     const speedKmh = speed ?? 0;
     const isCourseTracking = speedKmh >= 1;
+
+    const clamp = (val: number, min: number, max: number) => Math.max(min, Math.min(max, val));
+    const lerp = (minVal: number, maxVal: number, t: number) => minVal + (maxVal - minVal) * clamp(t, 0, 1);
+    const inverseLerp = (minVal: number, maxVal: number, val: number) => clamp((val - minVal) / (maxVal - minVal), 0, 1);
+
     const followZoomLevel = (() => {
-      // Intersection zoom — aggressive zoom near turns (city feel)
-      if (distToTurn != null && distToTurn < 80)  return 18.0;
-      if (distToTurn != null && distToTurn < 200) return 17.5;
-      if (distToTurn != null && distToTurn < 400) return 17.0;
-      // Highway bird's eye — zoom out at high speed
-      if (speedKmh > 100) return 14.5;
-      if (speedKmh > 80)  return 15.0;
-      if (speedKmh > 60)  return 15.5;
-      if (speedKmh > 30)  return 16.0;
-      return 16.2;
+      // 1. Base Zoom based on speed (continuous from 16.2 at 30km/h down to 14.5 at 100km/h)
+      const speedT = inverseLerp(30, 100, speedKmh);
+      const baseZoom = lerp(16.2, 14.5, speedT);
+
+      // 2. Intersection Zoom (overrides base zoom near turns)
+      if (distToTurn != null && distToTurn < 400) {
+        const turnT = 1 - inverseLerp(80, 400, distToTurn);
+        return lerp(baseZoom, 18.0, turnT);
+      }
+      return baseZoom;
     })();
+
     const followPitch = (() => {
-      if (!navigating) return Math.max(0, Math.min(idlePitch, 60));
-      // Near turn: increase pitch for 3D city feel
-      if (distToTurn != null && distToTurn < 300) return 62;
-      // Highway: flatten for bird's eye
-      if (speedKmh > 80) return 40;
-      if (speedKmh > 40) return 55;
-      if (speedKmh > 6)  return 50;
-      if (speedKmh > 3)  return ((speedKmh - 3) / 3) * 50;
-      return 0;
+      if (!navigating) return clamp(idlePitch, 0, 60);
+      
+      // 1. Base Pitch based on speed
+      let basePitch = 0;
+      if (speedKmh <= 6) {
+        basePitch = lerp(0, 50, inverseLerp(0, 6, speedKmh));
+      } else if (speedKmh <= 40) {
+        basePitch = lerp(50, 55, inverseLerp(6, 40, speedKmh));
+      } else {
+        basePitch = lerp(55, 40, inverseLerp(40, 80, speedKmh));
+      }
+
+      // 2. Intersection Pitch (tilt up to 62 near turns for 3D city feel)
+      if (distToTurn != null && distToTurn < 300) {
+        const turnT = 1 - inverseLerp(50, 300, distToTurn);
+        return lerp(basePitch, 62, turnT);
+      }
+      return basePitch;
     })();
 
     React.useEffect(() => {

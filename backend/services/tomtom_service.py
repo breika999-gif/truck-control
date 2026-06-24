@@ -4,16 +4,23 @@ import json
 import time
 import math
 import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from config import (
     TOMTOM_API_KEY, MAPBOX_PUBLIC_TOKEN, _BUCHAREST_WP, _CLUJ_WP, _BUDAPEST_WP,
     _BELGRADE_WP, _ZAGREB_WP, _SOFIA_BYPASS
 )
 from utils.helpers import _haversine_m, now_iso
+from utils.redis_client import get_redis
 
 _tomtom_ready = bool(TOMTOM_API_KEY)
 _match_cache: dict = {}
-_MATCH_CACHE_TTL_S = 86400  # 24 h — snapped geometry doesn't change
+_match_cache_lock = threading.Lock()
+_MATCH_MEMORY_MAX = 500
+_MATCH_CACHE_TTL_S = 180 * 86400  # snapped geometry is stable enough to reuse long-term
+_MATCH_CACHE_PREFIX = "route_match:"
+_SEARCH_CACHE_TTL_S = 30 * 86400
+_NEGATIVE_CACHE_TTL_S = 3600
 
 _TT_MANEUVER_DIR = {
     "TURN_LEFT":        "left",
@@ -90,19 +97,51 @@ def _match_cache_key(coords: list, edge_only_m: int = 0) -> str:
 def _match_cache_get(key: str):
     if not key:
         return None
-    cached = _match_cache.get(key)
-    if not cached:
-        return None
-    ts, value = cached
-    if time.time() - ts > _MATCH_CACHE_TTL_S:
-        _match_cache.pop(key, None)
-        return None
-    print(f"[ROUTING] mapbox match cache hit key={key[:8]}", flush=True)
-    return value
+    with _match_cache_lock:
+        cached = _match_cache.get(key)
+        if cached:
+            ts, value = cached
+            if time.time() - ts <= _MATCH_CACHE_TTL_S:
+                print(f"[ROUTING] mapbox match memory cache hit key={key[:8]}", flush=True)
+                return value
+            _match_cache.pop(key, None)
+
+    try:
+        client = get_redis()
+        if client is not None:
+            raw = client.get(f"{_MATCH_CACHE_PREFIX}{key}")
+            if raw:
+                payload = json.loads(raw)
+                value = (payload["geometry"], bool(payload["success"]))
+                with _match_cache_lock:
+                    if len(_match_cache) >= _MATCH_MEMORY_MAX:
+                        oldest = min(_match_cache, key=lambda k: _match_cache[k][0])
+                        _match_cache.pop(oldest, None)
+                    _match_cache[key] = (time.time(), value)
+                print(f"[ROUTING] mapbox match redis cache hit key={key[:8]}", flush=True)
+                return value
+    except Exception:
+        pass
+
+    return None
 
 def _match_cache_set(key: str, value):
     if key:
-        _match_cache[key] = (time.time(), value)
+        with _match_cache_lock:
+            if len(_match_cache) >= _MATCH_MEMORY_MAX:
+                oldest = min(_match_cache, key=lambda k: _match_cache[k][0])
+                _match_cache.pop(oldest, None)
+            _match_cache[key] = (time.time(), value)
+        try:
+            client = get_redis()
+            if client is not None:
+                client.setex(
+                    f"{_MATCH_CACHE_PREFIX}{key}",
+                    _MATCH_CACHE_TTL_S,
+                    json.dumps({"geometry": value[0], "success": bool(value[1])}),
+                )
+        except Exception:
+            pass
 
 def _split_edge_segments(coords: list, edge_m: int) -> tuple[list, list, list]:
     if len(coords) < 2 or edge_m <= 0:
@@ -201,6 +240,10 @@ def _find_openlr_code(payload) -> str | None:
 def _mapbox_openlr_match(openlr_code: str) -> dict | None:
     if not MAPBOX_PUBLIC_TOKEN or not openlr_code:
         return None
+    cache_key = "openlr:" + hashlib.sha1(openlr_code.encode("utf-8")).hexdigest()
+    cached = _match_cache_get(cache_key)
+    if cached is not None:
+        return cached[0]
     try:
         r = requests.get(
             f"https://api.mapbox.com/matching/v5/mapbox/driving/{requests.utils.quote(openlr_code, safe='')}",
@@ -218,6 +261,7 @@ def _mapbox_openlr_match(openlr_code: str) -> dict | None:
         if data.get("code") == "Ok" and data.get("matchings"):
             geometry = data["matchings"][0].get("geometry")
             if geometry and len(geometry.get("coordinates", [])) >= 2:
+                _match_cache_set(cache_key, (geometry, True))
                 return geometry
     except Exception as exc:
         print(f"[ROUTING] openlr match failed: {exc}", flush=True)
@@ -268,6 +312,17 @@ def _mapbox_match_geometry(geometry: dict, edge_only_m: int = 0) -> tuple[dict, 
 
 def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
     if not _tomtom_ready: return []
+    _lat_r = round(float(lat or 0), 1)
+    _lng_r = round(float(lng or 0), 1)
+    _rk = "geo:tts:" + hashlib.sha256(f"{query.lower().strip()}:{_lat_r}:{_lng_r}:{limit}".encode("utf-8")).hexdigest()
+    _rc = get_redis()
+    if _rc:
+        try:
+            raw = _rc.get(_rk)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
     try:
         url = f"https://api.tomtom.com/search/2/search/{requests.utils.quote(query)}.json"
         params = {"key": TOMTOM_API_KEY, "limit": limit}
@@ -284,6 +339,11 @@ def _tomtom_search(query: str, lat: float, lng: float, limit: int = 6) -> list:
             if item_lat is None: continue
             name = (item.get("poi") or {}).get("name") or item.get("address", {}).get("freeformAddress", "")
             results.append({"name": name, "address": item.get("address", {}).get("freeformAddress", ""), "lat": item_lat, "lng": item_lng, "distance_m": round(_haversine_m(lat, lng, item_lat, item_lng)) if lat else 0})
+        if _rc:
+            try:
+                _rc.setex(_rk, _NEGATIVE_CACHE_TTL_S if not results else _SEARCH_CACHE_TTL_S, json.dumps(results, default=str))
+            except Exception:
+                pass
         return results
     except Exception: return []
 

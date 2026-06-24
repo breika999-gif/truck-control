@@ -13,6 +13,8 @@ from utils.redis_client import get_redis
 
 # ── Global State ────────────────────────────────────────────────────────────
 _rate_data: dict = defaultdict(list)  # ip → [timestamp, ...]
+_rate_lock = threading.Lock()
+_RATE_MAX_KEYS = 5000
 
 
 class TachoLiveContextStore:
@@ -67,14 +69,19 @@ def _is_rate_limited(limit: int, window_s: int = 60) -> bool:
     except Exception:
         pass
 
-    now = time.monotonic()
-    key = f"{request.endpoint or 'unknown'}:{ip}"
-    timestamps = _rate_data[key]
-    _rate_data[key] = [t for t in timestamps if now - t < window_s]
-    if len(_rate_data[key]) >= limit:
-        return True
-    _rate_data[key].append(now)
-    return False
+    with _rate_lock:
+        now = time.monotonic()
+        key = f"{request.endpoint or 'unknown'}:{ip}"
+        timestamps = _rate_data[key]
+        _rate_data[key] = [t for t in timestamps if now - t < window_s]
+        if len(_rate_data[key]) >= limit:
+            return True
+        _rate_data[key].append(now)
+        if len(_rate_data) > _RATE_MAX_KEYS:
+            oldest = sorted(_rate_data, key=lambda k: _rate_data[k][-1] if _rate_data[k] else 0)
+            for old_key in oldest[:500]:
+                _rate_data.pop(old_key, None)
+        return False
 
 def _strip_md_fence(s: str) -> str:
     """Remove ```json ... ``` or ``` ... ``` markdown code fences."""

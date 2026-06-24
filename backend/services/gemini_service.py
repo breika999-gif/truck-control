@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 from collections import OrderedDict
 from google import genai as _google_genai
 from config import (
@@ -16,15 +17,21 @@ except Exception:
 class _LRUCache(OrderedDict):
     def __init__(self, maxsize=50):
         self.maxsize = maxsize
+        self._lock = threading.Lock()
         super().__init__()
     def __getitem__(self, key):
-        value = super().__getitem__(key)
-        self.move_to_end(key)
-        return value
+        with self._lock:
+            value = super().__getitem__(key)
+            self.move_to_end(key)
+            return value
     def __setitem__(self, key, value):
-        if key in self: self.move_to_end(key)
-        super().__setitem__(key, value)
-        if len(self) > self.maxsize: self.popitem(last=False)
+        with self._lock:
+            if super().__contains__(key): self.move_to_end(key)
+            super().__setitem__(key, value)
+            if len(self) > self.maxsize: self.popitem(last=False)
+    def __contains__(self, key):
+        with self._lock:
+            return super().__contains__(key)
 
 _personal_gemini_clients = _LRUCache(maxsize=50)
 

@@ -1,6 +1,8 @@
 import os
 import re
 import json
+import threading
+from utils.redis_client import get_redis
 from flask import Blueprint, g, jsonify
 from google import genai as _google_genai
 import requests as _requests
@@ -18,12 +20,87 @@ from utils.auth import require_auth
 from utils.helpers import (
     _is_rate_limited, _get_body, _build_tacho_context_block,
     _extract_nav_intent, _extract_app_intent, _strip_md_fence,
-    maybe_reach_answer, require_app_token,
+    maybe_reach_answer,
 )
 from database import _db_save_chat
 
 _WEATHER_CACHE: dict[str, tuple[float, str]] = {}  # key → (expires_ts, result)
+_WEATHER_LOCK = threading.Lock()
 _WEATHER_TTL_S = 600  # 10 min
+_WEATHER_MEMORY_MAX = 500
+
+# ── Rolling chat summary ───────────────────────────────────────────────────────
+import hashlib as _hs
+_SUMMARY_REDIS_TTL = 7 * 86400   # 7 days
+_SUMMARY_TRIGGER   = 10          # summarise when DB has >10 messages
+
+def _sum_key(user_email: str) -> str:
+    return "chat:sum:" + _hs.sha256(user_email.encode()).hexdigest()[:20]
+
+def _load_server_history(user_email: str, keep: int = 8) -> list:
+    from database import get_db
+    try:
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT role, message FROM chat_history WHERE user_email = ? ORDER BY created_at DESC LIMIT ?",
+                (user_email, keep),
+            ).fetchall()
+        return [{"role": r["role"], "text": r["message"]} for r in reversed(rows)]
+    except Exception:
+        return []
+
+def _load_summary(user_email: str) -> str | None:
+    rc = get_redis()
+    if not rc:
+        return None
+    try:
+        val = rc.get(_sum_key(user_email))
+        return val.decode("utf-8") if val else None
+    except Exception:
+        return None
+
+def _update_summary_bg(user_email: str) -> None:
+    from database import get_db
+    try:
+        with get_db() as db:
+            count_row = db.execute(
+                "SELECT COUNT(*) as n FROM chat_history WHERE user_email = ?",
+                (user_email,),
+            ).fetchone()
+            total = count_row["n"] if count_row else 0
+        if total <= _SUMMARY_TRIGGER:
+            return
+        older_limit = total - 4        # keep last 4 raw, summarise the rest
+        with get_db() as db:
+            rows = db.execute(
+                "SELECT role, message FROM chat_history WHERE user_email = ? ORDER BY created_at ASC LIMIT ?",
+                (user_email, older_limit),
+            ).fetchall()
+        if not rows:
+            return
+        old_text = "\n".join(
+            f"{'Шофьор' if r['role'] == 'user' else 'AI'}: {r['message'][:200]}"
+            for r in rows
+        )
+        prompt = (
+            "Summarize this truck-driver AI conversation in 2-3 sentences in Bulgarian. "
+            "Focus on routes, restrictions, problems or preferences mentioned:\n\n"
+            + old_text[:2000]
+        )
+        if not _gemini_ready:
+            return
+        resp = _gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            config={"max_output_tokens": 150, "temperature": 0.3},
+        )
+        summary = (resp.text or "").strip()
+        if summary:
+            rc = get_redis()
+            if rc:
+                rc.setex(_sum_key(user_email), _SUMMARY_REDIS_TTL, summary)
+    except Exception:
+        pass
 
 _TACHO_HINTS = [
     "тахограф", "остава", "стигам", "стигна", "докъде", "до къде",
@@ -40,9 +117,18 @@ def _fetch_weather(lat, lng):
     if not api_key:
         return ""
     cache_key = f"{round(float(lat), 2)},{round(float(lng), 2)}"
-    cached = _WEATHER_CACHE.get(cache_key)
-    if cached and _time.time() < cached[0]:
-        return cached[1]
+    rc = get_redis()
+    if rc:
+        try:
+            cached_r = rc.get(f"weather:{cache_key}")
+            if cached_r:
+                return cached_r
+        except Exception:
+            pass
+    with _WEATHER_LOCK:
+        cached = _WEATHER_CACHE.get(cache_key)
+        if cached and _time.time() < cached[0]:
+            return cached[1]
     try:
         r = _requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
@@ -56,7 +142,16 @@ def _fetch_weather(lat, lng):
         temp = round(d["main"]["temp"])
         wind = round(d["wind"]["speed"] * 3.6)
         result = f" [WEATHER_AT_DEST: {desc}, {temp}°C, wind {wind}km/h]"
-        _WEATHER_CACHE[cache_key] = (_time.time() + _WEATHER_TTL_S, result)
+        if rc:
+            try:
+                rc.setex(f"weather:{cache_key}", _WEATHER_TTL_S, result)
+            except Exception:
+                pass
+        with _WEATHER_LOCK:
+            if len(_WEATHER_CACHE) >= _WEATHER_MEMORY_MAX:
+                oldest = min(_WEATHER_CACHE, key=lambda k: _WEATHER_CACHE[k][0])
+                _WEATHER_CACHE.pop(oldest, None)
+            _WEATHER_CACHE[cache_key] = (_time.time() + _WEATHER_TTL_S, result)
         return result
     except Exception:
         return ""
@@ -110,13 +205,17 @@ def gemini_chat():
     user_msg = (body.get("message") or "").strip()
     if not user_msg: return jsonify({"ok": False, "error": "message is required"}), 400
 
-    history, context = body.get("history") or [], body.get("context") or {}
+    context = body.get("context") or {}
     user_email = g.user_email
     request_role = (body.get("role") or "").strip()
     reach = maybe_reach_answer(user_msg, context)
     if reach:
         _db_save_chat(user_msg, reach, user_email=user_email)
         return jsonify({"ok": True, "reply": reach, "action": None, "app_intent": None, "remember": []})
+
+    # Server-side history: load last 8 messages from DB + rolling summary of older ones
+    server_history = _load_server_history(user_email, keep=8)
+    summary = _load_summary(user_email)
 
     is_simple = is_simple_message(user_msg)
     intent = "tacho" if request_role == "system_summary" else "general" if is_simple else classify_intent(user_msg)
@@ -128,7 +227,7 @@ def gemini_chat():
     if intent == "nav" and _gpt4o_ready:
         gpt_context = dict(context or {})
         gpt_context["last_message"] = user_msg
-        gpt_res = _run_gpt4o_internal(user_msg, [], gpt_context, user_email=user_email)
+        gpt_res = _run_gpt4o_internal(user_msg, server_history, gpt_context, user_email=user_email)
         if not gpt_res.get("ok"):
             code = 503 if "конфигуриран" in gpt_res.get("error", "") else 500
             return jsonify(gpt_res), code
@@ -147,7 +246,11 @@ def gemini_chat():
             # No history, no context — just the message itself
             contents.append({"role": "user", "parts": [{"text": user_msg}]})
         else:
-            for h in history[-6:]:
+            # Prepend rolling summary of older messages as a system note
+            if summary:
+                contents.append({"role": "user", "parts": [{"text": f"[Резюме на предишен разговор: {summary}]"}]})
+                contents.append({"role": "model", "parts": [{"text": "Разбрах контекста."}]})
+            for h in server_history:
                 role = "user" if h.get("role") == "user" else "model"
                 contents.append({"role": role, "parts": [{"text": h.get("text", "")}]})
 
@@ -290,10 +393,11 @@ def gemini_chat():
         except: pass
 
     _db_save_chat(user_msg, clean_reply, user_email=user_email)
+    threading.Thread(target=_update_summary_bg, args=(user_email,), daemon=True).start()
     return jsonify({"ok": True, "reply": clean_reply, "action": action, "app_intent": app_intent, "remember": [{'category': c, 'text': t.strip()} for c, t in rem_tags]})
 
 @gemini_bp.post("/api/gemini/validate")
-@require_app_token
+@require_auth
 def gemini_validate():
     body = _get_body()
     api_key = (body.get("api_key") or "").strip()

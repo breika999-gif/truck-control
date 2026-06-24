@@ -99,14 +99,13 @@ export class TachoBleService {
         const name = device.name ?? device.localName ?? '';
         if (!name) return; // skip unnamed devices
 
-        // Known VDO/tachograph name patterns — auto-connect if matched
+        // Known tachograph names are surfaced first, but the screen decides
+        // when to connect so the driver can confirm Android's pairing code.
         const isKnownTacho = TACHO_NAME_PATTERNS.some(p =>
           name.toUpperCase().includes(p.toUpperCase()),
         );
 
         if (isKnownTacho) {
-          this.manager.stopDeviceScan();
-          if (this.scanTimeout) clearTimeout(this.scanTimeout);
           onDeviceFound(device);
           return;
         }
@@ -114,8 +113,7 @@ export class TachoBleService {
         // Collect all named devices so TachoScreen can show a picker
         if (!this._foundDevices.find(d => d.id === device.id)) {
           this._foundDevices.push(device);
-          // Re-emit the first found device to trigger UI update (list mode)
-          onDeviceFound(this._foundDevices[0]);
+          onDeviceFound(device);
         }
       },
     );
@@ -157,30 +155,58 @@ export class TachoBleService {
       onStatus('connecting', i18n.t('tacho.connectingDevice', { device: deviceName }));
 
       const connected = await device.connect({ timeout: 10000 });
-      this.device = connected;
-
-      await connected.discoverAllServicesAndCharacteristics();
-      const gattSummary = await this._describeGatt(connected);
-      onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
-      this._startNoLiveDataTimer();
-
-      const hasVdoLiveService = await this._hasService(connected, VDO_BLE_CONFIG.SERVICE_UUID);
-      if (hasVdoLiveService) {
-        this._subscribeActivity(connected);
-        this._subscribeHosTimes(connected);
-        this._subscribeSpeed(connected);
-        this._readVdoLiveOnce(connected);
-      }
-
-      if (isSE5000Device(deviceName)) {
-        // Stoneridge SE5000 may expose standard ITS plus proprietary channels.
-        this._subscribeSE5000Raw(connected);
-      } else if (!hasVdoLiveService) {
-        this._reportConnectedDiagnostic(i18n.t('tacho.waitingLiveDataStatus'));
-      }
+      await this._establishLiveSession(connected, deviceName, onStatus);
 
     } catch (err: any) {
       onStatus('error', i18n.t('tacho.connectionFailed', { error: err?.message ?? err }));
+    }
+  }
+
+  async connectToDeviceId(
+    deviceId: string,
+    onData: (data: TachoLiveData) => void,
+    onStatus: (status: BleStatus, msg?: string) => void,
+    onRawPacket?: (pkt: Se5000RawPacket) => void,
+  ): Promise<void> {
+    this.onDataCallback = onData;
+    this.onStatusCallback = onStatus;
+    this.onRawPacketCallback = onRawPacket ?? null;
+    this.reportedMonitorErrors.clear();
+
+    try {
+      onStatus('connecting', i18n.t('tacho.connectingDevice', { device: deviceId }));
+      const connected = await this.manager.connectToDevice(deviceId, { timeout: 10000 });
+      await this._establishLiveSession(connected, connected.name ?? deviceId, onStatus);
+    } catch (err: any) {
+      onStatus('error', i18n.t('tacho.connectionFailed', { error: err?.message ?? err }));
+    }
+  }
+
+  private async _establishLiveSession(
+    connected: Device,
+    deviceName: string,
+    onStatus: (status: BleStatus, msg?: string) => void,
+  ): Promise<void> {
+    this.device = connected;
+
+    await connected.discoverAllServicesAndCharacteristics();
+    const gattSummary = await this._describeGatt(connected);
+    onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
+    this._startNoLiveDataTimer();
+
+    const hasVdoLiveService = await this._hasService(connected, VDO_BLE_CONFIG.SERVICE_UUID);
+    if (hasVdoLiveService) {
+      this._subscribeActivity(connected);
+      this._subscribeHosTimes(connected);
+      this._subscribeSpeed(connected);
+      this._readVdoLiveOnce(connected);
+    }
+
+    if (isSE5000Device(deviceName)) {
+      // Stoneridge SE5000 may expose standard ITS plus proprietary channels.
+      this._subscribeSE5000Raw(connected);
+    } else if (!hasVdoLiveService) {
+      this._reportConnectedDiagnostic(i18n.t('tacho.waitingLiveDataStatus'));
     }
   }
 

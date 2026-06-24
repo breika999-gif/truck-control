@@ -15,7 +15,10 @@ export const BACKEND_URL = __DEV__
   ? 'http://127.0.0.1:5050'
   : 'https://truckexpoai-production.up.railway.app';
 
-// Internal app token for backend endpoints that are not public.
+// Google OAuth web client ID. Required for backend-verified login.
+export const GOOGLE_WEB_CLIENT_ID: string = Config.GOOGLE_WEB_CLIENT_ID ?? '';
+
+// Temporary beta fallback. Do not ship this once GOOGLE_WEB_CLIENT_ID is configured.
 export const APP_INTERNAL_TOKEN: string = Config.APP_INTERNAL_TOKEN ?? '';
 
 // RevenueCat Android public SDK key — set REVENUECAT_ANDROID_API_KEY in .env.

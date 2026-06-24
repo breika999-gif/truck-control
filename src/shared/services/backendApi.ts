@@ -15,8 +15,8 @@
  *   DELETE /api/pois/:id     — delete a POI
  */
 
-import { APP_INTERNAL_TOKEN, BACKEND_URL } from '../constants/config';
-import { loadSavedAccount } from './accountManager';
+import { APP_INTERNAL_TOKEN, BACKEND_URL, GOOGLE_WEB_CLIENT_ID } from '../constants/config';
+import { loadSavedAccount, pickGoogleAccount, signInGoogleIdentity } from './accountManager';
 import type {
   POICard as _POICard,
   BackendHealth,
@@ -62,48 +62,76 @@ const updateReachable = (ok: boolean) => { backendReachable = ok; };
 
 interface NearbyParkingCard extends _POICard { distance?: number; }
 interface NearbyParkingResponse { ok?: boolean; spots?: NearbyParkingCard[]; pois?: NearbyParkingCard[]; cards?: NearbyParkingCard[]; }
+export interface NearestFuel {
+  name: string;
+  distM: number;
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 45_000; // Gemini 2.0-flash + optional GPT-4o nav forward can take 20-35s
 const jwtTokens = new Map<string, string>();
+const refreshTokens = new Map<string, string>();
 const jwtRequests = new Map<string, Promise<string>>();
 
 function requiresJwt(path: string): boolean {
   return [
     '/api/pois',
     '/api/parking/',
+    '/api/fuel/',
     '/api/poi-along-route',
     '/api/cameras',
     '/api/proximity-alerts',
     '/api/places/',
     '/api/tacho/',
     '/api/rest/log',
+    '/api/routes/',
+    '/api/geocode',
+    '/api/check-truck-restrictions',
+    '/api/truck-bans',
+    '/api/tilequery/',
     '/api/chat',
     '/api/gemini/chat',
+    '/api/gemini/validate',
+    '/api/transcribe',
   ].some(prefix => path.startsWith(prefix));
 }
 
 async function fetchJwt(userEmail?: string): Promise<string> {
-  const savedEmail = userEmail?.trim() || (await loadSavedAccount())?.email;
-  const email = savedEmail?.trim().toLowerCase();
-  if (!email) throw new Error('Google account required');
-
-  const cached = jwtTokens.get(email);
+  const savedEmail = userEmail?.trim().toLowerCase() || (await loadSavedAccount())?.email?.trim().toLowerCase();
+  const cached = savedEmail ? jwtTokens.get(savedEmail) : undefined;
   if (cached) return cached;
+  if (savedEmail) {
+    const pending = jwtRequests.get(savedEmail);
+    if (pending) return pending;
+    const refreshed = await refreshJwt(savedEmail);
+    if (refreshed) return refreshed;
+  }
 
+  if (!savedEmail) {
+    throw new Error('NO_ACCOUNT');
+  }
+  const identity = GOOGLE_WEB_CLIENT_ID
+    ? await signInGoogleIdentity()
+    : { email: savedEmail, idToken: '' };
+  const email = identity.email.trim().toLowerCase();
   const pending = jwtRequests.get(email);
   if (pending) return pending;
 
   const request = fetch(`${BACKEND_URL}/api/auth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_email: email, app_token: APP_INTERNAL_TOKEN }),
+    body: JSON.stringify(
+      identity.idToken
+        ? { google_id_token: identity.idToken }
+        : { user_email: email, app_token: APP_INTERNAL_TOKEN },
+    ),
   }).then(async response => {
     if (!response.ok) throw new Error(`Auth HTTP ${response.status}`);
-    const data = await response.json() as { token?: string };
+    const data = await response.json() as { token?: string; refresh_token?: string };
     if (!data.token) throw new Error('Auth token missing');
     jwtTokens.set(email, data.token);
+    if (data.refresh_token) refreshTokens.set(email, data.refresh_token);
     return data.token;
   }).finally(() => {
     jwtRequests.delete(email);
@@ -115,6 +143,22 @@ async function fetchJwt(userEmail?: string): Promise<string> {
 
 export async function getBackendAuthHeaders(userEmail?: string): Promise<Record<string, string>> {
   return { Authorization: `Bearer ${await fetchJwt(userEmail)}` };
+}
+
+async function refreshJwt(email: string): Promise<string | null> {
+  const refreshToken = refreshTokens.get(email);
+  if (!refreshToken) return null;
+  const response = await fetch(`${BACKEND_URL}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!response.ok) return null;
+  const data = await response.json() as { token?: string; refresh_token?: string };
+  if (!data.token) return null;
+  jwtTokens.set(email, data.token);
+  if (data.refresh_token) refreshTokens.set(email, data.refresh_token);
+  return data.token;
 }
 
 async function apiRequest<T>(
@@ -131,8 +175,6 @@ async function apiRequest<T>(
     if (requiresJwt(path)) {
       const authHeaders = await getBackendAuthHeaders(authEmail === '__retry__' ? undefined : authEmail);
       Object.entries(authHeaders).forEach(([name, value]) => headers.set(name, value));
-    } else {
-      headers.set('X-App-Token', APP_INTERNAL_TOKEN);
     }
 
     const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -146,7 +188,11 @@ async function apiRequest<T>(
         // Token may be expired — clear cache and retry once
         const email = authEmail?.trim().toLowerCase()
           || (await loadSavedAccount())?.email?.trim().toLowerCase();
-        if (email) jwtTokens.delete(email);
+        if (email) {
+          jwtTokens.delete(email);
+          const refreshed = await refreshJwt(email);
+          if (refreshed) return apiRequest<T>(path, options, '__retry__');
+        }
         return apiRequest<T>(path, options, '__retry__');
       }
       const body = await res.json().catch(() => ({}));
@@ -295,7 +341,7 @@ export async function transcribeGemini(
 
     const res = await fetch(`${BACKEND_URL}/api/transcribe`, {
       method: 'POST',
-      headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+      headers: await getBackendAuthHeaders(userEmail),
       body:   form,
       signal: controller.signal,
     });
@@ -320,7 +366,7 @@ export async function transcribeAudio(audioPath: string): Promise<string | null>
       form.append('audio', { uri, type: 'audio/m4a', name: 'recording.m4a' } as unknown as Blob);
       const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: 'POST',
-        headers: { 'X-App-Token': APP_INTERNAL_TOKEN },
+        headers: await getBackendAuthHeaders(),
         body: form,
         signal: controller.signal,
       });
@@ -603,6 +649,26 @@ export async function searchNearbyParking(
     }));
   } catch {
     return [];
+  }
+}
+
+export async function fetchNearestFuel(
+  lat: number,
+  lng: number,
+  radiusM: number = 3000,
+): Promise<NearestFuel | null> {
+  try {
+    const params = new URLSearchParams({
+      lat: String(lat),
+      lng: String(lng),
+      radius: String(radiusM),
+    });
+    const data = await apiRequest<{ ok?: boolean; fuel?: NearestFuel | null }>(
+      `/api/fuel/nearest?${params.toString()}`,
+    );
+    return data.fuel ?? null;
+  } catch {
+    return null;
   }
 }
 

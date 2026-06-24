@@ -4,12 +4,11 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTranslation } from 'react-i18next';
-import { POICard } from '../../../shared/services/backendApi';
+import { fetchNearestFuel, type NearestFuel, POICard } from '../../../shared/services/backendApi';
 import { styles, NEON } from '../screens/MapScreen.styles';
 import { fmtDistance, ttsSpeak, openInBrowser, getTransParkingUrl } from '../utils/mapUtils';
 import type { RootStackParamList } from '../../../shared/types/navigation';
 import { fetchParkingWeather, type ParkingWeather } from '../api/weather';
-import { fetchNearestFuel, type NearestFuel } from '../api/tilequery';
 
 interface ParkingBubbleProps {
   parking: POICard;

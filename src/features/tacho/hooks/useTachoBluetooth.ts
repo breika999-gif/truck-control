@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Device } from 'react-native-ble-plx';
 import { TachoBleService, TachoLiveData, BleStatus, Se5000RawPacket } from '../TachoBleService';
 import { logEvent, cleanup, ActivityCode } from '../TachoEventLog';
@@ -37,6 +38,13 @@ export interface TachoBleState {
   foundDevices: Device[];
   isConnected: boolean;
   deviceName: string | null;
+  lastDevice: TachoSavedDevice | null;
+}
+
+export interface TachoSavedDevice {
+  id: string;
+  name: string;
+  savedAt: string;
 }
 
 export interface BluetoothTachoState {
@@ -47,6 +55,7 @@ export interface BluetoothTachoState {
   foundDevices: Device[];
   isConnected: boolean;
   deviceName: string | null;
+  lastDevice: TachoSavedDevice | null;
   data: {
     continuousDrivenS: number;
     dailyDrivenS: number;
@@ -55,12 +64,13 @@ export interface BluetoothTachoState {
     cardInserted: boolean;
   } | null;
   startScan: () => void;
+  reconnectLastDevice: () => void;
   disconnect: () => void;
 }
 
 const REST_THROTTLE_MS = 30_000;
 const CONTINUOUS_DRIVE_LIMIT_S = HOS_CONTINUOUS_DRIVE_LIMIT_S;
-const VDO_PATTERNS = ['DTCO', 'VDO', 'SmartLink', 'SE5000', 'Stoneridge', 'OPTAC', 'SG5', 'Actia', 'MTX', '1381'];
+const LAST_TACHO_DEVICE_KEY = '@truckai/last_tacho_device_v1';
 const INITIAL_STATE: TachoBleState = {
   status: 'idle',
   statusMsg: i18n.t('tacho.notConnected'),
@@ -69,6 +79,7 @@ const INITIAL_STATE: TachoBleState = {
   foundDevices: [],
   isConnected: false,
   deviceName: null,
+  lastDevice: null,
 };
 
 let sharedState: TachoBleState = INITIAL_STATE;
@@ -105,6 +116,33 @@ function ensureService() {
   return sharedService;
 }
 
+async function loadLastDevice(): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(LAST_TACHO_DEVICE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as TachoSavedDevice;
+    if (typeof parsed.id === 'string' && typeof parsed.name === 'string') {
+      patchState({ lastDevice: parsed });
+    }
+  } catch {
+    // Last device is convenience state; ignore storage failures.
+  }
+}
+
+async function saveLastDevice(device: Device): Promise<void> {
+  const saved: TachoSavedDevice = {
+    id: device.id,
+    name: device.name ?? device.localName ?? device.id,
+    savedAt: new Date().toISOString(),
+  };
+  patchState({ lastDevice: saved });
+  try {
+    await AsyncStorage.setItem(LAST_TACHO_DEVICE_KEY, JSON.stringify(saved));
+  } catch {
+    // Ignore storage failures; active connection should continue.
+  }
+}
+
 function handleStatus(status: BleStatus, msg?: string) {
   patchState({
     status,
@@ -139,16 +177,12 @@ function handleRawPacket(pkt: Se5000RawPacket) {
 
 function connectToKnownOrSelectedDevice(device: Device) {
   patchState({ deviceName: device.name ?? device.localName ?? device.id, rawPackets: [] });
+  saveLastDevice(device).catch(() => {/* silent */});
   ensureService().connectToTacho(device, handleData, handleStatus, handleRawPacket);
 }
 
 function handleDeviceFound(device: Device) {
   addFoundDevice(device);
-  const name = device.name ?? device.localName ?? '';
-  const isKnownTacho = VDO_PATTERNS.some(pattern => name.toUpperCase().includes(pattern.toUpperCase()));
-  if (isKnownTacho) {
-    connectToKnownOrSelectedDevice(device);
-  }
 }
 
 async function resolveUserEmail(): Promise<string> {
@@ -165,6 +199,7 @@ export function useTachoBluetooth() {
 
   useEffect(() => {
     ensureService();
+    loadLastDevice().catch(() => {/* silent */});
     listeners.add(setState);
     setState(sharedState);
     return () => {
@@ -187,6 +222,13 @@ export function useTachoBluetooth() {
 
   const connectToDevice = (device: Device) => {
     connectToKnownOrSelectedDevice(device);
+  };
+
+  const reconnectLastDevice = () => {
+    const last = sharedState.lastDevice;
+    if (!last) return;
+    patchState({ deviceName: last.name, rawPackets: [] });
+    ensureService().connectToDeviceId(last.id, handleData, handleStatus, handleRawPacket);
   };
 
   const disconnect = () => {
@@ -225,6 +267,7 @@ export function useTachoBluetooth() {
     rawPackets: state.rawPackets,
     startScan,
     connectToDevice,
+    reconnectLastDevice,
     disconnect,
   };
 }

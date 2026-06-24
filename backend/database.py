@@ -3,11 +3,13 @@ import os
 import re
 import threading
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from config import DATABASE_URL
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "truckai.db"))
 USE_POSTGRES = DATABASE_URL.startswith("postgres")
+_chat_write_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chat-history")
 
 # Ensure DB directory exists (critical for Railway volumes)
 _db_dir = os.path.dirname(DB_PATH)
@@ -158,15 +160,6 @@ def init_db() -> None:
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS map_match_cache (
-                route_hash TEXT PRIMARY KEY,
-                coords_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
             CREATE TABLE IF NOT EXISTS truck_bans_cache (
                 date TEXT PRIMARY KEY,
                 data TEXT,
@@ -219,8 +212,21 @@ def init_db() -> None:
             )
             """
         )
+        # Indexes — idempotent, safe to run on existing DBs
+        for idx_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_pois_user ON pois(user_email)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_history(user_email)",
+            "CREATE INDEX IF NOT EXISTS idx_chat_ts   ON chat_history(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_tacho_user ON tacho_sessions(user_email)",
+            "CREATE INDEX IF NOT EXISTS idx_routes_user ON routes(user_email)",
+            "CREATE INDEX IF NOT EXISTS idx_rest_log_user ON rest_log(user_email)",
+        ):
+            try:
+                conn.execute(idx_sql)
+            except Exception:
+                pass
         conn.commit()
-    
+
     migrations = (
         ("pois", "user_email", "TEXT NOT NULL DEFAULT ''"),
         ("tacho_sessions", "type", "TEXT NOT NULL DEFAULT 'driving'"),
@@ -249,7 +255,7 @@ def row_to_poi(row) -> dict:
         "created_at": row["created_at"],
     }
 
-def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
+def _db_save_chat_sync(user_msg: str, reply: str, user_email: str = "") -> None:
     from utils.helpers import now_iso
 
     def insert_pair() -> None:
@@ -272,6 +278,16 @@ def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
             raise
         init_db()
         insert_pair()
+
+
+def _db_save_chat(user_msg: str, reply: str, user_email: str = "") -> None:
+    def run() -> None:
+        try:
+            _db_save_chat_sync(user_msg, reply, user_email)
+        except Exception as exc:
+            print(f"[CHAT_HISTORY] async save failed: {exc}", flush=True)
+
+    _chat_write_executor.submit(run)
 
 def _transparking_cache_refresh() -> None:
     from utils.helpers import now_iso
@@ -366,10 +382,15 @@ def _transparking_match(lat: float, lng: float, radius_m: int = 150) -> dict | N
     return None
 
 def start_background_tasks():
+    if os.environ.get("ENABLE_TRANSPARKING_DAEMON", "").lower() not in {"1", "true", "yes"}:
+        return
     threading.Thread(target=_transparking_cache_refresh, daemon=True).start()
 
 # ── POI in-memory cache ────────────────────────────────────────────────────────
+import hashlib as _hashlib
+import json as _json
 import time as _cache_time
+from utils.redis_client import get_redis as _get_redis
 
 _poi_cache: dict = {}   # key → (result, expires_at)
 _POI_CACHE_TTL = 600    # 10 minutes
@@ -378,14 +399,32 @@ _poi_lock = threading.Lock()
 def _poi_cache_key(fn: str, lat: float, lng: float, radius_m: int = 0) -> str:
     return f"{fn}:{round(lat, 2)}:{round(lng, 2)}:{radius_m}"
 
+def _poi_redis_key(key: str) -> str:
+    return "poi:" + _hashlib.sha256(key.encode("utf-8")).hexdigest()
+
 def _poi_cache_get(key: str):
-    entry = _poi_cache.get(key)
-    if entry and _cache_time.time() < entry[1]:
-        return entry[0]
-    _poi_cache.pop(key, None)
+    rc = _get_redis()
+    if rc:
+        try:
+            raw = rc.get(_poi_redis_key(key))
+            if raw:
+                return _json.loads(raw)
+        except Exception:
+            pass
+    with _poi_lock:
+        entry = _poi_cache.get(key)
+        if entry and _cache_time.time() < entry[1]:
+            return entry[0]
+        _poi_cache.pop(key, None)
     return None
 
 def _poi_cache_set(key: str, result: list) -> None:
+    rc = _get_redis()
+    if rc:
+        try:
+            rc.setex(_poi_redis_key(key), _POI_CACHE_TTL, _json.dumps(result, default=str))
+        except Exception:
+            pass
     with _poi_lock:
         if len(_poi_cache) >= 200:
             oldest = min(_poi_cache, key=lambda k: _poi_cache[k][1])

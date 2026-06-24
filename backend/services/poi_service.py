@@ -1,15 +1,31 @@
+import hashlib
+import json
 import requests
 import concurrent.futures
 import math
 from config import GOOGLE_PLACES_KEY, TOMTOM_API_KEY
 from utils.helpers import _haversine_m
+from utils.redis_client import get_redis
 from database import _transparking_match, _poi_cache_get, _poi_cache_set, _poi_cache_key
 
 _places_ready = bool(GOOGLE_PLACES_KEY)
 _tomtom_ready = bool(TOMTOM_API_KEY)
+_GOOGLE_SEARCH_CACHE_TTL_S = 30 * 86400
+_NEGATIVE_CACHE_TTL_S = 3600
 
 def _google_places_fallback(query: str, lat: float, lng: float) -> list:
     if not _places_ready: return []
+    _lat_r = round(float(lat or 0), 1)
+    _lng_r = round(float(lng or 0), 1)
+    _rk = "geo:google:" + hashlib.sha256(f"{query.lower().strip()}:{_lat_r}:{_lng_r}".encode("utf-8")).hexdigest()
+    _rc = get_redis()
+    if _rc:
+        try:
+            raw = _rc.get(_rk)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
     try:
         url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
         params = {"query": query, "key": GOOGLE_PLACES_KEY, "language": "bg"}
@@ -21,14 +37,35 @@ def _google_places_fallback(query: str, lat: float, lng: float) -> list:
             loc = item.get("geometry", {}).get("location", {})
             if loc.get("lat") is None: continue
             results.append({"name": item.get("name"), "address": item.get("formatted_address", ""), "lat": loc["lat"], "lng": loc["lng"], "distance_m": round(_haversine_m(lat, lng, loc["lat"], loc["lng"])) if lat else 0, "source": "google"})
+        if _rc:
+            try:
+                _rc.setex(_rk, _NEGATIVE_CACHE_TTL_S if not results else _GOOGLE_SEARCH_CACHE_TTL_S, json.dumps(results, default=str))
+            except Exception:
+                pass
         return results
     except Exception: return []
 
+def _safe_lat(v) -> float:
+    f = float(v)
+    if not (-90.0 <= f <= 90.0): raise ValueError(f"lat out of range: {f}")
+    return f
+
+def _safe_lng(v) -> float:
+    f = float(v)
+    if not (-180.0 <= f <= 180.0): raise ValueError(f"lng out of range: {f}")
+    return f
+
+def _safe_radius(v, max_m: int = 500_000) -> int:
+    i = int(float(v))
+    if not (0 < i <= max_m): raise ValueError(f"radius out of range: {i}")
+    return i
+
 def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> list:
+    lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m)
     _ck = _poi_cache_key("parking", lat, lng, radius_m)
     cached = _poi_cache_get(_ck)
     if cached is not None: return cached
-    
+
     results, search_r = [], max(radius_m, 20_000)
     def _search_tt(q):
         if not _tomtom_ready: return []
@@ -78,6 +115,7 @@ def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> l
 
 def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> dict:
     try:
+        lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m, max_m=100_000)
         q = f'[out:json][timeout:10];node["highway"="speed_camera"](around:{radius_m},{lat},{lng});out 15;'
         r = requests.post("https://overpass-api.de/api/interpreter", data={"data": q}, timeout=15)
         cameras = []
@@ -89,6 +127,7 @@ def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> d
     except Exception as e: return {"cameras": [], "nearest_m": -1, "error": str(e)}
 
 def _tool_find_fuel(lat: float, lng: float, radius_m: int = 50000) -> list:
+    lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m)
     _ck = _poi_cache_key("fuel", lat, lng, radius_m)
     cached = _poi_cache_get(_ck)
     if cached is not None: return cached
@@ -115,6 +154,7 @@ def _tool_add_waypoint(query: str, lat: float, lng: float) -> dict:
 def _enrich_business_with_places(biz: dict) -> dict: return biz
 
 def _tool_find_overtaking_restrictions(lat: float, lng: float, radius_m: int = 5000) -> dict:
+    lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m, max_m=100_000)
     lat_delta = radius_m / 111_320
     lng_delta = radius_m / max(1, 111_320 * math.cos(math.radians(lat)))
     south = lat - lat_delta

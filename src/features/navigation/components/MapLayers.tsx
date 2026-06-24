@@ -324,6 +324,11 @@ const MapLayers: React.FC<MapLayersProps> = ({
   const routeGlowColor = lightMode ? 'rgba(0,122,255,0.30)' : 'rgba(19,217,255,0.52)';
   const routeCasingColor = lightMode ? '#071426' : '#06244A';
   const routeBaseColor = hasDriveSegments ? 'rgba(0,0,0,0)' : routeLineColor;
+  const routeTrafficAboveLayerID = hasTachoRange
+    ? 'tacho-range-over'
+    : hasDriveSegments
+      ? 'drive-segments-layer'
+      : 'route-casing';
   const routeMainWidth = ['interpolate', ['linear'], ['zoom'], 5, 5, 10, 9, 15, 15] as any;
   const routeCasingWidth = ['interpolate', ['linear'], ['zoom'], 5, 8, 10, 14, 15, 23] as any;
   const routeGlowWidth = ['interpolate', ['linear'], ['zoom'], 5, 13, 10, 22, 15, 36] as any;
@@ -338,7 +343,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
     return {
       type: 'FeatureCollection',
       features: restrictionPoints
-        .filter(rp => Number.isFinite(rp.lat) && Number.isFinite(rp.lng))
+        .filter(rp => Number.isFinite(rp.lat) && Number.isFinite(rp.lng) && rp.type !== 'maxheight' && rp.type !== 'maxwidth')
         .map((rp, i) => {
           const key = `${rp.lng.toFixed(5)}:${rp.lat.toFixed(5)}`;
           const duplicateIndex = duplicateCounts.get(key) ?? 0;
@@ -648,7 +653,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
               lineBlur: ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 5, 15, 8] as any,
               lineCap: 'round',
               lineJoin: 'round',
-              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
             } as any}
           />
           <Mapbox.LineLayer
@@ -661,7 +665,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
               lineOpacity: lightMode ? 0.92 : 1.0,
               lineCap: 'round',
               lineJoin: 'round',
-              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
             }}
           />
         </Mapbox.ShapeSource>
@@ -718,9 +721,34 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
+      {/* ── Tachograph drive periods (visible route surface) ── */}
+      {mapIsLoaded && !hasTachoRange && driveSegments && routeShape && driveSegments.gradientStops.length > 0 && (
+        <Mapbox.ShapeSource
+          id="drive-segments-source"
+          lineMetrics={true}
+          shape={routeShape}
+        >
+          <Mapbox.LineLayer
+            id="drive-segments-layer"
+            slot="middle"
+            aboveLayerID="route-casing"
+            style={{
+              lineWidth: routeMainWidth,
+              lineOpacity: 0.98,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineGradient: buildLineGradient(driveSegments.gradientStops),
+              lineBlur: lightMode ? 0 : 0.2,
+              lineEmissiveStrength: lightMode ? 0 : 1.15,
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
       {/* ── Route congestion line (colored segments from TomTom data) ── */}
       {mapIsLoaded && (() => {
-        // During navigation: show 15km slice; in preview: show full route
+        // During navigation: show 15km slice; in preview: show full route.
+        // Draw this above the tacho time strip so slow traffic remains visible.
         const shape = navigating
           ? (navCongestionVisible && navCongestionVisible.features.length > 0 ? navCongestionVisible : congestionGeoJSON)
           : congestionGeoJSON;
@@ -729,7 +757,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             <Mapbox.LineLayer
               id="route-line"
               slot="middle"
-              aboveLayerID="route-casing"
+              aboveLayerID={routeTrafficAboveLayerID}
               style={{
                 lineColor: ['match', ['get', 'congestion'],
                   'low', routeBaseColor,
@@ -749,31 +777,6 @@ const MapLayers: React.FC<MapLayersProps> = ({
           </Mapbox.ShapeSource>
         );
       })()}
-
-      {/* ── Tachograph drive periods (visible route surface) ── */}
-      {mapIsLoaded && !hasTachoRange && driveSegments && routeShape && driveSegments.gradientStops.length > 0 && (
-        <Mapbox.ShapeSource
-          id="drive-segments-source"
-          lineMetrics={true}
-          shape={routeShape}
-        >
-          <Mapbox.LineLayer
-            id="drive-segments-layer"
-            slot="middle"
-            aboveLayerID="route-line"
-            style={{
-              lineWidth: routeMainWidth,
-              lineOpacity: 0.98,
-              lineCap: 'round',
-              lineJoin: 'round',
-              lineGradient: buildLineGradient(driveSegments.gradientStops),
-              lineBlur: lightMode ? 0 : 0.2,
-              lineEmissiveStrength: lightMode ? 0 : 1.15,
-              lineTrimOffset: [0, routeProgressFraction ?? 0] as [number, number],
-            } as any}
-          />
-        </Mapbox.ShapeSource>
-      )}
 
       {mapIsLoaded && (hasDriveSegments || hasTachoRange) && gradeOverlayGeoJSON.features.length > 0 && (
         <Mapbox.ShapeSource id="grade-overlay-source" shape={gradeOverlayGeoJSON}>

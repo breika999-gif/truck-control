@@ -385,11 +385,9 @@ export function useChat({
       driver_habits:            driverHabits || undefined,
     };
 
-    const historyDepth = isNav ? 0 : isTacho ? 2 : 3;
-
     const response = await sendGeminiMessage(
       text,
-      historyDepth > 0 ? geminiHistory.slice(-historyDepth) : [],
+      [],  // server loads history from DB + rolling summary
       context,
       googleUser?.email || undefined
     );

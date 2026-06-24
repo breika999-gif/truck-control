@@ -8,11 +8,16 @@
  */
 import { NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { GOOGLE_WEB_CLIENT_ID } from '../constants/config';
 
 const STORAGE_KEY = '@truckai/google_account';
 
 export interface GoogleAccount {
   email: string;
+}
+
+export interface GoogleIdentity extends GoogleAccount {
+  idToken: string;
 }
 
 /**
@@ -24,9 +29,30 @@ export async function pickGoogleAccount(): Promise<GoogleAccount> {
   if (Platform.OS !== 'android') {
     throw new Error('AccountPicker is only available on Android');
   }
+  if (GOOGLE_WEB_CLIENT_ID && NativeModules.AccountManager?.signInGoogle) {
+    const identity = await signInGoogleIdentity();
+    return { email: identity.email };
+  }
   const email: string = await NativeModules.AccountManager.pickGoogleAccount();
   await AsyncStorage.setItem(STORAGE_KEY, email);
   return { email };
+}
+
+export async function signInGoogleIdentity(): Promise<GoogleIdentity> {
+  if (Platform.OS !== 'android') {
+    throw new Error('Google Sign-In is only available on Android');
+  }
+  if (!GOOGLE_WEB_CLIENT_ID) {
+    throw new Error('GOOGLE_WEB_CLIENT_ID is not configured');
+  }
+  const result = await NativeModules.AccountManager.signInGoogle(GOOGLE_WEB_CLIENT_ID);
+  const email = String(result?.email ?? '').trim().toLowerCase();
+  const idToken = String(result?.idToken ?? '').trim();
+  if (!email || !idToken) {
+    throw new Error('Google identity token missing');
+  }
+  await AsyncStorage.setItem(STORAGE_KEY, email);
+  return { email, idToken };
 }
 
 /** Load previously saved Google account from AsyncStorage. */

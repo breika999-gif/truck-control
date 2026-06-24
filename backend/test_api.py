@@ -5,6 +5,7 @@ import pytest
 
 os.environ["APP_INTERNAL_TOKEN"] = "test-app-token"
 os.environ["JWT_SECRET"] = "test-jwt-secret-that-is-at-least-32-bytes-long"
+os.environ["GOOGLE_OAUTH_CLIENT_ID"] = "test-google-client-id.apps.googleusercontent.com"
 os.environ["DATABASE_URL"] = ""
 os.environ["WERKZEUG_RUN_MAIN"] = "false"
 os.environ["SENTRY_DSN"] = ""
@@ -27,20 +28,27 @@ def test_health(client):
 
 
 def test_auth_token_with_valid_app_token(client):
-    response = client.post(
-        "/api/auth/token",
-        json={"user_email": "driver@example.com", "app_token": "test-app-token"},
-    )
+    from unittest.mock import patch
+
+    with patch("routes.auth.verify_google_identity_token", return_value="driver@example.com"):
+        response = client.post(
+            "/api/auth/token",
+            json={"google_id_token": "valid-google-token"},
+        )
 
     assert response.status_code == 200
     assert response.get_json()["token"]
+    assert response.get_json()["refresh_token"]
 
 
 def test_auth_token_with_wrong_app_token(client):
-    response = client.post(
-        "/api/auth/token",
-        json={"user_email": "driver@example.com", "app_token": "wrong-token"},
-    )
+    from unittest.mock import patch
+
+    with patch("routes.auth.verify_google_identity_token", return_value=None):
+        response = client.post(
+            "/api/auth/token",
+            json={"google_id_token": "wrong-token"},
+        )
 
     assert response.status_code == 401
 
@@ -76,6 +84,7 @@ def test_chat_with_valid_jwt_reaches_handler(client):
     token = _jwt.encode(
         {
             "sub": "driver@example.com",
+            "typ": "access",
             "iat": _dt.datetime.now(_dt.timezone.utc),
             "exp": _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1),
         },

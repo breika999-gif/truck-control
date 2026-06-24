@@ -323,6 +323,16 @@
     "zeroHours": "0 h",
     "dailyLimit": "límite 9 h",
     "title": "Tacógrafo",
+    "wizardTitle": "Emparejar tacógrafo",
+    "wizardScan": "Buscar",
+    "wizardPair": "Código",
+    "wizardConnect": "Conectar",
+    "wizardLive": "Datos live",
+    "pairingTitle": "Confirma el código Bluetooth",
+    "pairingInstructions": "Si Android o el tacógrafo muestra un código, comprueba que coincide y pulsa OK/Pair. Luego pulsa el botón de conexión aquí.",
+    "pairingConfirmed": "Código OK",
+    "pairingHelp": "VDO DTCO: Settings → Bluetooth → Pairing\nStoneridge SE5000: Menu → BT Interface → Activate\nSi aparece un código, confírmalo en el teléfono y/o tacógrafo.",
+    "reconnectLast": "Conectar último tacógrafo",
     "scanning": "Buscando...",
     "connect": "Conectar tacógrafo",
     "disconnect": "Desconectar",
@@ -418,7 +428,8 @@
     "switchAccount": "🔄 Cambiar cuenta",
     "disconnectAccount": "🗑 Desconectar cuenta",
     "connectInfo": "Conecta una cuenta de Google para guardar favoritos ⭐ por cuenta.",
-    "chooseGoogle": "G  Elegir cuenta de Google"
+    "chooseGoogle": "G  Elegir cuenta de Google",
+    "connect": "Iniciar sesión"
   },
   "vehicle": {
     "diesel": "Diésel",

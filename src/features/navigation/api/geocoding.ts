@@ -1,5 +1,13 @@
-import { APP_INTERNAL_TOKEN, MAP_CENTER, BACKEND_URL } from '../../../shared/constants/config';
+import { MAP_CENTER, BACKEND_URL, APP_INTERNAL_TOKEN } from '../../../shared/constants/config';
 import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
+
+async function _geoAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    return await getBackendAuthHeaders();
+  } catch {
+    return APP_INTERNAL_TOKEN ? { 'X-App-Token': APP_INTERNAL_TOKEN } : {};
+  }
+}
 
 export interface GeoPlace {
   id: string;
@@ -47,9 +55,10 @@ export async function suggestPlaces(
   }
 
   try {
+    const authHeaders = await _geoAuthHeaders();
     const res = await fetch(
       `${BACKEND_URL}/api/geocode?${params}`,
-      { signal, headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
+      { signal, headers: authHeaders },
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -90,7 +99,7 @@ export async function suggestPlacesGoogle(
   const params = new URLSearchParams({ q: query.trim(), lat: String(lat), lng: String(lng) });
 
   try {
-    const authHeaders = await getBackendAuthHeaders();
+    const authHeaders = await _geoAuthHeaders();
     const res = await fetch(`${BACKEND_URL}/api/places/search?${params}`, {
       signal,
       headers: authHeaders,
@@ -145,9 +154,10 @@ export async function retrievePlace(place_id: string): Promise<GeoPlace | null> 
 
   // Fallback B: TomTom entity details by ID
   try {
+    const authHeaders = await _geoAuthHeaders();
     const res = await fetch(
       `${BACKEND_URL}/api/geocode/place?entity_id=${encodeURIComponent(place_id)}`,
-      { headers: { 'X-App-Token': APP_INTERNAL_TOKEN } },
+      { headers: authHeaders },
     );
     if (!res.ok) return null;
     const data = await res.json();

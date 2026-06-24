@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import i18n from '../../../i18n';
+import { BACKEND_URL } from '../../../shared/constants/config';
+import { getBackendAuthHeaders } from '../../../shared/services/backendApi';
 
 export interface Ban {
   flag: string;
@@ -18,39 +20,16 @@ export function useTruckBans(date: string) {
     setLoading(true);
     setError(null);
 
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
-      'X-Requested-With': 'XMLHttpRequest',
-      'Referer': 'https://www.trafficban.com/',
-    };
-
     try {
-      // 1. Establish session (homepage fetch for cookies)
-      await fetch('https://www.trafficban.com/', { headers });
-
-      // 2. Extract dynamic parameter name from JS list file
-      const jsUrl = 'https://www.trafficban.com/res/js/js.ban.list.for.date.html';
-      const jsResp = await fetch(jsUrl, { headers });
-      const jsText = await jsResp.text();
-      
-      const m = jsText.match(/\?([A-Za-z0-9]{5,15})=/);
-      const paramName = m ? m[1] : 'KHcYF42A';
-
-      // 3. Get session key for the specific date
-      const keyUrl = `https://www.trafficban.com/res/json/json.get.key.html?d=${date}`;
-      const keyResp = await fetch(keyUrl, { headers });
-      const keyData = await keyResp.json();
-      const key = keyData.key;
-
-      if (!key) {
-        throw new Error(i18n.t('bans.sessionKeyFailed'));
+      const authHeaders = await getBackendAuthHeaders();
+      const resp = await fetch(`${BACKEND_URL}/api/truck-bans?date=${encodeURIComponent(date)}`, {
+        headers: authHeaders,
+      });
+      const payload = await resp.json();
+      if (!resp.ok || !payload.ok) {
+        throw new Error(payload.error || i18n.t('bans.serverError'));
       }
-
-      // 4. Fetch the actual bans using the dynamic param and key
-      const bansUrl = `https://www.trafficban.com/res/json/json.ban.list.for.date.html?${paramName}=${key}&d=${date}`;
-      const bansResp = await fetch(bansUrl, { headers });
-      const rawBans = await bansResp.json();
+      const rawBans = payload.bans;
 
       if (!Array.isArray(rawBans)) {
         throw new Error(i18n.t('bans.invalidData'));

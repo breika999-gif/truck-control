@@ -2,7 +2,7 @@ import math
 import requests
 from flask import Blueprint, g, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
-from utils.auth import require_auth
+from utils.auth import require_auth, require_auth_or_app_token
 from utils.helpers import _is_rate_limited, _get_body, now_iso, validate_coords
 from services.tomtom_service import _tomtom_along_route
 from services.tomtom_service import _tomtom_search
@@ -248,6 +248,30 @@ def nearby_truck_parking():
     spots = _tool_find_truck_parking(lat, lng, max(1000, min(radius_m, 50000)))
     return jsonify({"ok": True, "spots": spots, "pois": spots})
 
+@poi_bp.get("/api/fuel/nearest")
+@require_auth
+def nearest_fuel():
+    if _is_rate_limited(limit=60, window_s=60): return jsonify({"ok": False, "error": "rate limited"}), 429
+    try:
+        lat, lng = validate_coords(request.args.get("lat"), request.args.get("lng"))
+        if lat is None:
+            raise ValueError("invalid coordinates")
+        radius_m = int(float(request.args.get("radius") or request.args.get("radius_m") or 3000))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid coordinates"}), 400
+
+    fuels = _tool_find_fuel(lat, lng, max(1000, min(radius_m, 50000)))
+    nearest = fuels[0] if fuels else None
+    if not nearest:
+        return jsonify({"ok": True, "fuel": None})
+    return jsonify({
+        "ok": True,
+        "fuel": {
+            "name": nearest.get("name") or nearest.get("brand") or "Гориво",
+            "distM": int(nearest.get("distance_m") or 0),
+        },
+    })
+
 @poi_bp.post("/api/poi-along-route")
 @require_auth
 def poi_along_route_v2():
@@ -338,7 +362,7 @@ def report_camera():
     return jsonify({"ok": True})
 
 @poi_bp.get("/api/places/search")
-@require_auth
+@require_auth_or_app_token
 def places_search():
     from services.poi_service import _google_places_fallback
     q = request.args.get("q", "").strip()

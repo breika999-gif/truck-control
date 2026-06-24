@@ -1,6 +1,5 @@
 import type * as GeoJSON from 'geojson';
 import type { RouteResult } from '../api/directions';
-import { nearestRouteMatch } from './mapUtils';
 import { gradeMultiplier, type GradeProfile } from './gradeProfile';
 
 const TRUCK_SPEED_CAP_MPS = 90 / 3.6;
@@ -25,6 +24,12 @@ interface TimedRoute {
   totalTimeS: number;
 }
 
+interface RouteProjection {
+  coords: [number, number];
+  segmentIndex: number;
+  distanceAlongRouteM: number;
+}
+
 function clamp(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -34,6 +39,64 @@ function distanceMeters(a: [number, number], b: [number, number]): number {
   const dx = (b[0] - a[0]) * 111320 * Math.cos(midLatRad);
   const dy = (b[1] - a[1]) * 110540;
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+function projectPointOnSegment(
+  point: [number, number],
+  start: [number, number],
+  end: [number, number],
+): { coords: [number, number]; ratio: number; distanceM: number; segmentLengthM: number } {
+  const midLatRad = ((point[1] + start[1] + end[1]) / 3) * Math.PI / 180;
+  const metersPerLng = 111320 * Math.cos(midLatRad);
+  const metersPerLat = 110540;
+  const px = (point[0] - start[0]) * metersPerLng;
+  const py = (point[1] - start[1]) * metersPerLat;
+  const sx = 0;
+  const sy = 0;
+  const ex = (end[0] - start[0]) * metersPerLng;
+  const ey = (end[1] - start[1]) * metersPerLat;
+  const dx = ex - sx;
+  const dy = ey - sy;
+  const lenSq = dx * dx + dy * dy;
+  const ratio = lenSq > 0 ? Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq)) : 0;
+  const projectedX = sx + dx * ratio;
+  const projectedY = sy + dy * ratio;
+  const distanceM = Math.sqrt((px - projectedX) ** 2 + (py - projectedY) ** 2);
+  const segmentLengthM = Math.sqrt(lenSq);
+
+  return {
+    coords: [
+      start[0] + (end[0] - start[0]) * ratio,
+      start[1] + (end[1] - start[1]) * ratio,
+    ],
+    ratio,
+    distanceM,
+    segmentLengthM,
+  };
+}
+
+function projectPointOnRoute(point: [number, number], coords: [number, number][]): RouteProjection | null {
+  if (coords.length < 2) return null;
+
+  let best: RouteProjection | null = null;
+  let bestDistanceM = Infinity;
+  let distanceBeforeSegmentM = 0;
+
+  for (let index = 0; index < coords.length - 1; index += 1) {
+    const projection = projectPointOnSegment(point, coords[index], coords[index + 1]);
+    const distanceAlongRouteM = distanceBeforeSegmentM + projection.segmentLengthM * projection.ratio;
+    if (projection.distanceM < bestDistanceM) {
+      bestDistanceM = projection.distanceM;
+      best = {
+        coords: projection.coords,
+        segmentIndex: index,
+        distanceAlongRouteM,
+      };
+    }
+    distanceBeforeSegmentM += projection.segmentLengthM;
+  }
+
+  return best;
 }
 
 function cumulativeDistances(coords: [number, number][]): number[] {
@@ -113,10 +176,12 @@ function buildTimedRoute(input: TachoRouteTimingInput): TimedRoute | null {
   const { routeCoords, userCoords, route, gradeProfile, isLoaded = false } = input;
   if (!userCoords || routeCoords.length < 2) return null;
 
-  const userMatch = nearestRouteMatch(userCoords, routeCoords);
+  const userProjection = projectPointOnRoute(userCoords, routeCoords);
+  if (!userProjection) return null;
+
   const aheadCoords: [number, number][] = [
-    userCoords,
-    ...routeCoords.slice(Math.min(routeCoords.length - 1, userMatch.bestIndex + 1)),
+    userProjection.coords,
+    ...routeCoords.slice(Math.min(routeCoords.length - 1, userProjection.segmentIndex + 1)),
   ];
   if (aheadCoords.length < 2) return null;
 
@@ -140,7 +205,7 @@ function buildTimedRoute(input: TachoRouteTimingInput): TimedRoute | null {
   let totalTimeS = 0;
   for (let index = 1; index < aheadCoords.length; index += 1) {
     const segmentM = Math.max(0, aheadCumulativeM[index] - aheadCumulativeM[index - 1]);
-    const fullStartM = Math.min(routeDistanceM, (fullCumulativeM[userMatch.bestIndex] ?? 0) + aheadCumulativeM[index - 1]);
+    const fullStartM = Math.min(routeDistanceM, userProjection.distanceAlongRouteM + aheadCumulativeM[index - 1]);
     const fullEndM = Math.min(routeDistanceM, fullStartM + segmentM);
     const avgGrade = averageGradeInRange(
       gradeProfile,
