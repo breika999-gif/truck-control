@@ -1,6 +1,7 @@
 import React, { useState, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, LayoutChangeEvent } from 'react-native';
 import type { RoutePOI } from '../hooks/useRouteInsights';
+import type { DriveSegmentsResult } from '../utils/driveSegments';
 
 type TrafficSegment = {
   startFraction: number;
@@ -13,6 +14,7 @@ interface RouteTimelineProps {
   totalDistM: number;
   onPOIPress: (poi: RoutePOI) => void;
   trafficSegments?: TrafficSegment[];
+  driveSegments?: DriveSegmentsResult | null;
 }
 
 const PIN_SIZE = 26;
@@ -30,6 +32,7 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
   totalDistM,
   onPOIPress,
   trafficSegments,
+  driveSegments,
 }) => {
   const [barHeight, setBarHeight] = useState(0);
 
@@ -50,6 +53,17 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
     .sort((a, b) => a.remainingKm - b.remainingKm);
 
   const farthestVisibleKm = Math.max(1, ...pins.map(p => p.remainingKm));
+  const tachoMarkers = (driveSegments?.gradientStops ?? [])
+    .map((stop, index, stops) => {
+      const previousColor = stops[index - 1]?.color;
+      if (!previousColor || previousColor === stop.color) return null;
+      if (stop.fraction <= 0.01 || stop.fraction >= 0.99) return null;
+      if (stop.color === '#7B61FF') return { fraction: stop.fraction, label: '4.5h', color: '#7B61FF' };
+      if (stop.color === '#F1C40F') return { fraction: stop.fraction, label: '9h', color: '#F1C40F' };
+      if (stop.color === '#FF3B30') return { fraction: stop.fraction, label: previousColor === '#F1C40F' ? '+1h' : 'REST', color: '#FF3B30' };
+      return null;
+    })
+    .filter((marker): marker is { fraction: number; label: string; color: string } => marker != null);
 
   // Use nearest upcoming POI to infer route progress for the vertical track.
   const progressPct = (() => {
@@ -93,6 +107,25 @@ const RouteTimeline: React.FC<RouteTimelineProps> = memo(({
                 opacity: 0.85,
               }}
             />
+          );
+        })}
+
+        {barHeight > 0 && (trafficSegments ?? []).filter(seg => seg.level === 'heavy').map((seg, i) => {
+          const midFraction = (seg.startFraction + seg.endFraction) / 2;
+          const top = Math.max(0, Math.min(barHeight - 18, (1 - midFraction) * barHeight - 9));
+          return (
+            <View key={`traffic-warn-${i}`} style={[styles.trafficWarn, { top }]}>
+              <Text style={styles.trafficWarnText}>!</Text>
+            </View>
+          );
+        })}
+
+        {barHeight > 0 && tachoMarkers.map((marker, i) => {
+          const top = Math.max(0, Math.min(barHeight - 18, (1 - marker.fraction) * barHeight - 9));
+          return (
+            <View key={`tacho-${i}`} style={[styles.tachoMarker, { top, borderColor: marker.color }]}>
+              <Text style={styles.tachoText}>{marker.label}</Text>
+            </View>
           );
         })}
 
@@ -197,6 +230,42 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 16,
     color: '#FFFFFF',
+  },
+  tachoMarker: {
+    position: 'absolute',
+    left: -22,
+    minWidth: 44,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    backgroundColor: 'rgba(5,12,24,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3,
+  },
+  tachoText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  trafficWarn: {
+    position: 'absolute',
+    left: -8,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FF3B30',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+  },
+  trafficWarnText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    lineHeight: 12,
   },
   labelBubble: {
     position: 'absolute',

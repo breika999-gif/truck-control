@@ -357,7 +357,7 @@ def gemini_chat():
                     "bt_driving_time_left_min", "bt_daily_driven_min", "bt_speed_kmh",
                     "weekly_status", "found_parking", "parking_cards",
                 ) if k in context}
-                res = _run_gpt4o_internal(user_msg, history, _gpt_ctx)
+                res = _run_gpt4o_internal(user_msg, server_history, _gpt_ctx, user_email=user_email)
                 return res.get("reply", "") if isinstance(res, dict) else ""
             return f"Грешка: {str(e)}"
 
@@ -379,7 +379,7 @@ def gemini_chat():
             "bt_driving_time_left_min", "bt_daily_driven_min", "bt_speed_kmh",
             "weekly_status", "found_parking", "parking_cards",
         ) if k in context}
-        gpt_res = _run_gpt4o_internal(user_msg, history, _gpt_ctx, user_email=user_email)
+        gpt_res = _run_gpt4o_internal(user_msg, server_history, _gpt_ctx, user_email=user_email)
     else:
         gpt_res = None
     action = gpt_res.get("action") if gpt_res else None

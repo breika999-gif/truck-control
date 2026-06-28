@@ -7,7 +7,7 @@ import { RouteResult } from '../api/directions';
 import { RouteOption, POICard, SavedPOI } from '../../../shared/services/backendApi';
 import { TruckPOI, POI_META } from '../api/poi';
 import { MapLayersConfig } from '../hooks/useMapUIState';
-import type { DriveSegmentsResult } from '../utils/driveSegments';
+import { buildDriveMilestonesGeoJSON, type DriveSegmentsResult } from '../utils/driveSegments';
 import type { GradeProfile } from '../utils/gradeProfile';
 
 interface MapLayersProps {
@@ -63,6 +63,17 @@ type RestrictionLayerPoint = {
 const POI_MARKER_SIZE = 36;
 const NUMERIC_RESTRICTION_FILTER = ['==', ['get', 'numeric'], true] as const;
 const ICON_RESTRICTION_FILTER = ['!=', ['get', 'numeric'], true] as const;
+const INCIDENT_ICON_IMAGE = [
+  'match',
+  ['get', 'category'],
+  'police',
+  'sign-danger-0',
+  'hazard',
+  'incident-accident',
+  'speed_camera',
+  'camera-icon',
+  'camera-icon',
+] as unknown as string;
 
 function buildLineGradient(stops: Array<{ fraction: number; color: string }>): unknown[] {
   const expression: unknown[] = ['interpolate', ['linear'], ['line-progress']];
@@ -115,7 +126,7 @@ function duplicateRestrictionOffset(index: number): [number, number] {
 }
 
 function toPointGeoJSON(
-  items: Array<{ lng: number; lat: number }>,
+  items: Array<{ lng: number; lat: number; category?: string }>,
 ): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
@@ -124,7 +135,7 @@ function toPointGeoJSON(
       .map((item, idx) => ({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [item.lng, item.lat] },
-        properties: { idx },
+        properties: { idx, category: item.category ?? 'speed_camera' },
       })),
   };
 }
@@ -336,6 +347,10 @@ const MapLayers: React.FC<MapLayersProps> = ({
   const gradeOverlayGeoJSON = React.useMemo(
     () => buildGradeOverlayGeoJSON(route, gradeProfile),
     [gradeProfile, route],
+  );
+  const driveMilestonesGeoJSON = React.useMemo(
+    () => buildDriveMilestonesGeoJSON(route, driveSegments),
+    [driveSegments, route],
   );
 
   const restrictionGeoJSON = React.useMemo<GeoJSON.FeatureCollection>(() => {
@@ -796,6 +811,57 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
+      {mapIsLoaded && driveMilestonesGeoJSON.features.length > 0 && (
+        <Mapbox.ShapeSource id="drive-milestones-source" shape={driveMilestonesGeoJSON}>
+          <Mapbox.CircleLayer
+            id="drive-milestones-halo"
+            slot="top"
+            minZoomLevel={5}
+            style={{
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 5, 9, 10, 12, 15, 16] as any,
+              circleColor: ['get', 'halo'] as any,
+              circleOpacity: lightMode ? 0.22 : 0.34,
+              circleBlur: 0.45,
+              circlePitchAlignment: 'viewport',
+              circleEmissiveStrength: lightMode ? 0 : 1.2,
+            } as any}
+          />
+          <Mapbox.CircleLayer
+            id="drive-milestones-dot"
+            slot="top"
+            minZoomLevel={5}
+            style={{
+              circleRadius: ['interpolate', ['linear'], ['zoom'], 5, 4.5, 10, 6.5, 15, 9] as any,
+              circleColor: ['get', 'color'] as any,
+              circleOpacity: 0.98,
+              circleStrokeColor: lightMode ? '#FFFFFF' : '#061426',
+              circleStrokeWidth: ['interpolate', ['linear'], ['zoom'], 5, 1.2, 12, 2, 16, 2.6] as any,
+              circlePitchAlignment: 'viewport',
+              circleEmissiveStrength: lightMode ? 0 : 1.25,
+            } as any}
+          />
+          <Mapbox.SymbolLayer
+            id="drive-milestones-label"
+            slot="top"
+            minZoomLevel={7}
+            style={{
+              textField: ['get', 'label'],
+              textSize: ['interpolate', ['linear'], ['zoom'], 7, 9, 12, 11, 16, 13] as any,
+              textColor: lightMode ? '#061426' : '#FFFFFF',
+              textHaloColor: lightMode ? '#FFFFFF' : '#061426',
+              textHaloWidth: 1.8,
+              textAnchor: 'bottom',
+              textOffset: [0, -1.1],
+              textAllowOverlap: false,
+              textIgnorePlacement: false,
+              textPitchAlignment: 'viewport',
+              textRotationAlignment: 'viewport',
+              textEmissiveStrength: lightMode ? 0 : 1,
+            } as any}
+          />
+        </Mapbox.ShapeSource>
+      )}
+
       {/* ── Route Arrows ── */}
       {mapIsLoaded && route && (
         <Mapbox.ShapeSource id="route-arrows-source" shape={{ type: 'Feature', properties: {}, geometry: route.geometry }}>
@@ -1110,7 +1176,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
         </Mapbox.ShapeSource>
       )}
 
-      {/* Camera pins — SymbolLayer */}
+      {/* Reported incident pins — camera, police, hazard */}
       {mapIsLoaded && cameraResults.length > 0 && (
         <Mapbox.ShapeSource
           id="camera-source"
@@ -1120,7 +1186,7 @@ const MapLayers: React.FC<MapLayersProps> = ({
             id="camera-symbols"
             slot="top"
             style={{
-              iconImage: 'camera-icon',
+              iconImage: INCIDENT_ICON_IMAGE,
               iconSize: ['interpolate', ['linear'], ['zoom'], 10, 0.45, 14, 0.85, 18, 1.3] as unknown as number,
               iconPitchAlignment: 'viewport',
               iconAllowOverlap: true,

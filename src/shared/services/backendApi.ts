@@ -66,6 +66,7 @@ export interface NearestFuel {
   name: string;
   distM: number;
 }
+export type IncidentReportType = 'speed_camera' | 'police' | 'hazard';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -569,21 +570,67 @@ export async function fetchReportedCameras(userEmail?: string): Promise<POICard[
   }));
 }
 
+const INCIDENT_CATEGORIES: IncidentReportType[] = ['speed_camera', 'police', 'hazard'];
+
+const INCIDENT_REPORT_META: Record<IncidentReportType, { name: string; address: string; notes: string }> = {
+  speed_camera: {
+    name: '📷 Докладвана камера',
+    address: 'Добавена от потребител',
+    notes: 'User reported speed camera',
+  },
+  police: {
+    name: '🚓 Полиция / контрол',
+    address: 'Добавено от потребител',
+    notes: 'User reported police control',
+  },
+  hazard: {
+    name: '⚠️ Опасност на пътя',
+    address: 'Добавено от потребител',
+    notes: 'User reported road hazard',
+  },
+};
+
+/** Fetch all user-reported incidents from the POI store. */
+export async function fetchReportedIncidents(userEmail?: string): Promise<POICard[]> {
+  const groups = await Promise.all(INCIDENT_CATEGORIES.map(category => listPOIs(category, userEmail)));
+  return groups.flat().map(p => ({
+    name: p.name,
+    lat: p.lat,
+    lng: p.lng,
+    distance_m: 0,
+    category: INCIDENT_CATEGORIES.includes(p.category as IncidentReportType)
+      ? p.category
+      : 'speed_camera',
+  }));
+}
+
+/** Report a camera, police control, or road hazard. */
+export async function reportIncident(
+  type: IncidentReportType,
+  lat: number,
+  lng: number,
+  userEmail?: string,
+): Promise<boolean> {
+  const meta = INCIDENT_REPORT_META[type];
+  const poi = await savePOI({
+    name: meta.name,
+    address: meta.address,
+    category: type,
+    lat,
+    lng,
+    notes: meta.notes,
+    user_email: userEmail,
+  });
+  return !!poi;
+}
+
 /** Report a new speed camera. */
 export async function reportCamera(
   lat: number,
   lng: number,
   userEmail?: string,
 ): Promise<boolean> {
-  try {
-    const res = await apiRequest<{ ok: boolean }>('/api/cameras/report', {
-      method: 'POST',
-      body: JSON.stringify({ lat, lng, user_email: userEmail }),
-    }, userEmail);
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return reportIncident('speed_camera', lat, lng, userEmail);
 }
 
 export async function fetchCamerasAlongRoute(
@@ -671,4 +718,3 @@ export async function fetchNearestFuel(
     return null;
   }
 }
-

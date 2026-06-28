@@ -400,6 +400,103 @@ def _tomtom_traffic_alerts(route: dict, geometry: dict) -> list:
         alerts.append({"lat": round(c[1], 5), "lng": round(c[0], 5), "delay_min": delay_min, "severity": sev, "length_km": length_km, "label": label})
     return alerts[:8]
 
+def _point_distance_to_route_m(lat: float, lng: float, coords: list) -> float:
+    if not coords:
+        return float("inf")
+    best = float("inf")
+    # Sample long polylines so live incident filtering stays cheap.
+    step = max(1, len(coords) // 300)
+    for coord in coords[::step]:
+        try:
+            best = min(best, _haversine_m(lat, lng, coord[1], coord[0]))
+        except Exception:
+            continue
+    return best
+
+def _incident_coord(geometry: dict) -> tuple[float, float] | None:
+    coords = geometry.get("coordinates")
+    if not coords:
+        return None
+    cursor = coords
+    while isinstance(cursor, list) and cursor and isinstance(cursor[0], list):
+        cursor = cursor[len(cursor) // 2]
+    if (
+        isinstance(cursor, list)
+        and len(cursor) >= 2
+        and isinstance(cursor[0], (int, float))
+        and isinstance(cursor[1], (int, float))
+    ):
+        return float(cursor[1]), float(cursor[0])
+    return None
+
+def _tomtom_live_incidents_along_route(geometry: dict, max_results: int = 12) -> list:
+    """Official TomTom Traffic Incidents API, filtered to the route corridor.
+
+    If the key has no incidents entitlement, or TomTom changes/blocks the call,
+    this intentionally returns [] so route calculation remains usable.
+    """
+    coords = geometry.get("coordinates", [])
+    if not _tomtom_ready or len(coords) < 2:
+        return []
+    try:
+        lngs = [c[0] for c in coords]
+        lats = [c[1] for c in coords]
+        pad = 0.08
+        bbox = f"{min(lngs) - pad},{min(lats) - pad},{max(lngs) + pad},{max(lats) + pad}"
+        fields = (
+            "{incidents{type,geometry{type,coordinates},properties{"
+            "iconCategory,magnitudeOfDelay,events{description,code},"
+            "from,to,length,delay,roadNumbers"
+            "}}}"
+        )
+        response = requests.get(
+            "https://api.tomtom.com/traffic/services/5/incidentDetails",
+            params={
+                "key": TOMTOM_API_KEY,
+                "bbox": bbox,
+                "fields": fields,
+                "language": "en-GB",
+                "timeValidityFilter": "present",
+            },
+            timeout=6,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        incidents = payload.get("incidents") or []
+        alerts = []
+        for incident in incidents:
+            coord = _incident_coord(incident.get("geometry") or {})
+            if not coord:
+                continue
+            lat, lng = coord
+            if _point_distance_to_route_m(lat, lng, coords) > 1200:
+                continue
+            props = incident.get("properties") or {}
+            events = props.get("events") or []
+            description = ""
+            if events and isinstance(events[0], dict):
+                description = events[0].get("description") or ""
+            category = str(props.get("iconCategory") or incident.get("type") or "").upper()
+            delay_min = max(0, round(float(props.get("delay") or 0) / 60))
+            magnitude = int(props.get("magnitudeOfDelay") or 0)
+            severity = "severe" if magnitude >= 4 or delay_min >= 20 else "heavy" if magnitude >= 3 or delay_min >= 8 else "moderate"
+            label_prefix = "🚧" if "ROAD" in category else "🚨" if "ACCIDENT" in category else "⚠️"
+            label = f"{label_prefix} {description or 'Traffic incident'}"
+            if delay_min > 0:
+                label = f"{label} +{delay_min} min"
+            alerts.append({
+                "lat": round(lat, 5),
+                "lng": round(lng, 5),
+                "delay_min": delay_min,
+                "severity": severity,
+                "length_km": round(max(0, float(props.get("length") or 0)) / 1000, 1),
+                "label": label,
+                "source": "tomtom_incidents",
+            })
+        return alerts[:max_results]
+    except Exception:
+        return []
+
 def _tomtom_speed_limits(route: dict) -> list:
     total_pts = sum(len(leg.get("points", [])) for leg in route.get("legs", []))
     if total_pts == 0: return []

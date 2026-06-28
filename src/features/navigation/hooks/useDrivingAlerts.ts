@@ -240,6 +240,7 @@ export function useDrivingAlerts({
     const userMatch = nearestRouteMatch(userCoords, routeCoords);
     const routeMeters = cumulativeRouteDistances(routeCoords);
     const nearest = cameraResults
+      .filter(c => !c.category || c.category === 'speed_camera')
       .filter(c => c.lat && c.lng)
       .map(c => {
         const cameraCoords: [number, number] = [c.lng as number, c.lat as number];

@@ -60,6 +60,7 @@ const MapUIOverlay: React.FC<MapUIOverlayProps> = memo((props) => {
         routeAheadPOIs={props.routeAheadPOIs}
         handleRouteTimelinePOIPress={props.handleRouteTimelinePOIPress}
         trafficSegments={props.trafficSegments}
+        driveSegments={props.driveSegments}
         fasterOffer={props.fasterOffer}
         handleAcceptFasterRoute={props.handleAcceptFasterRoute}
         dismissOffer={props.dismissOffer}

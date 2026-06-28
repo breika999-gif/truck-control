@@ -96,7 +96,10 @@ export const useMapGeoJSON = ({
       // If we are currently inside this segment, slice it
       if (userIdx > startIdx && userIdx <= endIdx) {
         const localIdx = userIdx - startIdx;
-        visibleCoords = [userCoords, ...fCoords.slice(localIdx)];
+        // Keep the traffic overlay snapped to route geometry. Prepending raw
+        // GPS coordinates can draw a diagonal line when the driver is slightly
+        // off-route or the matched index lands ahead of the current segment.
+        visibleCoords = fCoords.slice(Math.max(0, localIdx));
       }
 
       // Optimization: skip if segment starts too far ahead

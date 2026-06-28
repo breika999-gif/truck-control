@@ -9,12 +9,13 @@ import { MAP_CENTER } from '../../../shared/constants/config';
 import type { GoogleAccount } from '../../../shared/services/accountManager';
 import {
   checkTruckRestrictions,
-  reportCamera,
-  fetchReportedCameras,
+  reportIncident,
+  fetchReportedIncidents,
   searchNearbyParking,
   startRouteLog,
   completeRouteLog,
   type AppIntent,
+  type IncidentReportType,
   type POICard,
   type RouteOption,
   type TachoSummary,
@@ -789,16 +790,35 @@ export function useMapHandlers({
     }
   }, [setParkingResults, setSelectedFuel, setSelectedParking]);
 
-  const handleReportCamera = useCallback(async () => {
-    playCameraAlert();
-    if (userCoords) {
-      await reportCamera(userCoords[1], userCoords[0], googleUser?.email);
-      fetchReportedCameras(googleUser?.email).then(cams => {
-        if (cams.length > 0) setReportedCameras(cams);
-      }).catch(() => {});
+  const reportCurrentIncident = useCallback(async (type: IncidentReportType) => {
+    if (!userCoords) {
+      Alert.alert(i18n.t('alerts.noLocationTitle'), i18n.t('alerts.noLocationMessage'));
+      return;
     }
-    Alert.alert(i18n.t('alerts.thanks'), i18n.t('alerts.cameraReported'));
+    if (type === 'speed_camera') playCameraAlert();
+    const reported = await reportIncident(type, userCoords[1], userCoords[0], googleUser?.email);
+    if (!reported) {
+      Alert.alert(i18n.t('alerts.reportIncidentTitle'), i18n.t('alerts.reportFailed'));
+      return;
+    }
+    fetchReportedIncidents(googleUser?.email).then(incidents => {
+      setReportedCameras(incidents);
+    }).catch(() => {});
+    Alert.alert(i18n.t('alerts.thanks'), i18n.t('alerts.incidentReported'));
   }, [playCameraAlert, userCoords, googleUser, setReportedCameras]);
+
+  const handleReportCamera = useCallback(async () => {
+    Alert.alert(
+      i18n.t('alerts.reportIncidentTitle'),
+      i18n.t('alerts.reportIncidentMessage'),
+      [
+        { text: i18n.t('alerts.reportCamera'), onPress: () => { void reportCurrentIncident('speed_camera'); } },
+        { text: i18n.t('alerts.reportPolice'), onPress: () => { void reportCurrentIncident('police'); } },
+        { text: i18n.t('alerts.reportDanger'), onPress: () => { void reportCurrentIncident('hazard'); } },
+      ],
+      { cancelable: true },
+    );
+  }, [reportCurrentIncident]);
 
   const handleExportGPX = useCallback(() => {
     const coords = route?.geometry?.coordinates as Coords[] | undefined;

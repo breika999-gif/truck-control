@@ -191,10 +191,22 @@ export class TachoBleService {
 
     await connected.discoverAllServicesAndCharacteristics();
     const gattSummary = await this._describeGatt(connected);
+    const hasVdoLiveService = await this._hasService(connected, VDO_BLE_CONFIG.SERVICE_UUID);
+    const hasSe5000LiveService = await this._hasAnyService(
+      connected,
+      SE5000_BLE_CONFIG.SERVICES.map(service => service.uuid),
+    );
+
+    if (!hasVdoLiveService && !hasSe5000LiveService) {
+      await connected.cancelConnection().catch(() => undefined);
+      this.device = null;
+      onStatus('error', `${i18n.t('tacho.liveProfileMissing')} · ${gattSummary}`);
+      return;
+    }
+
     onStatus('connected', `${i18n.t('tacho.connectedDevice', { device: deviceName })} · ${gattSummary}`);
     this._startNoLiveDataTimer();
 
-    const hasVdoLiveService = await this._hasService(connected, VDO_BLE_CONFIG.SERVICE_UUID);
     if (hasVdoLiveService) {
       this._subscribeActivity(connected);
       this._subscribeHosTimes(connected);
@@ -202,11 +214,9 @@ export class TachoBleService {
       this._readVdoLiveOnce(connected);
     }
 
-    if (isSE5000Device(deviceName)) {
+    if (hasSe5000LiveService || isSE5000Device(deviceName)) {
       // Stoneridge SE5000 may expose standard ITS plus proprietary channels.
       this._subscribeSE5000Raw(connected);
-    } else if (!hasVdoLiveService) {
-      this._reportConnectedDiagnostic(i18n.t('tacho.waitingLiveDataStatus'));
     }
   }
 
@@ -288,6 +298,12 @@ export class TachoBleService {
   private async _hasService(device: Device, serviceUuid: string): Promise<boolean> {
     const services = await device.services().catch(() => []);
     return services.some(service => service.uuid.toLowerCase() === serviceUuid.toLowerCase());
+  }
+
+  private async _hasAnyService(device: Device, serviceUuids: string[]): Promise<boolean> {
+    const wanted = new Set(serviceUuids.map(uuid => uuid.toLowerCase()));
+    const services = await device.services().catch(() => []);
+    return services.some(service => wanted.has(service.uuid.toLowerCase()));
   }
 
   private async _describeGatt(device: Device): Promise<string> {

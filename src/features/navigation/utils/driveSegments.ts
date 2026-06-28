@@ -1,4 +1,5 @@
 import type { RouteResult, RouteStep } from '../api/directions';
+import type * as GeoJSON from 'geojson';
 import { gradeMultiplier, type GradeProfile } from './gradeProfile';
 import { HOS_CONTINUOUS_DRIVE_LIMIT_S } from '../../../shared/constants/hosRules';
 
@@ -22,6 +23,8 @@ export interface DriveSegmentsResult {
   gradientStops: Array<{ fraction: number; color: string }>;
   restPoints: Array<{ coords: [number, number]; restHours: 9 | 11 }>;
 }
+
+type DriveMilestoneKind = 'first_period' | 'second_period' | 'extension' | 'rest';
 
 export interface TrafficDelay {
   distM: number;
@@ -253,4 +256,69 @@ export function calculateDriveSegments(
   }
 
   return { gradientStops, restPoints };
+}
+
+function milestoneForTransition(
+  previousColor: string | null,
+  nextColor: string,
+): { kind: DriveMilestoneKind; label: string; color: string; halo: string } | null {
+  if (nextColor === PURPLE) {
+    return { kind: 'first_period', label: '4.5h', color: PURPLE, halo: '#13D9FF' };
+  }
+  if (nextColor === YELLOW) {
+    return { kind: 'second_period', label: '9h', color: YELLOW, halo: '#7B61FF' };
+  }
+  if (nextColor === RED) {
+    return previousColor === YELLOW
+      ? { kind: 'extension', label: '+1h', color: RED, halo: '#F1C40F' }
+      : { kind: 'rest', label: 'REST', color: RED, halo: '#FF9500' };
+  }
+  return null;
+}
+
+export function buildDriveMilestonesGeoJSON(
+  route: RouteResult | null,
+  driveSegments: DriveSegmentsResult | null | undefined,
+): GeoJSON.FeatureCollection {
+  const coords = route?.geometry.coordinates ?? [];
+  const stops = driveSegments?.gradientStops ?? [];
+  if (coords.length < 2 || stops.length < 2) {
+    return { type: 'FeatureCollection', features: [] };
+  }
+
+  const features: GeoJSON.Feature<GeoJSON.Point>[] = [];
+  let previousDistinctColor: string | null = stops[0]?.color ?? null;
+  let lastMilestoneFraction = -Infinity;
+
+  for (let index = 1; index < stops.length; index += 1) {
+    const stop = stops[index];
+    if (stop.color === previousDistinctColor) continue;
+
+    const milestone = milestoneForTransition(previousDistinctColor, stop.color);
+    previousDistinctColor = stop.color;
+    if (!milestone) continue;
+
+    const fraction = clampFraction(stop.fraction);
+    if (fraction <= 0.001 || fraction >= 0.999) continue;
+    if (Math.abs(fraction - lastMilestoneFraction) < 0.002) continue;
+
+    const point = coordinateAtFraction(coords, fraction);
+    if (!point) continue;
+    lastMilestoneFraction = fraction;
+
+    features.push({
+      type: 'Feature',
+      id: `drive-milestone-${features.length}`,
+      properties: {
+        kind: milestone.kind,
+        label: milestone.label,
+        color: milestone.color,
+        halo: milestone.halo,
+        fraction,
+      },
+      geometry: { type: 'Point', coordinates: point.coords },
+    });
+  }
+
+  return { type: 'FeatureCollection', features };
 }

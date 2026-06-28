@@ -17,7 +17,7 @@ const NavigationPuck: React.FC<NavigationPuckProps> = ({
   isTracking,
 }) => (
   <LocationPuck
-    puckBearingEnabled={speed > 3}
+    puckBearingEnabled={speed > 1}
     puckBearing="course"
     topImage="nav-arrow"
     bearingImage="nav-arrow"

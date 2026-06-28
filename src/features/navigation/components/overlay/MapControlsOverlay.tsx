@@ -508,7 +508,7 @@ const MapControlsOverlay: React.FC<MapControlsOverlayProps> = ({
           style={reportButtonStyle}
           activeOpacity={0.75}
         >
-          <Text style={styles.fabIconText}>📷</Text>
+          <Text style={styles.fabIconText}>🚨</Text>
         </TouchableOpacity>
       )}
 

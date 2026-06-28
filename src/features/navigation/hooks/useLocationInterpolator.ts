@@ -78,10 +78,14 @@ export function useLocationInterpolator(
       }
     };
 
-    // 50 ms ≈ 20 fps — GPS fires at 1 Hz; 60-fps rAF caused constant MapScreen re-renders
-    rafRef.current = setInterval(tick, 50) as unknown as number;
+    const loop = () => {
+      tick();
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
     return () => {
-      if (rafRef.current != null) clearInterval(rafRef.current);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 

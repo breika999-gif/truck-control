@@ -569,7 +569,7 @@ export const StableCamera = React.memo(
         followPitch={followPitch}
         followPadding={navigating ? NAV_PADDING : ZERO_PADDING}
         animationMode="easeTo"
-        animationDuration={100}
+        animationDuration={500}
       />
     );
   },

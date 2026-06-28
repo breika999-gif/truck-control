@@ -34,6 +34,7 @@ interface SearchGuidanceOverlayProps {
   routeAheadPOIs: Loose[];
   handleRouteTimelinePOIPress: Loose;
   trafficSegments: Loose[];
+  driveSegments: Loose;
   fasterOffer: Loose;
   handleAcceptFasterRoute: Loose;
   dismissOffer: Loose;
@@ -64,6 +65,7 @@ const SearchGuidanceOverlay: React.FC<SearchGuidanceOverlayProps> = ({
   routeAheadPOIs,
   handleRouteTimelinePOIPress,
   trafficSegments,
+  driveSegments,
   fasterOffer,
   handleAcceptFasterRoute,
   dismissOffer,
@@ -114,6 +116,7 @@ const SearchGuidanceOverlay: React.FC<SearchGuidanceOverlayProps> = ({
         totalDistM={route.distance}
         onPOIPress={handleRouteTimelinePOIPress}
         trafficSegments={trafficSegments}
+        driveSegments={driveSegments}
       />
     )}
 

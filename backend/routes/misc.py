@@ -8,7 +8,8 @@ from utils.redis_client import get_redis
 from services.tomtom_service import (
     _tomtom_route_to_geojson, _tomtom_lane_banner,
     _tomtom_speed_limits, _tomtom_congestion_geojson, _tomtom_traffic_alerts,
-    _adr_to_tunnel_code, _mapbox_match_geometry, _mapbox_openlr_match, _find_openlr_code
+    _tomtom_live_incidents_along_route, _adr_to_tunnel_code, _mapbox_match_geometry,
+    _mapbox_openlr_match, _find_openlr_code
 )
 from services.gpt_service import client
 
@@ -865,7 +866,7 @@ def calculate_route():
             if snapped_primary else
             _tomtom_congestion_geojson(rt, raw_geom)
         )
-        traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom)
+        traffic_alerts = _tomtom_traffic_alerts(rt, raw_geom) + _tomtom_live_incidents_along_route(raw_geom)
         restrictions = _extract_route_restrictions(geom, fast=True) if include_restrictions and total_m <= 400000 else []
 
         final = {"geometry": geom, "distance": total_m, "duration": summary.get("travelTimeInSeconds", 0), "traffic_delay": summary.get("trafficDelayInSeconds", 0), "steps": steps, "maxspeeds": _tomtom_speed_limits(rt), "congestionGeoJSON": congestion_geojson, "traffic_alerts": traffic_alerts, "restrictions": restrictions, "alternatives": alternatives, "optimizedWaypointOrder": [w.get("providedIndex") for w in rt.get("optimizedWaypoints", [])] if data.get("optimize") else None}

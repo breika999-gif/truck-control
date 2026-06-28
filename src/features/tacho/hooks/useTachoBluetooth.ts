@@ -87,6 +87,7 @@ let sharedService: TachoBleService | null = null;
 let lastActiveUpdateAt = 0;
 let didCleanupOldEntries = false;
 let cachedUserEmail: string | null | undefined;
+let pendingSaveDevice: Device | null = null;
 const listeners = new Set<(state: TachoBleState) => void>();
 
 function emitState(next: TachoBleState) {
@@ -143,7 +144,26 @@ async function saveLastDevice(device: Device): Promise<void> {
   }
 }
 
+async function clearLastDevice(): Promise<void> {
+  patchState({ lastDevice: null });
+  try {
+    await AsyncStorage.removeItem(LAST_TACHO_DEVICE_KEY);
+  } catch {
+    // Ignore storage failures; the next scan can still select a device.
+  }
+}
+
 function handleStatus(status: BleStatus, msg?: string) {
+  if (status === 'connected' && pendingSaveDevice) {
+    saveLastDevice(pendingSaveDevice).catch(() => {/* silent */});
+    pendingSaveDevice = null;
+  } else if (status === 'error' || status === 'idle') {
+    if (status === 'error' && msg?.startsWith(i18n.t('tacho.liveProfileMissing'))) {
+      clearLastDevice().catch(() => {/* silent */});
+    }
+    pendingSaveDevice = null;
+  }
+
   patchState({
     status,
     statusMsg: msg ?? sharedState.statusMsg,
@@ -177,7 +197,7 @@ function handleRawPacket(pkt: Se5000RawPacket) {
 
 function connectToKnownOrSelectedDevice(device: Device) {
   patchState({ deviceName: device.name ?? device.localName ?? device.id, rawPackets: [] });
-  saveLastDevice(device).catch(() => {/* silent */});
+  pendingSaveDevice = device;
   ensureService().connectToTacho(device, handleData, handleStatus, handleRawPacket);
 }
 

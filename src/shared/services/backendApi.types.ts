@@ -16,6 +16,7 @@ export interface POICard {
   lat: number;
   lng: number;
   distance_m: number;
+  category?: string;
   travel_time?: number;
   detour_time?: number;
   transparking_id?: string;

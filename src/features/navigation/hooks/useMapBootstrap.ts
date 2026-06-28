@@ -4,7 +4,7 @@ import type * as GeoJSON from 'geojson';
 
 import { BACKEND_URL } from '../../../shared/constants/config';
 import type { VehicleProfile } from '../../../shared/types/vehicle';
-import { fetchReportedCameras, pingBackend, type POICard } from '../../../shared/services/backendApi';
+import { fetchReportedIncidents, pingBackend, type POICard } from '../../../shared/services/backendApi';
 import type { RouteResult } from '../api/directions';
 import { HOS_LIMIT_S } from '../utils/mapUtils';
 import {
@@ -68,8 +68,8 @@ export function useMapBootstrap({
 
   useEffect(() => {
     if (!route) return;
-    fetchReportedCameras(userEmailRef.current?.email)
-      .then(cameras => { if (cameras.length > 0) setReportedCameras(cameras); })
+    fetchReportedIncidents(userEmailRef.current?.email)
+      .then(incidents => { if (incidents.length > 0) setReportedCameras(incidents); })
       .catch(() => {});
   }, [route, userEmailRef]);
 
