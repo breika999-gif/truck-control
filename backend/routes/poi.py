@@ -1,5 +1,6 @@
 import math
 import requests
+from datetime import datetime, timedelta, timezone
 from flask import Blueprint, g, jsonify, request
 from database import get_db, row_to_poi, _transparking_match
 from utils.auth import require_auth, require_auth_or_app_token
@@ -181,6 +182,8 @@ def _transparking_along_route(coords: list, max_results: int = 20) -> list:
     return results[:max_results]
 
 poi_bp = Blueprint('poi', __name__)
+_SHARED_INCIDENT_CATEGORIES = {"speed_camera", "police", "hazard"}
+_SHARED_INCIDENT_TTL_HOURS = 6
 
 def _validated_route_coords(coords):
     if not isinstance(coords, list):
@@ -202,12 +205,23 @@ def list_pois():
     cat = request.args.get("category")
     limit = min(max(request.args.get("limit", default=100, type=int) or 100, 1), 500)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
+    shared = request.args.get("shared") in ("1", "true", "yes")
     with get_db() as conn:
-        if cat:
+        if shared and cat in _SHARED_INCIDENT_CATEGORIES:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=_SHARED_INCIDENT_TTL_HOURS)).isoformat()
+            rows = conn.execute(
+                "SELECT * FROM pois WHERE category=? AND created_at>=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (cat, cutoff, limit, offset),
+            ).fetchall()
+        elif cat:
             rows = conn.execute("SELECT * FROM pois WHERE category=? AND user_email=? ORDER BY created_at DESC LIMIT ? OFFSET ?", (cat, email, limit, offset)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM pois WHERE user_email=? ORDER BY created_at DESC LIMIT ? OFFSET ?", (email, limit, offset)).fetchall()
-    return jsonify({"ok": True, "pois": [row_to_poi(r) for r in rows]})
+    pois = [row_to_poi(r) for r in rows]
+    if shared and cat in _SHARED_INCIDENT_CATEGORIES:
+        for poi in pois:
+            poi["user_email"] = "anonymous"
+    return jsonify({"ok": True, "pois": pois})
 
 @poi_bp.post("/api/pois")
 @require_auth

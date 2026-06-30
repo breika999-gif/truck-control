@@ -623,6 +623,8 @@
     "reportPolice": "Полиция",
     "reportDanger": "Опасност",
     "reportFailed": "Не успях да запиша доклада. Провери връзката и пробвай пак.",
+    "openSharedLocationTitle": "Отвори в TruckExpoAI?",
+    "openSharedLocationMessage": "Да направя маршрут за камион до {{name}}?",
     "noLocationTitle": "Няма GPS",
     "noLocationMessage": "Изчакай позицията да се хване и пробвай пак.",
     "exportRouteFirst": "Изберете маршрут, преди да го експортирате.",

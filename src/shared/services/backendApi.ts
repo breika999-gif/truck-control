@@ -560,7 +560,7 @@ export async function fetchProximityAlerts(
 
 /** Fetch all user-reported speed cameras from the POI store. */
 export async function fetchReportedCameras(userEmail?: string): Promise<POICard[]> {
-  const pois = await listPOIs('speed_camera', userEmail);
+  const pois = await listSharedIncidentPOIs('speed_camera', userEmail);
   return pois.map(p => ({
     name: p.name,
     lat: p.lat,
@@ -590,9 +590,27 @@ const INCIDENT_REPORT_META: Record<IncidentReportType, { name: string; address: 
   },
 };
 
+async function listSharedIncidentPOIs(category: IncidentReportType, userEmail?: string): Promise<SavedPOI[]> {
+  try {
+    const params = new URLSearchParams({
+      category,
+      shared: '1',
+      limit: '200',
+    });
+    const res = await apiRequest<{ ok: boolean; pois: SavedPOI[] }>(
+      `/api/pois?${params.toString()}`,
+      {},
+      userEmail,
+    );
+    return res.ok ? res.pois : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Fetch all user-reported incidents from the POI store. */
 export async function fetchReportedIncidents(userEmail?: string): Promise<POICard[]> {
-  const groups = await Promise.all(INCIDENT_CATEGORIES.map(category => listPOIs(category, userEmail)));
+  const groups = await Promise.all(INCIDENT_CATEGORIES.map(category => listSharedIncidentPOIs(category, userEmail)));
   return groups.flat().map(p => ({
     name: p.name,
     lat: p.lat,

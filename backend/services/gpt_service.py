@@ -241,6 +241,73 @@ def _approach_point(context: dict, fallback_lat, fallback_lng) -> tuple[float, f
     except (TypeError, ValueError):
         return float(fallback_lat), float(fallback_lng)
 
+def _extract_first_json_object(text: str) -> dict | None:
+    if not text:
+        return None
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+def _raw_nav_action_to_tool_action(raw_action: dict | None, context: dict) -> dict | None:
+    if not isinstance(raw_action, dict):
+        return None
+    name = raw_action.get("action")
+    if name == "message":
+        return _raw_nav_action_to_tool_action(_extract_first_json_object(raw_action.get("text") or raw_action.get("message") or ""), context)
+
+    try:
+        location = raw_action.get("location") if isinstance(raw_action.get("location"), dict) else {}
+        lat = raw_action.get("lat", raw_action.get("latitude", raw_action.get("dest_lat", location.get("lat", context.get("lat")))))
+        lng = raw_action.get("lng", raw_action.get("longitude", raw_action.get("dest_lng", location.get("lng", context.get("lng")))))
+        if lat is None or lng is None:
+            return None
+        lat, lng = float(lat), float(lng)
+
+        if name in ("find_fuel_stations", "get_nearby_fuel"):
+            from services.poi_service import _tool_find_fuel
+            raw = _tool_find_fuel(lat, lng, raw_action.get("radius_m", 50000))
+            cards = [{"name": s.get("name", "Бензиностанция"), "lat": s["lat"], "lng": s["lng"],
+                      "distance_m": s.get("distance_m", 0), "brand": s.get("brand"),
+                      "truck_lane": s.get("truck_lane", False), "opening_hours": s.get("opening_hours"),
+                      "phone": s.get("phone")} for s in raw[:4] if "lat" in s and "lng" in s]
+            return {"action": "show_pois", "category": "fuel", "cards": cards}
+
+        if name == "find_speed_cameras":
+            from services.poi_service import _tool_find_speed_cameras
+            res = _tool_find_speed_cameras(lat, lng, raw_action.get("radius_m", 10000))
+            cards = [{"name": "📷 Камера {} км/ч".format(cam["maxspeed"]) if cam.get("maxspeed") else "📷 Камера",
+                      "lat": cam["lat"], "lng": cam["lng"], "distance_m": cam["distance_m"],
+                      "maxspeed": cam.get("maxspeed")} for cam in res.get("cameras", [])[:8]]
+            return {"action": "show_pois", "category": "speed_camera", "cards": cards, "nearest_m": res.get("nearest_m", -1)}
+
+        if name == "find_truck_parking":
+            from services.poi_service import _tool_find_truck_parking
+            search_lat, search_lng = _approach_point(context, lat, lng)
+            raw = [dict(p) for p in _tool_find_truck_parking(search_lat, search_lng, raw_action.get("radius_m", 5000))]
+            driver_lat = context.get("lat")
+            driver_lng = context.get("lng")
+            if driver_lat is not None and driver_lng is not None:
+                for p in raw:
+                    if p.get("lat") is not None and p.get("lng") is not None:
+                        p["distance_m"] = _haversine_m(float(driver_lat), float(driver_lng), float(p["lat"]), float(p["lng"]))
+            cards = [{"name": p["name"], "lat": p["lat"], "lng": p["lng"], "distance_m": p.get("distance_m", 0),
+                      "paid": p.get("paid", False), "showers": p.get("showers", False),
+                      "toilets": p.get("toilets", False), "wifi": p.get("wifi", False),
+                      "security": p.get("security", False), "lighting": p.get("lighting", False),
+                      "capacity": p.get("capacity"), "website": p.get("website"),
+                      "transparking_id": p.get("transparking_id"),
+                      "opening_hours": p.get("opening_hours"), "phone": p.get("phone"),
+                      "voice_desc": _build_voice_desc(p)} for p in raw[:5] if p.get("lat") is not None and p.get("lng") is not None]
+            return {"action": "show_pois", "category": "truck_stop", "cards": cards}
+    except Exception:
+        return None
+    return None
+
 def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email: str = "") -> dict:
     if not _gpt4o_ready: return {"ok": False, "error": "GPT-4o не е конфигуриран."}
     _cache_key = user_msg.strip().lower() if not history and not context.get("lat") else None
@@ -549,6 +616,14 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
 
     reply = " ".join(accumulated_content).strip()
     if action:
+        action = _raw_nav_action_to_tool_action(action, context) or action
+    elif reply:
+        parsed_action = _extract_first_json_object(_strip_md_fence(reply))
+        normalized_action = _raw_nav_action_to_tool_action(parsed_action, context)
+        if normalized_action:
+            action = normalized_action
+
+    if action:
         act_type = action.get("action")
         if act_type == "route": display_text = f"Прокладвам маршрут до {action.get('destination', '')}."
         elif act_type == "show_pois":
@@ -569,7 +644,7 @@ def _run_gpt4o_internal(user_msg: str, history: list, context: dict, user_email:
             try:
                 parsed = json.loads(reply_clean)
                 if parsed.get("action") and parsed.get("action") != "message":
-                    action = parsed
+                    action = _raw_nav_action_to_tool_action(parsed, context) or parsed
                     display_text = parsed.get("message") or parsed.get("text") or ""
                 else: display_text = parsed.get("text") or parsed.get("message") or reply
             except: display_text = reply_clean

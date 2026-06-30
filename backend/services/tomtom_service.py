@@ -21,6 +21,10 @@ _MATCH_CACHE_TTL_S = 180 * 86400  # snapped geometry is stable enough to reuse l
 _MATCH_CACHE_PREFIX = "route_match:"
 _SEARCH_CACHE_TTL_S = 30 * 86400
 _NEGATIVE_CACHE_TTL_S = 3600
+_INCIDENT_CACHE_TTL_S = 300
+_INCIDENT_CACHE_PREFIX = "tomtom_incidents:"
+_incident_cache: dict = {}
+_incident_cache_lock = threading.Lock()
 
 _TT_MANEUVER_DIR = {
     "TURN_LEFT":        "left",
@@ -429,6 +433,73 @@ def _incident_coord(geometry: dict) -> tuple[float, float] | None:
         return float(cursor[1]), float(cursor[0])
     return None
 
+def _incident_cache_key(coords: list) -> tuple[str, str] | None:
+    if len(coords) < 2:
+        return None
+    lngs = [c[0] for c in coords]
+    lats = [c[1] for c in coords]
+    pad = 0.08
+    left = round(min(lngs) - pad, 2)
+    bottom = round(min(lats) - pad, 2)
+    right = round(max(lngs) + pad, 2)
+    top = round(max(lats) + pad, 2)
+    bbox = f"{left},{bottom},{right},{top}"
+    key = hashlib.sha1(bbox.encode("utf-8")).hexdigest()
+    return key, bbox
+
+def _tomtom_incidents_for_bbox(cache_key: str, bbox: str) -> list:
+    now = time.time()
+    with _incident_cache_lock:
+        cached = _incident_cache.get(cache_key)
+        if cached:
+            ts, value = cached
+            if now - ts <= _INCIDENT_CACHE_TTL_S:
+                return value
+            _incident_cache.pop(cache_key, None)
+
+    try:
+        client = get_redis()
+        if client is not None:
+            raw = client.get(f"{_INCIDENT_CACHE_PREFIX}{cache_key}")
+            if raw:
+                value = json.loads(raw)
+                with _incident_cache_lock:
+                    _incident_cache[cache_key] = (now, value)
+                return value
+    except Exception:
+        pass
+
+    fields = (
+        "{incidents{type,geometry{type,coordinates},properties{"
+        "iconCategory,magnitudeOfDelay,events{description,code},"
+        "from,to,length,delay,roadNumbers"
+        "}}}"
+    )
+    response = requests.get(
+        "https://api.tomtom.com/traffic/services/5/incidentDetails",
+        params={
+            "key": TOMTOM_API_KEY,
+            "bbox": bbox,
+            "fields": fields,
+            "language": "en-GB",
+            "timeValidityFilter": "present",
+        },
+        timeout=6,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    incidents = payload.get("incidents") or []
+
+    with _incident_cache_lock:
+        _incident_cache[cache_key] = (now, incidents)
+    try:
+        client = get_redis()
+        if client is not None:
+            client.setex(f"{_INCIDENT_CACHE_PREFIX}{cache_key}", _INCIDENT_CACHE_TTL_S, json.dumps(incidents))
+    except Exception:
+        pass
+    return incidents
+
 def _tomtom_live_incidents_along_route(geometry: dict, max_results: int = 12) -> list:
     """Official TomTom Traffic Incidents API, filtered to the route corridor.
 
@@ -439,30 +510,11 @@ def _tomtom_live_incidents_along_route(geometry: dict, max_results: int = 12) ->
     if not _tomtom_ready or len(coords) < 2:
         return []
     try:
-        lngs = [c[0] for c in coords]
-        lats = [c[1] for c in coords]
-        pad = 0.08
-        bbox = f"{min(lngs) - pad},{min(lats) - pad},{max(lngs) + pad},{max(lats) + pad}"
-        fields = (
-            "{incidents{type,geometry{type,coordinates},properties{"
-            "iconCategory,magnitudeOfDelay,events{description,code},"
-            "from,to,length,delay,roadNumbers"
-            "}}}"
-        )
-        response = requests.get(
-            "https://api.tomtom.com/traffic/services/5/incidentDetails",
-            params={
-                "key": TOMTOM_API_KEY,
-                "bbox": bbox,
-                "fields": fields,
-                "language": "en-GB",
-                "timeValidityFilter": "present",
-            },
-            timeout=6,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        incidents = payload.get("incidents") or []
+        cache_info = _incident_cache_key(coords)
+        if not cache_info:
+            return []
+        cache_key, bbox = cache_info
+        incidents = _tomtom_incidents_for_bbox(cache_key, bbox)
         alerts = []
         for incident in incidents:
             coord = _incident_coord(incident.get("geometry") or {})

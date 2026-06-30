@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
-import { View } from 'react-native';
+import { Alert, View } from 'react-native';
 import Mapbox from '@rnmapbox/maps';
 import { useTranslation } from 'react-i18next';
 
@@ -56,6 +56,11 @@ import { useMapAlerts } from '../hooks/useMapAlerts';
 import { useMapTracking } from '../hooks/useMapTracking';
 import { useMapRoutePresentation } from '../hooks/useMapRoutePresentation';
 import { useAndroidAuto } from '../../androidauto/useAndroidAuto';
+import {
+  parseIncomingNavigation,
+  subscribeIncomingShares,
+  subscribeIncomingUrls,
+} from '../../../shared/services/incomingNavigation';
 
 type MapNavProp = NativeStackNavigationProp<RootStackParamList, 'Map'>;
 type MapRouteProp = RouteProp<RootStackParamList, 'Map'>;
@@ -245,6 +250,43 @@ const MapScreen: React.FC = () => {
   useLayoutEffect(() => {
     orchestratorUserCoordsRef.current = userCoordsRef.current;
   }, [orchestratorUserCoordsRef, userCoords, userCoordsRef]);
+
+  const incomingNavigationHandledRef = useRef<Set<string>>(new Set());
+  const handleIncomingNavigation = useCallback((raw: string) => {
+    const key = raw.trim();
+    if (!key || incomingNavigationHandledRef.current.has(key)) return;
+    incomingNavigationHandledRef.current.add(key);
+    parseIncomingNavigation(key, userCoordsRef.current).then(target => {
+      if (!target) return;
+      Alert.alert(
+        t('alerts.openSharedLocationTitle', { defaultValue: 'Open in TruckExpoAI?' }),
+        t('alerts.openSharedLocationMessage', {
+          defaultValue: 'Create a truck route to {{name}}?',
+          name: target.name,
+        }),
+        [
+          { text: t('common.cancel', { defaultValue: 'Cancel' }), style: 'cancel' },
+          {
+            text: t('common.navigate', { defaultValue: 'Navigate' }),
+            onPress: () => {
+              navigateTo(target.coords, target.name).catch((err: unknown) => {
+                console.error('incoming navigateTo failed:', err);
+              });
+            },
+          },
+        ],
+      );
+    }).catch(() => {});
+  }, [navigateTo, t, userCoordsRef]);
+
+  useEffect(() => {
+    const unsubscribeUrls = subscribeIncomingUrls(handleIncomingNavigation);
+    const unsubscribeShares = subscribeIncomingShares(handleIncomingNavigation);
+    return () => {
+      unsubscribeUrls();
+      unsubscribeShares();
+    };
+  }, [handleIncomingNavigation]);
 
   const handledDispatcherPlanRef = useRef<string | null>(null);
   useEffect(() => {

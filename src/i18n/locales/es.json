@@ -623,6 +623,8 @@
     "reportPolice": "Policía",
     "reportDanger": "Peligro",
     "reportFailed": "No se pudo guardar el aviso. Comprueba la conexión e inténtalo de nuevo.",
+    "openSharedLocationTitle": "¿Abrir en TruckExpoAI?",
+    "openSharedLocationMessage": "¿Crear una ruta para camión hasta {{name}}?",
     "noLocationTitle": "Sin GPS",
     "noLocationMessage": "Espera a que se fije la posición e inténtalo de nuevo.",
     "exportRouteFirst": "Primero calcula una ruta.",

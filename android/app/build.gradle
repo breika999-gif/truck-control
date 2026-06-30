@@ -73,6 +73,10 @@ def enableProguardInReleaseBuilds = false
  * this variant is about 6MiB larger per architecture than default.
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+def googleMapsApiKey = (project.ext.env?.get("GOOGLE_MAPS_API_KEY")
+        ?: project.ext.env?.get("GOOGLE_PLACES_KEY")
+        ?: System.getenv("GOOGLE_MAPS_API_KEY")
+        ?: "")
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -91,7 +95,10 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        manifestPlaceholders = [usesCleartextTraffic: false]
+        manifestPlaceholders = [
+                usesCleartextTraffic: false,
+                googleMapsApiKey: googleMapsApiKey,
+        ]
         ndk {
             abiFilters "arm64-v8a", "armeabi-v7a"
         }

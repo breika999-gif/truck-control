@@ -3,6 +3,7 @@ import json
 import requests
 import concurrent.futures
 import math
+import time
 from config import GOOGLE_PLACES_KEY, TOMTOM_API_KEY
 from utils.helpers import _haversine_m
 from utils.redis_client import get_redis
@@ -12,6 +13,8 @@ _places_ready = bool(GOOGLE_PLACES_KEY)
 _tomtom_ready = bool(TOMTOM_API_KEY)
 _GOOGLE_SEARCH_CACHE_TTL_S = 30 * 86400
 _NEGATIVE_CACHE_TTL_S = 3600
+_OVERPASS_CACHE_TTL_S = 24 * 3600
+_overpass_memory_cache: dict[str, tuple[float, dict]] = {}
 
 def _google_places_fallback(query: str, lat: float, lng: float) -> list:
     if not _places_ready: return []
@@ -59,6 +62,45 @@ def _safe_radius(v, max_m: int = 500_000) -> int:
     i = int(float(v))
     if not (0 < i <= max_m): raise ValueError(f"radius out of range: {i}")
     return i
+
+def _overpass_cache_key(kind: str, lat: float, lng: float, radius_m: int) -> str:
+    rounded_lat = round(lat, 3)
+    rounded_lng = round(lng, 3)
+    radius_bucket = int(math.ceil(radius_m / 1000) * 1000)
+    raw = f"{kind}:{rounded_lat}:{rounded_lng}:{radius_bucket}"
+    return "overpass:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+def _overpass_cache_get(key: str) -> dict | None:
+    cached = _overpass_memory_cache.get(key)
+    if cached:
+        expires_at, value = cached
+        if expires_at > time.time():
+            return value
+        _overpass_memory_cache.pop(key, None)
+    client = get_redis()
+    if client:
+        try:
+            raw = client.get(key)
+            if raw:
+                value = json.loads(raw)
+                _overpass_memory_cache[key] = (time.time() + _OVERPASS_CACHE_TTL_S, value)
+                return value
+        except Exception:
+            pass
+    return None
+
+def _overpass_cache_set(key: str, value: dict) -> None:
+    expires_at = time.time() + _OVERPASS_CACHE_TTL_S
+    _overpass_memory_cache[key] = (expires_at, value)
+    if len(_overpass_memory_cache) > 500:
+        oldest = min(_overpass_memory_cache, key=lambda item: _overpass_memory_cache[item][0])
+        _overpass_memory_cache.pop(oldest, None)
+    client = get_redis()
+    if client:
+        try:
+            client.setex(key, _OVERPASS_CACHE_TTL_S, json.dumps(value, default=str))
+        except Exception:
+            pass
 
 def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> list:
     lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m)
@@ -116,6 +158,10 @@ def _tool_find_truck_parking(lat: float, lng: float, radius_m: int = 20000) -> l
 def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> dict:
     try:
         lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m, max_m=100_000)
+        cache_key = _overpass_cache_key("speed_cameras", lat, lng, radius_m)
+        cached = _overpass_cache_get(cache_key)
+        if cached is not None:
+            return cached
         q = f'[out:json][timeout:10];node["highway"="speed_camera"](around:{radius_m},{lat},{lng});out 15;'
         r = requests.post("https://overpass-api.de/api/interpreter", data={"data": q}, timeout=15)
         cameras = []
@@ -123,7 +169,9 @@ def _tool_find_speed_cameras(lat: float, lng: float, radius_m: int = 10000) -> d
             dist = round(_haversine_m(lat, lng, el["lat"], el["lon"]))
             cameras.append({"lat": el["lat"], "lng": el["lon"], "maxspeed": el.get("tags", {}).get("maxspeed"), "distance_m": dist})
         cameras.sort(key=lambda x: x["distance_m"])
-        return {"cameras": cameras, "nearest_m": cameras[0]["distance_m"] if cameras else -1}
+        result = {"cameras": cameras, "nearest_m": cameras[0]["distance_m"] if cameras else -1}
+        _overpass_cache_set(cache_key, result)
+        return result
     except Exception as e: return {"cameras": [], "nearest_m": -1, "error": str(e)}
 
 def _tool_find_fuel(lat: float, lng: float, radius_m: int = 50000) -> list:
@@ -155,6 +203,10 @@ def _enrich_business_with_places(biz: dict) -> dict: return biz
 
 def _tool_find_overtaking_restrictions(lat: float, lng: float, radius_m: int = 5000) -> dict:
     lat, lng, radius_m = _safe_lat(lat), _safe_lng(lng), _safe_radius(radius_m, max_m=100_000)
+    cache_key = _overpass_cache_key("overtaking", lat, lng, radius_m)
+    cached = _overpass_cache_get(cache_key)
+    if cached is not None:
+        return cached
     lat_delta = radius_m / 111_320
     lng_delta = radius_m / max(1, 111_320 * math.cos(math.radians(lat)))
     south = lat - lat_delta
@@ -213,6 +265,8 @@ out body geom;
                 "geometry": geometry or None,
             })
         restrictions.sort(key=lambda x: x["distance_m"])
-        return {"restrictions": restrictions}
+        result = {"restrictions": restrictions}
+        _overpass_cache_set(cache_key, result)
+        return result
     except Exception:
         return {"restrictions": []}

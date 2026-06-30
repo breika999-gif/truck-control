@@ -623,6 +623,8 @@
     "reportPolice": "Police",
     "reportDanger": "Danger",
     "reportFailed": "Could not save the report. Check the connection and try again.",
+    "openSharedLocationTitle": "Open in TruckExpoAI?",
+    "openSharedLocationMessage": "Create a truck route to {{name}}?",
     "noLocationTitle": "No GPS",
     "noLocationMessage": "Wait for your position to lock and try again.",
     "exportRouteFirst": "Select a route before exporting.",
